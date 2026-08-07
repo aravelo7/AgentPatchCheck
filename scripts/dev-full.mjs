@@ -95,6 +95,7 @@ const env = {
 	...process.env,
 	KANBAN_RUNTIME_PORT: String(runtimePort),
 	KANBAN_WEB_UI_PORT: String(webUiPort),
+	KANBAN_DEV_WEB_UI_ORIGIN: `http://127.0.0.1:${webUiPort}`,
 };
 
 const tsxPackageUrl = import.meta.resolve("tsx/package.json");
