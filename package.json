@@ -53,6 +53,7 @@
     "unlink": "npm unlink -g kanban",
     "dev": "NODE_ENV=development tsx watch src/cli.ts",
     "dev:full": "node scripts/dev-full.mjs",
+    "agentpatchcheck:run": "tsx src/agentpatchcheck/cli.ts",
     "web:dev": "npm --prefix web-ui run dev",
     "web:build": "npm --prefix web-ui run build",
     "web:typecheck": "npm --prefix web-ui run typecheck",
