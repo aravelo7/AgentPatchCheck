@@ -4,9 +4,10 @@
  * VS Code "Dev (Full Stack)" launch config.
  */
 import { createServer, connect } from "node:net";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const isWindows = process.platform === "win32";
 
@@ -96,8 +97,10 @@ const env = {
 	KANBAN_WEB_UI_PORT: String(webUiPort),
 };
 
-const tsxBin = isWindows ? "node_modules/.bin/tsx.cmd" : "node_modules/.bin/tsx";
-const runtime = spawn(tsxBin, ["watch", "src/cli.ts", ...runtimeCliArgs], {
+const tsxPackageUrl = import.meta.resolve("tsx/package.json");
+const tsxPackage = JSON.parse(await readFile(new URL(tsxPackageUrl), "utf8"));
+const tsxCli = fileURLToPath(new URL(tsxPackage.bin, tsxPackageUrl));
+const runtime = spawn(process.execPath, [tsxCli, "watch", "src/cli.ts", ...runtimeCliArgs], {
 	env,
 	stdio: "inherit",
 });
