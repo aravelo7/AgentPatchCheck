@@ -1,14 +1,34 @@
 export type AgentPatchCheckSandbox = "read-only" | "workspace-write";
+export const TASK_POLICY_BRAND: unique symbol = Symbol("TaskPolicy");
 
-export interface AgentPatchCheckRequest {
-	repositoryPath: string;
+export interface TaskPolicyInput {
+	repositoryRoot: string;
 	prompt: string;
 	baseRef?: string;
+	worktreeRoot?: string;
 	runId?: string;
 	codexExecutable?: string;
 	model?: string;
 	timeoutMs?: number;
 	sandbox?: AgentPatchCheckSandbox;
+	allowNetwork?: boolean;
+	allowDangerousParameters?: boolean;
+}
+
+export interface TaskPolicy {
+	readonly [TASK_POLICY_BRAND]: true;
+	repositoryRoot: string;
+	baseRef: string;
+	baseCommit: string;
+	worktreeRoot: string;
+	prompt: string;
+	runId?: string;
+	codexExecutable?: string;
+	model?: string;
+	timeoutMs: number;
+	sandbox: AgentPatchCheckSandbox;
+	allowNetwork: boolean;
+	allowDangerousParameters: false;
 }
 
 export interface IsolatedWorkspace {

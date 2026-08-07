@@ -18,6 +18,8 @@ describe("buildCodexLaunchPlan", () => {
 				"--json",
 				"--model",
 				"gpt-5.4",
+				"--config",
+				"sandbox_workspace_write.network_access=false",
 				"--sandbox",
 				"workspace-write",
 				"-C",
@@ -44,7 +46,7 @@ describe("buildCodexLaunchPlan", () => {
 			"/d",
 			"/s",
 			"/c",
-			'"codex ^"exec^" ^"--json^" ^"--sandbox^" ^"workspace-write^" ^"-C^" ^"D:\\worktree^" ^"Update^ README^""',
+			'"codex ^"exec^" ^"--json^" ^"--config^" ^"sandbox_workspace_write.network_access=false^" ^"--sandbox^" ^"workspace-write^" ^"-C^" ^"D:\\worktree^" ^"Update^ README^""',
 		]);
 	});
 });

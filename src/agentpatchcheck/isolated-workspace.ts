@@ -39,19 +39,24 @@ export function getIsolatedWorkspacePath(repositoryPath: string, runId: string):
 export async function createIsolatedWorkspace(options: {
 	repositoryPath: string;
 	runId: string;
-	baseRef?: string;
+	baseRef: string;
+	baseCommit: string;
+	worktreeRoot: string;
 }): Promise<IsolatedWorkspace> {
 	const repositoryPath = normalizeRepositoryPath(options.repositoryPath);
 	const runId = normalizeRunId(options.runId);
-	const baseRef = normalizeBaseRef(options.baseRef ?? "HEAD");
-	const worktreePath = getIsolatedWorkspacePath(repositoryPath, runId);
+	const baseRef = normalizeBaseRef(options.baseRef);
+	const baseCommit = options.baseCommit.trim();
+	if (!baseCommit) {
+		throw new Error("Base commit is required.");
+	}
+	const worktreePath = join(resolve(options.worktreeRoot), runId);
 
 	if (!isAbsolute(worktreePath)) {
 		throw new Error("Isolated workspace path must be absolute.");
 	}
 
-	const baseCommit = await getGitStdout(["rev-parse", "--verify", `${baseRef}^{commit}`], repositoryPath);
-	await mkdir(join(repositoryPath, ".agentpatchcheck", "worktrees"), { recursive: true });
+	await mkdir(resolve(options.worktreeRoot), { recursive: true });
 	const addResult = await runGit(repositoryPath, ["worktree", "add", "--detach", worktreePath, baseCommit]);
 	if (!addResult.ok) {
 		throw new Error(addResult.error ?? "Could not create isolated workspace.");

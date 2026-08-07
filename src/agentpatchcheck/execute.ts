@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { runCodex } from "./codex-runner";
 import { collectPatchSnapshot, createIsolatedWorkspace } from "./isolated-workspace";
-import type { AgentExecution, AgentPatchCheckRequest, AgentPatchCheckResult } from "./types";
+import type { AgentExecution, AgentPatchCheckResult, TaskPolicy } from "./types";
 
 interface HeadlessCoreDependencies {
 	createWorkspace: typeof createIsolatedWorkspace;
@@ -21,28 +21,31 @@ function createRunId(): string {
 }
 
 export async function executeAgentPatchCheck(
-	request: AgentPatchCheckRequest,
+	policy: TaskPolicy,
 	dependencies: HeadlessCoreDependencies = defaultDependencies,
 ): Promise<AgentPatchCheckResult> {
 	const workspace = await dependencies.createWorkspace({
-		repositoryPath: request.repositoryPath,
-		runId: request.runId ?? createRunId(),
-		baseRef: request.baseRef,
+		repositoryPath: policy.repositoryRoot,
+		runId: policy.runId ?? createRunId(),
+		baseRef: policy.baseRef,
+		baseCommit: policy.baseCommit,
+		worktreeRoot: policy.worktreeRoot,
 	});
 	let agent: AgentExecution;
 	try {
 		agent = await dependencies.runAgent({
 			cwd: workspace.path,
-			prompt: request.prompt,
-			executable: request.codexExecutable,
-			model: request.model,
-			timeoutMs: request.timeoutMs,
-			sandbox: request.sandbox,
+			prompt: policy.prompt,
+			executable: policy.codexExecutable,
+			model: policy.model,
+			timeoutMs: policy.timeoutMs,
+			sandbox: policy.sandbox,
+			allowNetwork: policy.allowNetwork,
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		agent = {
-			executable: request.codexExecutable?.trim() || "codex",
+			executable: policy.codexExecutable?.trim() || "codex",
 			args: [],
 			exitCode: null,
 			signal: null,
@@ -62,4 +65,4 @@ export async function executeAgentPatchCheck(
 	};
 }
 
-export type { AgentPatchCheckRequest, AgentPatchCheckResult, IsolatedWorkspace, PatchSnapshot } from "./types";
+export type { AgentPatchCheckResult, IsolatedWorkspace, PatchSnapshot, TaskPolicy } from "./types";
