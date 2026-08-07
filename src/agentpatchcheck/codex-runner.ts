@@ -21,6 +21,7 @@ export interface RunCodexOptions {
 	prompt: string;
 	executable?: string;
 	model?: string;
+	allowNetwork?: boolean;
 	timeoutMs?: number;
 	sandbox?: AgentPatchCheckSandbox;
 	env?: NodeJS.ProcessEnv;
@@ -36,6 +37,7 @@ function appendOutput(current: string, chunk: Buffer | string): string {
 export function buildCodexLaunchPlan(options: {
 	executable?: string;
 	model?: string;
+	allowNetwork?: boolean;
 	cwd: string;
 	prompt: string;
 	sandbox?: AgentPatchCheckSandbox;
@@ -48,6 +50,8 @@ export function buildCodexLaunchPlan(options: {
 		"exec",
 		"--json",
 		...(options.model ? ["--model", options.model] : []),
+		"--config",
+		`sandbox_workspace_write.network_access=${options.allowNetwork === true ? "true" : "false"}`,
 		"--sandbox",
 		sandbox,
 		"-C",
