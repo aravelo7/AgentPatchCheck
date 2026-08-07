@@ -9,12 +9,26 @@ if [ $? -ne 0 ]; then
 	exit 1
 fi
 
-echo "Running type checking and fast tests..."
-npm run typecheck && npm run test:precommit
+echo "Running type checking..."
+npm run typecheck
 if [ $? -ne 0 ]; then
-	echo "Checks failed."
+	echo "Type checking failed."
 	exit 1
 fi
+
+case "$(uname -s)" in
+	MINGW*|MSYS*|CYGWIN*)
+		echo "Skipping test:fast on Windows: known upstream portability failures."
+		;;
+	*)
+		echo "Running fast tests..."
+		npm run test:precommit
+		if [ $? -ne 0 ]; then
+			echo "Fast tests failed."
+			exit 1
+		fi
+		;;
+esac
 
 for file in $STAGED_FILES; do
 	if [ -f "$file" ]; then
