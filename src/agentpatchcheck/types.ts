@@ -229,3 +229,23 @@ export interface CleanupResult {
 	assessmentPath: string;
 	worktreePath: string;
 }
+
+export type EvidenceAssessmentStatus = "missing" | "valid" | "invalid";
+
+export interface EvidenceListEntry {
+	runId: string;
+	createdAt: string;
+	status: AgentPatchCheckStatus;
+	assessmentStatus: EvidenceAssessmentStatus;
+	verdict: PatchVerdictStatus | null;
+	worktreeExists: boolean;
+	evidencePath: string;
+	assessmentPath: string;
+}
+
+export interface EvidenceListResult {
+	repositoryRoot: string;
+	evidenceDirectory: string;
+	entries: EvidenceListEntry[];
+	invalidEvidence: string[];
+}

@@ -29,6 +29,12 @@ npm.cmd run agentpatchcheck:cleanup -- --evidence <path-to-target-repository>\.a
 npm.cmd run agentpatchcheck:cleanup -- --evidence <path-to-target-repository>\.agentpatchcheck\evidence\<runId>.json --apply
 ```
 
+List the repository's persisted runs, including assessment availability and whether each retained worktree still exists:
+
+```powershell
+npm.cmd run agentpatchcheck:list -- --repository <path-to-target-repository>
+```
+
 ```json
 {
   "version": 1,
@@ -72,3 +78,5 @@ Every completed run also writes an atomic JSON EvidenceBundle to `.agentpatchche
 `assessEvidenceBundle({ evidencePath })` closes the first evaluation loop: it reads the immutable EvidenceBundle, runs GitPatchVerifier, applies PatchVerdict (including recorded CommandVerifier facts) using the recorded TaskPolicy patch expectation, and atomically writes `<runId>.assessment.json` alongside the source evidence. The assessment never launches Codex, creates a worktree, changes the worktree, or alters the original bundle.
 
 `cleanupEvidenceWorktree({ evidencePath })` is dry-run by default. It requires a completed assessment matching that evidence, verifies the evidence and worktree paths are the exact managed paths recorded for the run, and checks that Git still registers the worktree. With explicit `--apply`, it removes only that registered worktree through `git worktree remove --force`. EvidenceBundle and AssessmentReport JSON files are always retained.
+
+`listEvidenceBundles({ repositoryPath })` is read-only. It validates the target as a Git repository, lists only `.agentpatchcheck/evidence/*.json` files (excluding assessment reports), and reports each run's execution status, matching assessment verdict, worktree availability, and paths. Invalid EvidenceBundle files are returned separately without preventing valid history from being listed.
