@@ -1,5 +1,5 @@
 import { Command } from "commander";
-
+import { createApplyPlan } from "./apply-plan";
 import { assessEvidenceBundle } from "./assessment-report";
 import { cleanupEvidenceWorktree } from "./cleanup";
 import { listEvidenceBundles } from "./evidence-list";
@@ -62,6 +62,16 @@ program
 	.action(async (options) => {
 		const result = await showEvidenceBundle({ evidencePath: options.evidence });
 		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+	});
+
+program
+	.command("apply-plan")
+	.description("Read-only preflight for applying one assessed recorded patch.")
+	.requiredOption("--evidence <path>", "Path to a persisted EvidenceBundle JSON file.")
+	.action(async (options) => {
+		const result = await createApplyPlan({ evidencePath: options.evidence });
+		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		if (result.status === "blocked") process.exitCode = 1;
 	});
 
 void program.parseAsync(process.argv);

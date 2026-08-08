@@ -41,6 +41,12 @@ Show a concise read-only summary for one run. This reports metadata, execution a
 npm.cmd run agentpatchcheck:show -- --evidence <path-to-target-repository>\.agentpatchcheck\evidence\<runId>.json
 ```
 
+Before any future apply operation, run the read-only preflight. It requires a matching passing assessment, the recorded repository at its base commit, and a clean `git apply --check`:
+
+```powershell
+npm.cmd run agentpatchcheck:apply-plan -- --evidence <path-to-target-repository>\.agentpatchcheck\evidence\<runId>.json
+```
+
 ```json
 {
   "version": 1,
@@ -88,3 +94,5 @@ Every completed run also writes an atomic JSON EvidenceBundle to `.agentpatchche
 `listEvidenceBundles({ repositoryPath })` is read-only. It validates the target as a Git repository, lists only `.agentpatchcheck/evidence/*.json` files (excluding assessment reports), and reports each run's execution status, matching assessment verdict, worktree availability, and paths. Invalid EvidenceBundle files are returned separately without preventing valid history from being listed.
 
 `showEvidenceBundle({ evidencePath })` is read-only and does not re-run verification. It returns the stored TaskPolicy and workspace, a redacted agent invocation summary with output byte counts, command-verification summaries, changed files and tracked-patch metadata, plus the matching recorded assessment when present.
+
+`createApplyPlan({ evidencePath })` is read-only. It does not apply a patch; it requires a matching `pass` assessment, confirms the recorded repository remains at its recorded base commit, rejects changed files not materialized in the stored tracked diff, and runs `git apply --check --binary` through stdin. A future write-capable apply command must consume only a `ready` plan.

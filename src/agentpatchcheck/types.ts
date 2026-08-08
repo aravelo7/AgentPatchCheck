@@ -282,3 +282,17 @@ export interface EvidenceShowResult {
 		report: Pick<AssessmentReport, "createdAt" | "verdict" | "gitPatchVerification"> | null;
 	};
 }
+
+export type ApplyPlanStatus = "ready" | "nothing-to-apply" | "blocked";
+
+export interface ApplyPlanResult {
+	status: ApplyPlanStatus;
+	evidencePath: string;
+	assessmentPath: string;
+	repositoryRoot: string | null;
+	baseCommit: string;
+	changedFiles: string[];
+	unmaterializedFiles: string[];
+	checks: { assessmentPasses: boolean; headMatchesBaseCommit: boolean; patchApplies: boolean };
+	failures: string[];
+}

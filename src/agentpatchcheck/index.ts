@@ -1,3 +1,4 @@
+export { createApplyPlan } from "./apply-plan";
 export { assessEvidenceBundle, getAssessmentReportPath, writeAssessmentReport } from "./assessment-report";
 export { cleanupEvidenceWorktree } from "./cleanup";
 export { buildCodexLaunchPlan, runCodex } from "./codex-runner";
@@ -23,6 +24,8 @@ export type {
 	AgentPatchCheckResult,
 	AgentPatchCheckSandbox,
 	AgentPatchCheckStatus,
+	ApplyPlanResult,
+	ApplyPlanStatus,
 	AssessmentReport,
 	AssessmentReportReference,
 	AssessmentResult,
