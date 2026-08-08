@@ -27,7 +27,7 @@ async function collectUntrackedSnapshots(worktreePath: string, files: string[]):
 		if (content.includes(0) || totalBytes + content.length > MAX_UNTRACKED_TOTAL_BYTES) continue;
 		let text: string;
 		try {
-			text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+			text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(content);
 		} catch {
 			continue;
 		}
