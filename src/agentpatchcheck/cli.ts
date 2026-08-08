@@ -2,6 +2,7 @@ import { Command } from "commander";
 
 import { assessEvidenceBundle } from "./assessment-report";
 import { cleanupEvidenceWorktree } from "./cleanup";
+import { listEvidenceBundles } from "./evidence-list";
 import { executeAgentPatchCheck } from "./execute";
 import { validateTaskPolicy } from "./task-policy";
 import { loadTaskSpec } from "./task-spec";
@@ -41,6 +42,15 @@ program
 	.option("--apply", "Remove the worktree after all cleanup safety checks pass.")
 	.action(async (options) => {
 		const result = await cleanupEvidenceWorktree({ evidencePath: options.evidence, apply: options.apply === true });
+		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+	});
+
+program
+	.command("list")
+	.description("List persisted Headless Core evidence for one local Git repository.")
+	.requiredOption("--repository <path>", "Git repository root containing .agentpatchcheck evidence.")
+	.action(async (options) => {
+		const result = await listEvidenceBundles({ repositoryPath: options.repository });
 		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 	});
 
