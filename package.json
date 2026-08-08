@@ -58,6 +58,7 @@
     "agentpatchcheck:cleanup": "tsx src/agentpatchcheck/cli.ts cleanup",
     "agentpatchcheck:list": "tsx src/agentpatchcheck/cli.ts list",
     "agentpatchcheck:show": "tsx src/agentpatchcheck/cli.ts show",
+    "agentpatchcheck:apply-plan": "tsx src/agentpatchcheck/cli.ts apply-plan",
     "web:dev": "npm --prefix web-ui run dev",
     "web:build": "npm --prefix web-ui run build",
     "web:typecheck": "npm --prefix web-ui run typecheck",
