@@ -44,8 +44,28 @@ function createBundle(): EvidenceBundle {
 			durationMs: 2,
 			timedOut: false,
 		},
-		commandVerification: { status: "not-run", cwd: "D:\\repo", commands: [] },
-		patch: { changedFiles: ["README.md"], trackedPatch: "diff", trackedPatchSha256: "patch-hash" },
+		commandVerification: {
+			status: "passed",
+			cwd: "D:\\repo",
+			commands: [
+				{
+					command: "verify",
+					args: ["--quick"],
+					exitCode: 0,
+					signal: null,
+					stdout: "verified",
+					stderr: "",
+					durationMs: 1,
+					timedOut: false,
+				},
+			],
+		},
+		patch: {
+			changedFiles: ["README.md", "new.txt"],
+			trackedPatch: "diff",
+			trackedPatchSha256: "patch-hash",
+			untrackedFiles: [{ path: "new.txt", content: "new", sha256: "hash", byteLength: 3 }],
+		},
 		result: { status: "succeeded", durationMs: 2 },
 	};
 }
@@ -88,7 +108,14 @@ describe("showEvidenceBundle", () => {
 			evidence: { path: evidencePath },
 			policy: { model: "gpt-5.4", promptSha256: "hash" },
 			agent: { executable: "codex", stdoutBytes: 4, stderrBytes: 0 },
-			patch: { changedFiles: ["README.md"], trackedPatchSha256: "patch-hash", trackedPatchBytes: 4 },
+			commandVerification: { cwd: "D:\\repo", commands: [{ command: "verify", stdoutBytes: 8, stderrBytes: 0 }] },
+			patch: {
+				changedFiles: ["README.md", "new.txt"],
+				trackedPatchSha256: "patch-hash",
+				trackedPatchBytes: 4,
+				untrackedFileCount: 1,
+				untrackedFileBytes: 3,
+			},
 			assessment: { status: "valid", report: { verdict: { status: "pass" } } },
 		});
 		expect(JSON.stringify(result)).not.toContain('"stdout"');

@@ -9,7 +9,7 @@ async function runVerificationCommand(options: {
 	outputLimitBytes: number;
 }): Promise<CommandVerificationResult> {
 	const startedAt = Date.now();
-	return await new Promise<CommandVerificationResult>((resolve, reject) => {
+	return await new Promise<CommandVerificationResult>((resolve) => {
 		const child = spawn(options.command.command, options.command.args, {
 			cwd: options.cwd,
 			env: process.env,
@@ -20,6 +20,13 @@ async function runVerificationCommand(options: {
 		let stdout = "";
 		let stderr = "";
 		let timedOut = false;
+		let settled = false;
+		const finish = (result: CommandVerificationResult) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeout);
+			resolve(result);
+		};
 		const timeout = setTimeout(() => {
 			timedOut = true;
 			child.kill();
@@ -32,12 +39,19 @@ async function runVerificationCommand(options: {
 			stderr = appendBoundedOutput(stderr, chunk, options.outputLimitBytes);
 		});
 		child.once("error", (error) => {
-			clearTimeout(timeout);
-			reject(error);
+			finish({
+				command: options.command.command,
+				args: options.command.args,
+				exitCode: null,
+				signal: null,
+				stdout,
+				stderr: appendBoundedOutput(stderr, error.message, options.outputLimitBytes),
+				durationMs: Date.now() - startedAt,
+				timedOut,
+			});
 		});
 		child.once("close", (exitCode, signal) => {
-			clearTimeout(timeout);
-			resolve({
+			finish({
 				command: options.command.command,
 				args: options.command.args,
 				exitCode,

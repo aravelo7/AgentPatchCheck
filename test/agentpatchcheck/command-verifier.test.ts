@@ -52,4 +52,16 @@ describe("CommandVerifier", () => {
 
 		expect(result.commands[0]?.stdout).toBe("abcd");
 	});
+
+	it("records an unstartable command as a failed command result", async () => {
+		const command = "agentpatchcheck-command-that-does-not-exist";
+		const policy = validateVerificationPolicy({ commands: [{ command }] });
+
+		const result = await runCommandVerification(policy, process.cwd());
+
+		expect(result.status).toBe("failed");
+		expect(result.commands).toHaveLength(1);
+		expect(result.commands[0]).toMatchObject({ command, exitCode: null, signal: null, timedOut: false });
+		expect(result.commands[0]?.stderr.length).toBeGreaterThan(0);
+	});
 });
