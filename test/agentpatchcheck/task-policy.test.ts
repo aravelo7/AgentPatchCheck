@@ -19,6 +19,7 @@ describe("validateTaskPolicy", () => {
 		expect(policy.allowNetwork).toBe(false);
 		expect(policy.allowDangerousParameters).toBe(false);
 		expect(policy.patchExpectation).toBe("changes-required");
+		expect(policy.verificationProfile).toBeNull();
 	});
 
 	it("rejects a worktree root outside the repository", async () => {

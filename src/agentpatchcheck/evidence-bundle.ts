@@ -97,6 +97,7 @@ export function createEvidenceBundle(options: {
 			allowNetwork: options.policy.allowNetwork,
 			allowDangerousParameters: false,
 			verification: options.policy.verification,
+			verificationProfile: options.policy.verificationProfile,
 			patchExpectation: options.policy.patchExpectation,
 		},
 		repository: {

@@ -14,6 +14,7 @@ export interface TaskPolicyInput {
 	allowNetwork?: boolean;
 	allowDangerousParameters?: boolean;
 	verification?: VerificationPolicyInput;
+	verificationProfile?: VerificationProfileReference;
 	patchExpectation?: PatchExpectation;
 }
 
@@ -41,6 +42,12 @@ export interface VerificationPolicy {
 	allowNetwork: false;
 }
 
+export interface VerificationProfileReference {
+	path: string;
+	name: string | null;
+	sha256: string;
+}
+
 export interface TaskPolicy {
 	readonly [TASK_POLICY_BRAND]: true;
 	repositoryRoot: string;
@@ -56,6 +63,7 @@ export interface TaskPolicy {
 	allowNetwork: boolean;
 	allowDangerousParameters: false;
 	verification: VerificationPolicy;
+	verificationProfile: VerificationProfileReference | null;
 	patchExpectation: PatchExpectation;
 }
 
@@ -112,6 +120,7 @@ export interface TaskPolicyEvidenceSnapshot {
 	allowNetwork: boolean;
 	allowDangerousParameters: false;
 	verification: VerificationPolicy;
+	verificationProfile: VerificationProfileReference | null;
 	patchExpectation: PatchExpectation;
 }
 

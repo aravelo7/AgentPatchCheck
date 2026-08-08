@@ -4,14 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
 
 import type { TaskPolicyInput } from "./types";
-
-const verificationCommandSchema = z
-	.object({
-		command: z.string(),
-		args: z.array(z.string()).optional(),
-		timeoutMs: z.number().int().optional(),
-	})
-	.strict();
+import { loadVerificationProfile, verificationPolicyInputSchema } from "./verification-profile";
 
 const taskSpecSchema = z
 	.object({
@@ -28,13 +21,8 @@ const taskSpecSchema = z
 		sandbox: z.enum(["read-only", "workspace-write"]).optional(),
 		allowNetwork: z.boolean().optional(),
 		patchExpectation: z.enum(["changes-required", "changes-optional"]),
-		verification: z
-			.object({
-				commands: z.array(verificationCommandSchema).optional(),
-				outputLimitBytes: z.number().int().optional(),
-			})
-			.strict()
-			.optional(),
+		verification: verificationPolicyInputSchema.optional(),
+		verificationProfile: z.string().optional(),
 	})
 	.strict()
 	.superRefine((spec, context) => {
@@ -43,6 +31,13 @@ const taskSpecSchema = z
 				code: z.ZodIssueCode.custom,
 				message: "TaskSpec must contain exactly one of prompt or promptFile.",
 				path: ["prompt"],
+			});
+		}
+		if (spec.verification !== undefined && spec.verificationProfile !== undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "TaskSpec must not define both verification and verificationProfile.",
+				path: ["verification"],
 			});
 		}
 	});
@@ -103,6 +98,10 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 	}
 	const specDirectory = dirname(resolvedSpecPath);
 	const prompt = parsed.data.prompt ?? (await readPromptFile(specDirectory, parsed.data.promptFile ?? ""));
+	const loadedVerificationProfile =
+		parsed.data.verificationProfile === undefined
+			? undefined
+			: await loadVerificationProfile(specDirectory, parsed.data.verificationProfile);
 
 	return {
 		repositoryRoot: resolveFromSpecDirectory(specDirectory, parsed.data.repositoryRoot),
@@ -119,6 +118,7 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 		sandbox: parsed.data.sandbox,
 		allowNetwork: parsed.data.allowNetwork,
 		patchExpectation: parsed.data.patchExpectation,
-		verification: parsed.data.verification,
+		verification: loadedVerificationProfile?.verification ?? parsed.data.verification,
+		verificationProfile: loadedVerificationProfile?.reference,
 	};
 }
