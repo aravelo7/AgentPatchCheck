@@ -1,6 +1,8 @@
 export { createApplyPlan } from "./apply-plan";
 export { applyRecordedPatch } from "./apply-recorded-patch";
 export { assessEvidenceBundle, getAssessmentReportPath, writeAssessmentReport } from "./assessment-report";
+export { getBenchmarkReportPath, runBenchmark, writeBenchmarkReport } from "./benchmark-runner";
+export { loadBenchmarkSpec } from "./benchmark-spec";
 export { cleanupEvidenceWorktree } from "./cleanup";
 export { buildCodexLaunchPlan, runCodex } from "./codex-runner";
 export { runCommandVerification } from "./command-verifier";
@@ -32,6 +34,13 @@ export type {
 	AssessmentReport,
 	AssessmentReportReference,
 	AssessmentResult,
+	BenchmarkDefinition,
+	BenchmarkReport,
+	BenchmarkReportReference,
+	BenchmarkResult,
+	BenchmarkTaskDefinition,
+	BenchmarkTaskResult,
+	BenchmarkTaskStatus,
 	CleanupResult,
 	CleanupStatus,
 	CommandVerification,

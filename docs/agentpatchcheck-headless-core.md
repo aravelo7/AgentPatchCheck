@@ -16,6 +16,60 @@ Run it with a strict local TaskSpec JSON file:
 npm.cmd run agentpatchcheck:run -- --task-spec D:\Projects\task-spec.json
 ```
 
+## CI and script contract
+
+Every Headless CLI command writes one versioned JSON response. Scripts should branch on `ok` and `error.code`, not on human-readable messages:
+
+```json
+{
+  "contractVersion": 1,
+  "command": "apply-plan",
+  "ok": true,
+  "data": {},
+  "error": null
+}
+```
+
+`run`, `assess`, `cleanup`, `list`, `show`, `apply-plan`, `apply`, and `benchmark` all use this envelope. A successful command exits `0`; a business or runtime failure exits `1`; malformed or missing command arguments exit `2`. Failure responses retain `data` when an operation produced a structured result, such as a blocked apply plan, and otherwise use `data: null`. Stable error codes are `invalid-arguments`, `operation-failed`, `execution-failed`, `assessment-not-pass`, `apply-plan-blocked`, `apply-blocked`, and `benchmark-failed`.
+
+When a script needs stdout to contain only the JSON response, invoke the local `tsx src/agentpatchcheck/cli.ts <command> ...` entry directly rather than the `npm run` convenience wrapper, which may print npm's own preamble.
+
+## Recommended operating flow
+
+1. Create a strict TaskSpec and run `run`; retain the evidence path returned in `data.evidence.path`.
+2. Use `show` or `list` to inspect persisted, redacted metadata without re-running Codex.
+3. Run `assess` to re-check the retained worktree and write a matching assessment.
+4. Run `apply-plan`; proceed only when `data.status` is `ready`.
+5. Run `apply` without `--apply` for a final no-write preview, then repeat it with the exact repository root and `--apply` only after review.
+6. Run `cleanup` without `--apply` to preview removal, then add `--apply` to remove only the registered managed worktree. Evidence and assessment files remain.
+
+This separates agent execution, read-only assessment, explicit patch application, and cleanup. No command stages, commits, pushes, stashes, merges, or resolves conflicts for the user.
+
+## Benchmark Runner
+
+`benchmark` is an orchestration layer over existing Headless Core execution. It does not introduce another workspace, agent, verifier, or evidence implementation. A BenchmarkSpec references one or more strict TaskSpec files; each referenced TaskSpec continues to define the repository root, base ref, prompt, sandbox, model, timeout, and inline or catalog verification profile.
+
+```json
+{
+  "version": 1,
+  "name": "local-smoke",
+  "tasks": [
+    { "id": "modify-readme", "taskSpec": "tasks/modify-readme.json" },
+    { "id": "add-file", "taskSpec": "tasks/add-file.json" }
+  ]
+}
+```
+
+Task ids are unique and paths must be relative descendants of the BenchmarkSpec directory. Run the benchmark with:
+
+```powershell
+npm.cmd run agentpatchcheck:benchmark -- --spec D:\Projects\benchmarks\local-smoke.json
+```
+
+Each task runs sequentially through `validateTaskPolicy` and `executeAgentPatchCheck`, retaining its ordinary EvidenceBundle and AssessmentReport in the task repository. The benchmark report is atomically written beside the spec at `.agentpatchcheck/benchmarks/<benchmark-runId>.json`. It contains task ids, evidence and assessment references, agent exit/timeout facts, verification status, verdict, task classification, counts derived from those real results, and a deterministic `summaryText` for terminal logs.
+
+Classifications are `passed`, `timed-out`, `agent-failed`, `verification-failed`, `assessment-failed`, and `setup-failed`. A failed task is recorded and does not stop later independent tasks. The aggregate CLI response is `ok: false` with `benchmark-failed` when any task is not `passed`; the report and completed task evidence remain available for inspection. Hidden or semantic oracles, non-Codex adapters, parallel scheduling, retries, and CI-specific policy selection are intentionally outside this minimal runner.
+
 Assess an existing EvidenceBundle without launching Codex or creating a worktree:
 
 ```powershell
@@ -107,3 +161,7 @@ For untracked files, a new run records an applyable snapshot only when the path 
 `createApplyPlan({ evidencePath })` is read-only. It does not apply a patch; it requires a matching `pass` assessment, confirms the recorded repository remains at its recorded base commit, rejects changed files not materialized in the stored tracked diff, and runs `git apply --check --binary` through stdin. A future write-capable apply command must consume only a `ready` plan.
 
 `applyRecordedPatch({ evidencePath, repositoryPath, apply })` re-runs that preflight, requires the explicit repository to resolve to the exact recorded Git root, and writes only when `apply` is true and the result is `ready`. It invokes `git apply --binary` through stdin with no shell, does not stage or commit, and strictly fails rather than stashing, merging, overwriting, or resolving conflicts.
+
+Untracked snapshot writes are additionally guarded: all paths and SHA-256 values are validated before writing, duplicate targets are rejected, and any existing target path causes the operation to fail rather than overwrite it. Files are created with exclusive creation semantics, so a path created after preflight is also rejected. A blocked or failed apply must be investigated and re-run from a fresh assessed evidence bundle; Headless Core does not attempt recovery by overwriting or force-applying.
+
+On Windows, Codex may be started through `cmd.exe` when it resolves to an npm `.cmd` shim. Timeout handling terminates that complete process tree rather than only the wrapper process, and the resulting `timedOut`, exit, signal, and bounded output fields remain in the EvidenceBundle. A timed-out run is assessed as a failed verdict and must not be applied.

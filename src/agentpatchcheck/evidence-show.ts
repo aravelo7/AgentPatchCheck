@@ -82,6 +82,7 @@ export async function showEvidenceBundle(
 		},
 		commandVerification: {
 			status: bundle.commandVerification.status,
+			cwd: bundle.commandVerification.cwd,
 			commands: bundle.commandVerification.commands.map((command) => ({
 				command: command.command,
 				args: command.args,
@@ -89,12 +90,16 @@ export async function showEvidenceBundle(
 				signal: command.signal,
 				durationMs: command.durationMs,
 				timedOut: command.timedOut,
+				stdoutBytes: Buffer.byteLength(command.stdout, "utf8"),
+				stderrBytes: Buffer.byteLength(command.stderr, "utf8"),
 			})),
 		},
 		patch: {
 			changedFiles: bundle.patch.changedFiles,
 			trackedPatchSha256: bundle.patch.trackedPatchSha256,
 			trackedPatchBytes: Buffer.byteLength(bundle.patch.trackedPatch, "utf8"),
+			untrackedFileCount: bundle.patch.untrackedFiles?.length ?? 0,
+			untrackedFileBytes: (bundle.patch.untrackedFiles ?? []).reduce((total, file) => total + file.byteLength, 0),
 		},
 		result: bundle.result,
 		assessment: {

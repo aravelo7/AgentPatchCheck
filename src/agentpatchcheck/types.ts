@@ -275,14 +275,20 @@ export interface EvidenceShowResult {
 	};
 	commandVerification: {
 		status: CommandVerificationStatus;
+		cwd: string;
 		commands: Array<
-			Pick<CommandVerificationResult, "command" | "args" | "exitCode" | "signal" | "durationMs" | "timedOut">
+			Pick<CommandVerificationResult, "command" | "args" | "exitCode" | "signal" | "durationMs" | "timedOut"> & {
+				stdoutBytes: number;
+				stderrBytes: number;
+			}
 		>;
 	};
 	patch: {
 		changedFiles: string[];
 		trackedPatchSha256: string;
 		trackedPatchBytes: number;
+		untrackedFileCount: number;
+		untrackedFileBytes: number;
 	};
 	result: EvidenceBundle["result"];
 	assessment: {
@@ -315,4 +321,65 @@ export interface ApplyExecutionResult {
 	failures: string[];
 	appliedFiles: string[];
 	headCommit: string | null;
+}
+
+export type BenchmarkTaskStatus =
+	| "passed"
+	| "timed-out"
+	| "agent-failed"
+	| "verification-failed"
+	| "assessment-failed"
+	| "setup-failed";
+
+export interface BenchmarkTaskDefinition {
+	id: string;
+	taskSpecPath: string;
+}
+
+export interface BenchmarkDefinition {
+	version: 1;
+	sourcePath: string;
+	name: string | null;
+	tasks: BenchmarkTaskDefinition[];
+}
+
+export interface BenchmarkTaskResult {
+	taskId: string;
+	taskSpecPath: string;
+	status: BenchmarkTaskStatus;
+	durationMs: number;
+	evidence: EvidenceBundleReference | null;
+	assessment: AssessmentReportReference | null;
+	agent: Pick<AgentExecution, "exitCode" | "signal" | "durationMs" | "timedOut"> | null;
+	verificationStatus: CommandVerificationStatus | null;
+	verdict: PatchVerdictStatus | null;
+	error: { code: "task-failed"; message: string } | null;
+}
+
+export interface BenchmarkReport {
+	version: 1;
+	createdAt: string;
+	benchmark: {
+		sourcePath: string;
+		name: string | null;
+		runId: string;
+	};
+	tasks: BenchmarkTaskResult[];
+	summary: {
+		total: number;
+		passed: number;
+		failed: number;
+		byStatus: Record<BenchmarkTaskStatus, number>;
+		summaryText: string;
+	};
+}
+
+export interface BenchmarkReportReference {
+	path: string;
+	createdAt: string;
+}
+
+export interface BenchmarkResult {
+	report: BenchmarkReport;
+	reference: BenchmarkReportReference;
 }
