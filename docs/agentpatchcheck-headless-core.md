@@ -24,13 +24,23 @@ npm.cmd run agentpatchcheck:run -- --task-spec D:\Projects\task-spec.json
   "model": "gpt-5.4",
   "sandbox": "read-only",
   "patchExpectation": "changes-optional",
+  "verificationProfile": "profiles/node-version.json"
+}
+```
+
+`profiles/node-version.json` is also strict JSON and can be referenced by multiple TaskSpecs:
+
+```json
+{
+  "version": 1,
+  "name": "node-version",
   "verification": {
     "commands": [{ "command": "node", "args": ["--version"] }]
   }
 }
 ```
 
-TaskSpec accepts exactly one of `prompt` or `promptFile`; the latter must be a file below the TaskSpec directory. Unknown fields are rejected. The CLI does not provide overrides, so repository, Codex, patch expectation, and verification commands all remain in the versionable, reviewable specification.
+TaskSpec accepts exactly one of `prompt` or `promptFile`; the latter must be a file below the TaskSpec directory. It may define inline `verification` or a relative `verificationProfile`, but not both. Unknown fields are rejected in both files. The resolved profile path, name, and SHA-256 are retained in the EvidenceBundle, so the exact reusable verification policy remains auditable.
 
 If the installed Codex CLI is older than the configured default model, pass an explicit compatible model, for example `--model gpt-5.4`.
 

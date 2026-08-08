@@ -29,6 +29,7 @@ function createBundle(): EvidenceBundle {
 				allowShell: false,
 				allowNetwork: false,
 			},
+			verificationProfile: null,
 			patchExpectation: "changes-required",
 		},
 		repository: { root: "D:\\repo", baseRef: "HEAD", baseCommit: "base-commit" },

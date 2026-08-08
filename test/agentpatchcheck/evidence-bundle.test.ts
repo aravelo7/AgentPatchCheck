@@ -19,6 +19,11 @@ describe("EvidenceBundle", () => {
 			repositoryRoot: process.cwd(),
 			prompt,
 			runId: "evidence-test",
+			verificationProfile: {
+				path: "D:\\profiles\\node-version.json",
+				name: "node-version",
+				sha256: "a".repeat(64),
+			},
 		});
 		const execution: AgentPatchCheckExecutionResult = {
 			status: "failed",
@@ -59,6 +64,11 @@ describe("EvidenceBundle", () => {
 
 		expect(bundle.policy.promptLength).toBe(prompt.length);
 		expect(bundle.policy.promptSha256).toMatch(/^[a-f0-9]{64}$/u);
+		expect(bundle.policy.verificationProfile).toEqual({
+			path: "D:\\profiles\\node-version.json",
+			name: "node-version",
+			sha256: "a".repeat(64),
+		});
 		expect(bundle.result).toEqual({ status: "failed", durationMs: 42 });
 		expect(serialized).not.toContain("super-secret-value");
 		expect(serialized).not.toContain("abcdefghijklmnop");
@@ -94,6 +104,7 @@ describe("EvidenceBundle", () => {
 							allowShell: false,
 							allowNetwork: false,
 						},
+						verificationProfile: null,
 						patchExpectation: "changes-required",
 					},
 					repository: { root: "D:\\repo", baseRef: "HEAD", baseCommit: "abc123" },

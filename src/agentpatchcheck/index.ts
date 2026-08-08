@@ -42,6 +42,7 @@ export type {
 	VerificationCommandInput,
 	VerificationPolicy,
 	VerificationPolicyInput,
+	VerificationProfileReference,
 } from "./types";
 export {
 	DEFAULT_VERIFICATION_OUTPUT_LIMIT_BYTES,
@@ -51,3 +52,5 @@ export {
 	MAX_VERIFICATION_TIMEOUT_MS,
 	validateVerificationPolicy,
 } from "./verification-policy";
+export type { VerificationProfile } from "./verification-profile";
+export { loadVerificationProfile } from "./verification-profile";

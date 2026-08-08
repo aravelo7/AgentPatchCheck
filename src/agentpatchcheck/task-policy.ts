@@ -179,6 +179,7 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		allowNetwork: input.allowNetwork === true,
 		allowDangerousParameters: false,
 		verification: validateVerificationPolicy(input.verification),
+		verificationProfile: input.verificationProfile ?? null,
 		patchExpectation: normalizePatchExpectation(input.patchExpectation),
 	};
 }
