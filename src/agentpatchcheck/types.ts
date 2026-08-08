@@ -296,3 +296,14 @@ export interface ApplyPlanResult {
 	checks: { assessmentPasses: boolean; headMatchesBaseCommit: boolean; patchApplies: boolean };
 	failures: string[];
 }
+
+export type ApplyExecutionStatus = "dry-run" | "blocked" | "applied";
+
+export interface ApplyExecutionResult {
+	status: ApplyExecutionStatus;
+	plan: ApplyPlanResult;
+	targetRepositoryRoot: string;
+	failures: string[];
+	appliedFiles: string[];
+	headCommit: string | null;
+}
