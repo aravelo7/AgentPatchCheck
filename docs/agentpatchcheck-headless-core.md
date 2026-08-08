@@ -47,6 +47,13 @@ Before any future apply operation, run the read-only preflight. It requires a ma
 npm.cmd run agentpatchcheck:apply-plan -- --evidence <path-to-target-repository>\.agentpatchcheck\evidence\<runId>.json
 ```
 
+Apply is intentionally separate and requires both the exact target repository and explicit write consent. Without `--apply`, it performs the same guarded preview without writing:
+
+```powershell
+npm.cmd run agentpatchcheck:apply -- --evidence <path-to-target-repository>\.agentpatchcheck\evidence\<runId>.json --repository <path-to-target-repository>
+npm.cmd run agentpatchcheck:apply -- --evidence <path-to-target-repository>\.agentpatchcheck\evidence\<runId>.json --repository <path-to-target-repository> --apply
+```
+
 ```json
 {
   "version": 1,
@@ -96,3 +103,5 @@ Every completed run also writes an atomic JSON EvidenceBundle to `.agentpatchche
 `showEvidenceBundle({ evidencePath })` is read-only and does not re-run verification. It returns the stored TaskPolicy and workspace, a redacted agent invocation summary with output byte counts, command-verification summaries, changed files and tracked-patch metadata, plus the matching recorded assessment when present.
 
 `createApplyPlan({ evidencePath })` is read-only. It does not apply a patch; it requires a matching `pass` assessment, confirms the recorded repository remains at its recorded base commit, rejects changed files not materialized in the stored tracked diff, and runs `git apply --check --binary` through stdin. A future write-capable apply command must consume only a `ready` plan.
+
+`applyRecordedPatch({ evidencePath, repositoryPath, apply })` re-runs that preflight, requires the explicit repository to resolve to the exact recorded Git root, and writes only when `apply` is true and the result is `ready`. It invokes `git apply --binary` through stdin with no shell, does not stage or commit, and strictly fails rather than stashing, merging, overwriting, or resolving conflicts.

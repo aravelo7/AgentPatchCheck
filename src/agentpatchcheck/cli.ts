@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { createApplyPlan } from "./apply-plan";
+import { applyRecordedPatch } from "./apply-recorded-patch";
 import { assessEvidenceBundle } from "./assessment-report";
 import { cleanupEvidenceWorktree } from "./cleanup";
 import { listEvidenceBundles } from "./evidence-list";
@@ -70,6 +71,22 @@ program
 	.requiredOption("--evidence <path>", "Path to a persisted EvidenceBundle JSON file.")
 	.action(async (options) => {
 		const result = await createApplyPlan({ evidencePath: options.evidence });
+		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		if (result.status === "blocked") process.exitCode = 1;
+	});
+
+program
+	.command("apply")
+	.description("Apply a ready recorded patch to its exact recorded repository only.")
+	.requiredOption("--evidence <path>", "Path to a persisted EvidenceBundle JSON file.")
+	.requiredOption("--repository <path>", "Explicit target Git repository root.")
+	.option("--apply", "Apply the patch after all safety checks pass.")
+	.action(async (options) => {
+		const result = await applyRecordedPatch({
+			evidencePath: options.evidence,
+			repositoryPath: options.repository,
+			apply: options.apply === true,
+		});
 		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 		if (result.status === "blocked") process.exitCode = 1;
 	});
