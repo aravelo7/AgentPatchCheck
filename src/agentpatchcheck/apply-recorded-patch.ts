@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { createGitProcessEnv } from "../core/git-process-env";
@@ -47,14 +47,29 @@ async function applyPatch(repositoryRoot: string, patch: string): Promise<void> 
 	});
 }
 
-async function writeUntrackedFiles(repositoryRoot: string, bundle: EvidenceBundle): Promise<void> {
-	for (const file of bundle.patch.untrackedFiles ?? []) {
+export async function writeUntrackedFiles(repositoryRoot: string, bundle: EvidenceBundle): Promise<void> {
+	const snapshots = (bundle.patch.untrackedFiles ?? []).map((file) => {
 		if (!file.path || file.path.includes("\0") || isAbsolute(file.path) || file.path.split(/[\\/]/u).includes(".."))
 			throw new Error("Invalid untracked file snapshot path.");
 		const content = Buffer.from(file.content, "utf8");
 		if (content.length !== file.byteLength || createHash("sha256").update(content).digest("hex") !== file.sha256)
 			throw new Error("Untracked file snapshot integrity check failed.");
-		const target = join(repositoryRoot, file.path);
+		return { file, content, target: join(repositoryRoot, file.path) };
+	});
+	const targets = new Set<string>();
+	for (const snapshot of snapshots) {
+		if (targets.has(snapshot.target)) throw new Error("Duplicate untracked file snapshot path.");
+		targets.add(snapshot.target);
+		try {
+			await lstat(snapshot.target);
+			throw new Error(`Refusing to overwrite existing path: ${snapshot.file.path}`);
+		} catch (error) {
+			if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") continue;
+			throw error;
+		}
+	}
+	for (const snapshot of snapshots) {
+		const { content, target } = snapshot;
 		await mkdir(dirname(target), { recursive: true });
 		await writeFile(target, content, { flag: "wx" });
 	}

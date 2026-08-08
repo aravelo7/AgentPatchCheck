@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { applyRecordedPatch } from "../../src/agentpatchcheck/apply-recorded-patch";
+import { applyRecordedPatch, writeUntrackedFiles } from "../../src/agentpatchcheck/apply-recorded-patch";
 import type { ApplyPlanResult, EvidenceBundle } from "../../src/agentpatchcheck/types";
 
 const evidencePath = "D:\\repo\\.agentpatchcheck\\evidence\\run-1.json";
@@ -143,6 +147,32 @@ describe("applyRecordedPatch", () => {
 		expect(result.status).toBe("applied");
 		expect(applied).toBe(false);
 		expect(wrote).toBe(true);
+	});
+
+	it("refuses to overwrite an existing untracked snapshot target", async () => {
+		const repositoryRoot = await mkdtemp(join(tmpdir(), "agentpatchcheck-apply-"));
+		const original = "existing content";
+		const content = "\uFEFFBOM snapshot applied";
+		const bundle = createBundle();
+		bundle.patch.changedFiles = ["new.txt"];
+		bundle.patch.trackedPatch = "";
+		bundle.patch.untrackedFiles = [
+			{
+				path: "new.txt",
+				content,
+				sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+				byteLength: Buffer.byteLength(content, "utf8"),
+			},
+		];
+		try {
+			await writeFile(join(repositoryRoot, "new.txt"), original, "utf8");
+			await expect(writeUntrackedFiles(repositoryRoot, bundle)).rejects.toThrow(
+				"Refusing to overwrite existing path",
+			);
+			expect(await readFile(join(repositoryRoot, "new.txt"), "utf8")).toBe(original);
+		} finally {
+			await rm(repositoryRoot, { recursive: true, force: true });
+		}
 	});
 
 	it("blocks a mismatched explicit repository", async () => {
