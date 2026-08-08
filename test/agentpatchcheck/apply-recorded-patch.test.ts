@@ -118,6 +118,33 @@ describe("applyRecordedPatch", () => {
 		expect(wrote).toBe(true);
 	});
 
+	it("writes a ready untracked-only snapshot without invoking git apply for an empty patch", async () => {
+		const bundle = createBundle();
+		bundle.patch.changedFiles = ["new.txt"];
+		bundle.patch.trackedPatch = "";
+		bundle.patch.untrackedFiles = [{ path: "new.txt", content: "new", sha256: "hash", byteLength: 3 }];
+		let applied = false;
+		let wrote = false;
+		const result = await applyRecordedPatch(
+			{ evidencePath, repositoryPath: "D:\\repo", apply: true },
+			{
+				createPlan: async () => ({ ...readyPlan, changedFiles: ["new.txt"] }),
+				resolveRepositoryRoot: async () => "D:\\repo",
+				readBundle: async () => bundle,
+				applyPatch: async () => {
+					applied = true;
+				},
+				readHeadCommit: async () => "base",
+				writeUntrackedFiles: async () => {
+					wrote = true;
+				},
+			},
+		);
+		expect(result.status).toBe("applied");
+		expect(applied).toBe(false);
+		expect(wrote).toBe(true);
+	});
+
 	it("blocks a mismatched explicit repository", async () => {
 		const result = await applyRecordedPatch(
 			{ evidencePath, repositoryPath: "D:\\other", apply: true },
