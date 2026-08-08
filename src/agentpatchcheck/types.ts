@@ -249,3 +249,36 @@ export interface EvidenceListResult {
 	entries: EvidenceListEntry[];
 	invalidEvidence: string[];
 }
+
+export interface EvidenceShowResult {
+	evidence: EvidenceBundleReference;
+	policy: TaskPolicyEvidenceSnapshot;
+	workspace: IsolatedWorkspace;
+	agent: {
+		executable: string;
+		args: string[];
+		exitCode: number | null;
+		signal: NodeJS.Signals | null;
+		durationMs: number;
+		timedOut: boolean;
+		stdoutBytes: number;
+		stderrBytes: number;
+	};
+	commandVerification: {
+		status: CommandVerificationStatus;
+		commands: Array<
+			Pick<CommandVerificationResult, "command" | "args" | "exitCode" | "signal" | "durationMs" | "timedOut">
+		>;
+	};
+	patch: {
+		changedFiles: string[];
+		trackedPatchSha256: string;
+		trackedPatchBytes: number;
+	};
+	result: EvidenceBundle["result"];
+	assessment: {
+		status: EvidenceAssessmentStatus;
+		path: string;
+		report: Pick<AssessmentReport, "createdAt" | "verdict" | "gitPatchVerification"> | null;
+	};
+}

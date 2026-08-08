@@ -35,6 +35,12 @@ List the repository's persisted runs, including assessment availability and whet
 npm.cmd run agentpatchcheck:list -- --repository D:\Projects\target-repo
 ```
 
+Show a concise read-only summary for one run. This reports metadata, execution and command-verification summaries, patch metadata, and the recorded assessment; it does not print full agent output or patch content:
+
+```powershell
+npm.cmd run agentpatchcheck:show -- --evidence D:\Projects\target-repo\.agentpatchcheck\evidence\<runId>.json
+```
+
 ```json
 {
   "version": 1,
@@ -80,3 +86,5 @@ Every completed run also writes an atomic JSON EvidenceBundle to `.agentpatchche
 `cleanupEvidenceWorktree({ evidencePath })` is dry-run by default. It requires a completed assessment matching that evidence, verifies the evidence and worktree paths are the exact managed paths recorded for the run, and checks that Git still registers the worktree. With explicit `--apply`, it removes only that registered worktree through `git worktree remove --force`. EvidenceBundle and AssessmentReport JSON files are always retained.
 
 `listEvidenceBundles({ repositoryPath })` is read-only. It validates the target as a Git repository, lists only `.agentpatchcheck/evidence/*.json` files (excluding assessment reports), and reports each run's execution status, matching assessment verdict, worktree availability, and paths. Invalid EvidenceBundle files are returned separately without preventing valid history from being listed.
+
+`showEvidenceBundle({ evidencePath })` is read-only and does not re-run verification. It returns the stored TaskPolicy and workspace, a redacted agent invocation summary with output byte counts, command-verification summaries, changed files and tracked-patch metadata, plus the matching recorded assessment when present.

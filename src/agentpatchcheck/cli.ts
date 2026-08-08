@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { assessEvidenceBundle } from "./assessment-report";
 import { cleanupEvidenceWorktree } from "./cleanup";
 import { listEvidenceBundles } from "./evidence-list";
+import { showEvidenceBundle } from "./evidence-show";
 import { executeAgentPatchCheck } from "./execute";
 import { validateTaskPolicy } from "./task-policy";
 import { loadTaskSpec } from "./task-spec";
@@ -51,6 +52,15 @@ program
 	.requiredOption("--repository <path>", "Git repository root containing .agentpatchcheck evidence.")
 	.action(async (options) => {
 		const result = await listEvidenceBundles({ repositoryPath: options.repository });
+		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+	});
+
+program
+	.command("show")
+	.description("Show a concise, read-only summary of one persisted Headless Core run.")
+	.requiredOption("--evidence <path>", "Path to a persisted EvidenceBundle JSON file.")
+	.action(async (options) => {
+		const result = await showEvidenceBundle({ evidencePath: options.evidence });
 		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 	});
 
