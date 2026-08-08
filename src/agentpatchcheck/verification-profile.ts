@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -24,7 +24,7 @@ export const verificationPolicyInputSchema = z
 const verificationProfileSchema = z
 	.object({
 		version: z.literal(1),
-		name: z.string().min(1).max(128).optional(),
+		name: z.string().min(1).max(64),
 		verification: verificationPolicyInputSchema,
 	})
 	.strict();
@@ -36,14 +36,21 @@ export interface LoadedVerificationProfile {
 	reference: VerificationProfileReference;
 }
 
-export async function loadVerificationProfile(
-	taskSpecDirectory: string,
-	profilePath: string,
-): Promise<LoadedVerificationProfile> {
-	if (isAbsolute(profilePath)) {
-		throw new Error("TaskSpec verificationProfile must be relative to the TaskSpec directory.");
+const PROFILE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+
+export function getVerificationProfilePath(repositoryRoot: string, profileName: string): string {
+	const normalizedProfileName = profileName.trim();
+	if (!PROFILE_NAME_PATTERN.test(normalizedProfileName)) {
+		throw new Error("Verification profile name must contain 1-64 letters, numbers, underscores, or hyphens.");
 	}
-	const resolvedProfilePath = resolve(taskSpecDirectory, profilePath);
+	return join(resolve(repositoryRoot), ".agentpatchcheck", "profiles", `${normalizedProfileName}.json`);
+}
+
+export async function loadVerificationProfile(
+	repositoryRoot: string,
+	profileName: string,
+): Promise<LoadedVerificationProfile> {
+	const resolvedProfilePath = getVerificationProfilePath(repositoryRoot, profileName);
 	let profileJson: string;
 	let parsedJson: unknown;
 	try {
@@ -57,11 +64,14 @@ export async function loadVerificationProfile(
 	if (!parsed.success) {
 		throw new Error(`Invalid verification profile ${resolvedProfilePath}: ${parsed.error.message}`);
 	}
+	if (parsed.data.name !== profileName) {
+		throw new Error(`Verification profile name does not match its catalog entry: ${resolvedProfilePath}`);
+	}
 	return {
 		verification: parsed.data.verification,
 		reference: {
 			path: resolvedProfilePath,
-			name: parsed.data.name ?? null,
+			name: parsed.data.name,
 			sha256: createHash("sha256").update(profileJson, "utf8").digest("hex"),
 		},
 	};
