@@ -18,6 +18,7 @@ describe("validateTaskPolicy", () => {
 		expect(policy.sandbox).toBe("workspace-write");
 		expect(policy.allowNetwork).toBe(false);
 		expect(policy.allowDangerousParameters).toBe(false);
+		expect(policy.patchExpectation).toBe("changes-required");
 	});
 
 	it("rejects a worktree root outside the repository", async () => {
@@ -54,5 +55,35 @@ describe("validateTaskPolicy", () => {
 				prompt: "Inspect the change.",
 			}),
 		).rejects.toThrow("Base ref must not begin with a dash");
+	});
+
+	it("validates direct verification commands and rejects shell launchers", async () => {
+		const policy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Inspect the change.",
+			verification: {
+				commands: [{ command: process.execPath, args: ["--version"], timeoutMs: 1_000 }],
+			},
+		});
+
+		expect(policy.verification).toMatchObject({
+			allowShell: false,
+			allowNetwork: false,
+			commands: [{ command: process.execPath, args: ["--version"], timeoutMs: 1_000 }],
+		});
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				verification: { commands: [{ command: "cmd.exe", args: ["/c", "echo unsafe"] }] },
+			}),
+		).rejects.toThrow("must not launch a shell");
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				verification: { outputLimitBytes: 1_024 * 1_024 + 1 },
+			}),
+		).rejects.toThrow("Verification output limit");
 	});
 });
