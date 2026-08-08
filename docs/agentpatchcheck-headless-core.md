@@ -88,6 +88,8 @@ Each run owns a worktree below the target repository. The first phase intentiona
 
 Every completed run also writes an atomic JSON EvidenceBundle to `.agentpatchcheck/evidence/<runId>.json`, adjacent to the managed worktrees. It records the validated policy snapshot, workspace and base commit, agent invocation/result, patch snapshot and SHA-256, duration, and final status. Prompt text is represented by length and SHA-256; prompt and common credential values are redacted from persisted agent output and arguments.
 
+For untracked files, a new run records an applyable snapshot only when the path is repository-relative, the file is a regular UTF-8 text file, it is within the per-file and total size limits, and it contains no detected credential pattern. The snapshot carries content, byte length, and SHA-256. Binary, oversized, symlinked, suspicious, or unsnapshotted files remain visible as changed files but block `apply-plan` rather than being applied incompletely.
+
 `verifyGitPatchEvidence(evidencePath)` is the first read-only verifier. It confirms the retained worktree exists, its `HEAD` still equals the recorded base commit, its changed-file snapshot and tracked diff SHA-256 still match, and reports any unrecorded untracked files. It returns a structured verification result without changing the repository or worktree.
 
 `decidePatchVerdict(...)` is a pure verdict stage modelled after evaluation harness grading: it consumes the persisted execution facts and Git verification result, but performs no I/O. Git verification failure, agent failure, and timeout produce `fail`; an empty patch where changes were required produces `inconclusive`; otherwise it produces `pass`. Task-specific commands and richer acceptance rules remain a later verifier stage.

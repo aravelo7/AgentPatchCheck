@@ -53,6 +53,7 @@ export type {
 	PatchVerdictStatus,
 	TaskPolicy,
 	TaskPolicyInput,
+	UntrackedFileSnapshot,
 	VerificationCommand,
 	VerificationCommandInput,
 	VerificationPolicy,

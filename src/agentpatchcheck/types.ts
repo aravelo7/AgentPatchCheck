@@ -89,6 +89,14 @@ export interface AgentExecution {
 export interface PatchSnapshot {
 	changedFiles: string[];
 	trackedPatch: string;
+	untrackedFiles?: UntrackedFileSnapshot[];
+}
+
+export interface UntrackedFileSnapshot {
+	path: string;
+	content: string;
+	sha256: string;
+	byteLength: number;
 }
 
 export type AgentPatchCheckStatus = "succeeded" | "failed";
@@ -182,6 +190,7 @@ export interface GitPatchVerification {
 		headMatchesBaseCommit: boolean;
 		changedFilesMatch: boolean;
 		trackedPatchMatches: boolean;
+		untrackedFilesMatch?: boolean;
 		unrecordedUntrackedFiles: string[];
 	};
 	failures: string[];

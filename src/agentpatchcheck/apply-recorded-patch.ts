@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { createGitProcessEnv } from "../core/git-process-env";
 import { getGitStdout } from "../workspace/git-utils";
@@ -13,6 +15,7 @@ interface ApplyDependencies {
 	readBundle: (path: string) => Promise<EvidenceBundle>;
 	applyPatch: (repositoryRoot: string, patch: string) => Promise<void>;
 	readHeadCommit: (repositoryRoot: string) => Promise<string>;
+	writeUntrackedFiles?: (repositoryRoot: string, bundle: EvidenceBundle) => Promise<void>;
 }
 
 function pathsEqual(left: string, right: string): boolean {
@@ -44,12 +47,26 @@ async function applyPatch(repositoryRoot: string, patch: string): Promise<void> 
 	});
 }
 
+async function writeUntrackedFiles(repositoryRoot: string, bundle: EvidenceBundle): Promise<void> {
+	for (const file of bundle.patch.untrackedFiles ?? []) {
+		if (!file.path || file.path.includes("\0") || isAbsolute(file.path) || file.path.split(/[\\/]/u).includes(".."))
+			throw new Error("Invalid untracked file snapshot path.");
+		const content = Buffer.from(file.content, "utf8");
+		if (content.length !== file.byteLength || createHash("sha256").update(content).digest("hex") !== file.sha256)
+			throw new Error("Untracked file snapshot integrity check failed.");
+		const target = join(repositoryRoot, file.path);
+		await mkdir(dirname(target), { recursive: true });
+		await writeFile(target, content, { flag: "wx" });
+	}
+}
+
 const defaultDependencies: ApplyDependencies = {
 	createPlan: createApplyPlan,
 	resolveRepositoryRoot,
 	readBundle: readEvidenceBundle,
 	applyPatch,
 	readHeadCommit: async (repositoryRoot) => await getGitStdout(["rev-parse", "--verify", "HEAD"], repositoryRoot),
+	writeUntrackedFiles,
 };
 
 export async function applyRecordedPatch(
@@ -84,6 +101,7 @@ export async function applyRecordedPatch(
 
 	const bundle = await dependencies.readBundle(resolve(options.evidencePath));
 	await dependencies.applyPatch(targetRepositoryRoot, bundle.patch.trackedPatch);
+	await dependencies.writeUntrackedFiles?.(targetRepositoryRoot, bundle);
 	return {
 		status: "applied",
 		plan,
