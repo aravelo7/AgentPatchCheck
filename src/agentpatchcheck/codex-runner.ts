@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
+
+import treeKill from "tree-kill";
 
 import {
 	buildWindowsCmdArgsCommandLine,
@@ -26,6 +28,20 @@ export interface RunCodexOptions {
 	timeoutMs?: number;
 	sandbox?: AgentPatchCheckSandbox;
 	env?: NodeJS.ProcessEnv;
+}
+
+type ProcessTreeKiller = (pid: number, callback: (error?: Error) => void) => void;
+
+export function terminateCodexProcess(
+	child: Pick<ChildProcess, "pid" | "kill">,
+	platform: NodeJS.Platform = process.platform,
+	killTree: ProcessTreeKiller = (pid, callback) => treeKill(pid, "SIGKILL", callback),
+): void {
+	if (platform === "win32" && child.pid !== undefined) {
+		killTree(child.pid, () => undefined);
+		return;
+	}
+	child.kill();
 }
 
 export function buildCodexLaunchPlan(options: {
@@ -91,7 +107,7 @@ export async function runCodex(options: RunCodexOptions): Promise<AgentExecution
 		let timedOut = false;
 		const timeout = setTimeout(() => {
 			timedOut = true;
-			child.kill();
+			terminateCodexProcess(child);
 		}, timeoutMs);
 
 		child.stdout?.on("data", (chunk: Buffer | string) => {
