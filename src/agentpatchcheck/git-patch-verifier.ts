@@ -73,6 +73,20 @@ function filesMatch(left: string[], right: string[]): boolean {
 	return left.length === right.length && left.every((file, index) => file === right[index]);
 }
 
+function untrackedFilesMatch(left: PatchSnapshot["untrackedFiles"], right: PatchSnapshot["untrackedFiles"]): boolean {
+	const actual = left ?? [];
+	const recorded = right ?? [];
+	return (
+		actual.length === recorded.length &&
+		actual.every(
+			(file, index) =>
+				file.path === recorded[index]?.path &&
+				file.sha256 === recorded[index]?.sha256 &&
+				file.byteLength === recorded[index]?.byteLength,
+		)
+	);
+}
+
 export async function verifyGitPatchEvidence(
 	evidencePath: string,
 	dependencies: GitPatchVerifierDependencies = defaultDependencies,
@@ -121,6 +135,7 @@ export async function verifyGitPatchBundle(
 	const headMatchesBaseCommit = headCommit === bundle.workspace.baseCommit;
 	const changedFilesMatch = filesMatch(patch.changedFiles, bundle.patch.changedFiles);
 	const trackedPatchMatches = sha256(patch.trackedPatch) === bundle.patch.trackedPatchSha256;
+	const untrackedSnapshotMatches = untrackedFilesMatch(patch.untrackedFiles, bundle.patch.untrackedFiles);
 	const recordedFiles = new Set(bundle.patch.changedFiles);
 	const unrecordedUntrackedFiles = currentUntrackedFiles.filter((file) => !recordedFiles.has(file));
 
@@ -133,6 +148,7 @@ export async function verifyGitPatchBundle(
 	if (!trackedPatchMatches) {
 		failures.push("Current tracked diff does not match the recorded patch snapshot.");
 	}
+	if (!untrackedSnapshotMatches) failures.push("Current untracked file contents do not match recorded snapshots.");
 	if (unrecordedUntrackedFiles.length > 0) {
 		failures.push("Current worktree contains unrecorded untracked files.");
 	}
@@ -148,6 +164,7 @@ export async function verifyGitPatchBundle(
 			headMatchesBaseCommit,
 			changedFilesMatch,
 			trackedPatchMatches,
+			untrackedFilesMatch: untrackedSnapshotMatches,
 			unrecordedUntrackedFiles,
 		},
 		failures,

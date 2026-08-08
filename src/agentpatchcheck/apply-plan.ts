@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -66,8 +67,14 @@ async function checkPatch(repositoryRoot: string, patch: string): Promise<{ ok: 
 }
 
 function findUnmaterializedFiles(bundle: EvidenceBundle): string[] {
+	const snapshots = new Map((bundle.patch.untrackedFiles ?? []).map((file) => [file.path, file]));
 	return bundle.patch.changedFiles.filter(
 		(file) =>
+			(!snapshots.has(file) ||
+				snapshots.get(file)?.sha256 !==
+					createHash("sha256")
+						.update(snapshots.get(file)?.content ?? "", "utf8")
+						.digest("hex")) &&
 			!bundle.patch.trackedPatch.includes(`diff --git a/${file} b/${file}`) &&
 			!bundle.patch.trackedPatch.includes(`+++ b/${file}\n`) &&
 			!bundle.patch.trackedPatch.includes(`--- a/${file}\n`),

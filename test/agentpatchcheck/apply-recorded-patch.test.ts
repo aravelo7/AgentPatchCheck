@@ -98,6 +98,26 @@ describe("applyRecordedPatch", () => {
 		expect(patch).toBe("diff");
 	});
 
+	it("writes recorded untracked snapshots only after the tracked patch succeeds", async () => {
+		const bundle = createBundle();
+		bundle.patch.untrackedFiles = [{ path: "new.txt", content: "new", sha256: "hash", byteLength: 3 }];
+		let wrote = false;
+		await applyRecordedPatch(
+			{ evidencePath, repositoryPath: "D:\\repo", apply: true },
+			{
+				createPlan: async () => readyPlan,
+				resolveRepositoryRoot: async () => "D:\\repo",
+				readBundle: async () => bundle,
+				applyPatch: async () => undefined,
+				readHeadCommit: async () => "base",
+				writeUntrackedFiles: async (_root, recorded) => {
+					wrote = recorded.patch.untrackedFiles?.[0]?.path === "new.txt";
+				},
+			},
+		);
+		expect(wrote).toBe(true);
+	});
+
 	it("blocks a mismatched explicit repository", async () => {
 		const result = await applyRecordedPatch(
 			{ evidencePath, repositoryPath: "D:\\other", apply: true },

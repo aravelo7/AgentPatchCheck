@@ -122,6 +122,31 @@ describe("createApplyPlan", () => {
 		expect(checked).toBe(false);
 	});
 
+	it("accepts a changed untracked file when its content snapshot is intact", async () => {
+		const bundle = createBundle();
+		bundle.patch.changedFiles = ["new.txt"];
+		bundle.patch.trackedPatch = "";
+		bundle.patch.untrackedFiles = [
+			{
+				path: "new.txt",
+				content: "new file",
+				sha256: "b37d2cbfd875891e9ed073fcbe61f35a990bee8eecbdd07f9efc51339d5ffd66",
+				byteLength: 8,
+			},
+		];
+		const result = await createApplyPlan(
+			{ evidencePath },
+			{
+				readBundle: async () => bundle,
+				readAssessment: async () => createAssessment(),
+				resolveRepositoryRoot: async () => "D:\\repo",
+				readHeadCommit: async () => "base",
+				checkPatch: async () => ({ ok: true, error: null }),
+			},
+		);
+		expect(result.status).toBe("ready");
+	});
+
 	it("blocks a non-passing assessment", async () => {
 		const result = await createApplyPlan(
 			{ evidencePath },
