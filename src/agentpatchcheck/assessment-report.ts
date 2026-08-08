@@ -40,7 +40,7 @@ const defaultDependencies: AssessmentDependencies = {
 export async function assessEvidenceBundle(
 	options: {
 		evidencePath: string;
-		expectation: PatchExpectation;
+		expectation?: PatchExpectation;
 	},
 	dependencies: AssessmentDependencies = defaultDependencies,
 ): Promise<AssessmentResult> {
@@ -57,7 +57,7 @@ export async function assessEvidenceBundle(
 		verdict: decidePatchVerdict({
 			bundle,
 			verification: gitPatchVerification,
-			expectation: options.expectation,
+			expectation: options.expectation ?? bundle.policy.patchExpectation,
 		}),
 	};
 	const reference = await dependencies.writeReport({ path: getAssessmentReportPath(options.evidencePath), report });

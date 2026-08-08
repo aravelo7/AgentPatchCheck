@@ -220,3 +220,12 @@ export interface AssessmentResult {
 	report: AssessmentReport;
 	reference: AssessmentReportReference;
 }
+
+export type CleanupStatus = "dry-run" | "removed" | "already-removed";
+
+export interface CleanupResult {
+	status: CleanupStatus;
+	evidencePath: string;
+	assessmentPath: string;
+	worktreePath: string;
+}

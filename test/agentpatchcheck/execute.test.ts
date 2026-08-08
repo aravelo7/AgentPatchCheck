@@ -57,7 +57,12 @@ describe("executeAgentPatchCheck", () => {
 						},
 						failures: [],
 					},
-					verdict: { status: "pass", expectation, reasonCodes: [], reasons: [] },
+					verdict: {
+						status: "pass",
+						expectation: expectation ?? "changes-required",
+						reasonCodes: [],
+						reasons: [],
+					},
 				},
 				reference: { path: `${evidencePath}.assessment.json`, createdAt: "2026-08-07T00:00:00.000Z" },
 			}),

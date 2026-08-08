@@ -97,14 +97,15 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 		throw new Error(`Invalid TaskSpec ${resolvedSpecPath}: ${parsed.error.message}`);
 	}
 	const specDirectory = dirname(resolvedSpecPath);
+	const repositoryRoot = resolveFromSpecDirectory(specDirectory, parsed.data.repositoryRoot);
 	const prompt = parsed.data.prompt ?? (await readPromptFile(specDirectory, parsed.data.promptFile ?? ""));
 	const loadedVerificationProfile =
 		parsed.data.verificationProfile === undefined
 			? undefined
-			: await loadVerificationProfile(specDirectory, parsed.data.verificationProfile);
+			: await loadVerificationProfile(repositoryRoot, parsed.data.verificationProfile);
 
 	return {
-		repositoryRoot: resolveFromSpecDirectory(specDirectory, parsed.data.repositoryRoot),
+		repositoryRoot,
 		prompt,
 		baseRef: parsed.data.baseRef,
 		worktreeRoot:

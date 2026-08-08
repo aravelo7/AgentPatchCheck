@@ -1,4 +1,5 @@
 export { assessEvidenceBundle, getAssessmentReportPath, writeAssessmentReport } from "./assessment-report";
+export { cleanupEvidenceWorktree } from "./cleanup";
 export { buildCodexLaunchPlan, runCodex } from "./codex-runner";
 export { runCommandVerification } from "./command-verifier";
 export { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
@@ -23,6 +24,8 @@ export type {
 	AssessmentReport,
 	AssessmentReportReference,
 	AssessmentResult,
+	CleanupResult,
+	CleanupStatus,
 	CommandVerification,
 	CommandVerificationResult,
 	CommandVerificationStatus,
@@ -53,4 +56,4 @@ export {
 	validateVerificationPolicy,
 } from "./verification-policy";
 export type { VerificationProfile } from "./verification-profile";
-export { loadVerificationProfile } from "./verification-profile";
+export { getVerificationProfilePath, loadVerificationProfile } from "./verification-profile";

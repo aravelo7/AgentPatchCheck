@@ -80,7 +80,7 @@ describe("AssessmentReport", () => {
 		const reports: AssessmentReport[] = [];
 		const evidencePath = "D:\\repo\\.agentpatchcheck\\evidence\\run-1.json";
 		const reference = await assessEvidenceBundle(
-			{ evidencePath, expectation: "changes-required" },
+			{ evidencePath },
 			{
 				readBundle: async () => createBundle(),
 				verifyGitPatch: async () => createVerification(),
@@ -99,6 +99,7 @@ describe("AssessmentReport", () => {
 			gitPatchVerification: { status: "verified" },
 			verdict: { status: "pass" },
 		});
+		expect(reports[0]?.verdict.expectation).toBe("changes-required");
 	});
 
 	it("persists the final failure verdict without changing the evidence", async () => {
