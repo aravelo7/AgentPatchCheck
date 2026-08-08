@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCodexLaunchPlan } from "../../src/agentpatchcheck/codex-runner";
+import { buildCodexLaunchPlan, terminateCodexProcess } from "../../src/agentpatchcheck/codex-runner";
 
 describe("buildCodexLaunchPlan", () => {
 	it("uses a direct executable on Unix", () => {
@@ -48,5 +48,38 @@ describe("buildCodexLaunchPlan", () => {
 			"/c",
 			'"codex ^"exec^" ^"--json^" ^"--config^" ^"sandbox_workspace_write.network_access=false^" ^"--sandbox^" ^"workspace-write^" ^"-C^" ^"D:\\worktree^" ^"Update^ README^""',
 		]);
+	});
+
+	it("terminates the complete Windows cmd shim process tree on timeout", () => {
+		let childKilled = false;
+		let treePid: number | undefined;
+		const child = {
+			pid: 42,
+			kill: () => {
+				childKilled = true;
+				return true;
+			},
+		};
+		terminateCodexProcess(child, "win32", (pid, callback) => {
+			treePid = pid;
+			callback();
+		});
+
+		expect(treePid).toBe(42);
+		expect(childKilled).toBe(false);
+	});
+
+	it("uses direct process termination outside Windows", () => {
+		let childKilled = false;
+		const child = {
+			pid: 42,
+			kill: () => {
+				childKilled = true;
+				return true;
+			},
+		};
+		terminateCodexProcess(child, "linux");
+
+		expect(childKilled).toBe(true);
 	});
 });
