@@ -10,14 +10,40 @@ local Git repository
   -> structured execution result
 ```
 
-Run it with:
+Run it with a strict local TaskSpec JSON file:
 
 ```powershell
-npm.cmd run agentpatchcheck:run -- --repo D:\Projects\target-repo --prompt "Describe the requested change"
+npm.cmd run agentpatchcheck:run -- --task-spec D:\Projects\task-spec.json
 ```
+
+```json
+{
+  "version": 1,
+  "repositoryRoot": "D:\\Projects\\target-repo",
+  "promptFile": "prompt.txt",
+  "model": "gpt-5.4",
+  "sandbox": "read-only",
+  "patchExpectation": "changes-optional",
+  "verification": {
+    "commands": [{ "command": "node", "args": ["--version"] }]
+  }
+}
+```
+
+TaskSpec accepts exactly one of `prompt` or `promptFile`; the latter must be a file below the TaskSpec directory. Unknown fields are rejected. The CLI does not provide overrides, so repository, Codex, patch expectation, and verification commands all remain in the versionable, reviewable specification.
 
 If the installed Codex CLI is older than the configured default model, pass an explicit compatible model, for example `--model gpt-5.4`.
 
 Before execution, CLI input is resolved into a validated TaskPolicy. The policy requires the repository root, resolves the base ref to a commit, restricts the worktree root to a descendant of that repository, caps prompt and timeout values, and accepts only `workspace-write` or `read-only`. Network access is disabled by default and can only be enabled with `--allow-network`. Dangerous Codex parameters are rejected; the CLI never exposes bypass flags. On Unix the runner launches `codex` directly. On Windows it uses `cmd.exe` only when the resolved command is a `.cmd`/`.bat` shim, reusing the existing escaped-argv launch utility. It does not use a PTY or an interactive shell.
 
 Each run owns a worktree below the target repository. The first phase intentionally retains that worktree after execution so patch, verifier, and evidence stages can inspect it. Automatic cleanup, task policy, verifiers, verdicts, and UI/API adapters are later phases.
+
+Every completed run also writes an atomic JSON EvidenceBundle to `.agentpatchcheck/evidence/<runId>.json`, adjacent to the managed worktrees. It records the validated policy snapshot, workspace and base commit, agent invocation/result, patch snapshot and SHA-256, duration, and final status. Prompt text is represented by length and SHA-256; prompt and common credential values are redacted from persisted agent output and arguments.
+
+`verifyGitPatchEvidence(evidencePath)` is the first read-only verifier. It confirms the retained worktree exists, its `HEAD` still equals the recorded base commit, its changed-file snapshot and tracked diff SHA-256 still match, and reports any unrecorded untracked files. It returns a structured verification result without changing the repository or worktree.
+
+`decidePatchVerdict(...)` is a pure verdict stage modelled after evaluation harness grading: it consumes the persisted execution facts and Git verification result, but performs no I/O. Git verification failure, agent failure, and timeout produce `fail`; an empty patch where changes were required produces `inconclusive`; otherwise it produces `pass`. Task-specific commands and richer acceptance rules remain a later verifier stage.
+
+`VerificationPolicy` provides that first task-specific command stage. It is constructed programmatically as an explicit list of argv commands; the CLI deliberately does not accept arbitrary verification-command text. Each command runs directly in the retained worktree with `shell: false`, a bounded timeout and captured output. Shell launchers and Codex bypass parameters are rejected. Commands run before the final Git snapshot, their structured results are written to the EvidenceBundle, and a failed command makes the PatchVerdict fail. The policy does not grant network access; OS-level network isolation is a future sandbox integration concern.
+
+`assessEvidenceBundle({ evidencePath, expectation })` closes the first evaluation loop: it reads the immutable EvidenceBundle, runs GitPatchVerifier, applies PatchVerdict (including recorded CommandVerifier facts), and atomically writes `<runId>.assessment.json` alongside the source evidence. The assessment never changes the worktree or the original bundle.

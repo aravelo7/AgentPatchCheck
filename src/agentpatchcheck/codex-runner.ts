@@ -5,6 +5,7 @@ import {
 	resolveWindowsComSpec,
 	shouldUseWindowsCmdLaunch,
 } from "../core/windows-cmd-launch";
+import { appendBoundedOutput } from "./bounded-output";
 import type { AgentExecution, AgentPatchCheckSandbox } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -25,13 +26,6 @@ export interface RunCodexOptions {
 	timeoutMs?: number;
 	sandbox?: AgentPatchCheckSandbox;
 	env?: NodeJS.ProcessEnv;
-}
-
-function appendOutput(current: string, chunk: Buffer | string): string {
-	if (current.length >= OUTPUT_LIMIT_BYTES) {
-		return current;
-	}
-	return `${current}${String(chunk)}`.slice(0, OUTPUT_LIMIT_BYTES);
 }
 
 export function buildCodexLaunchPlan(options: {
@@ -101,10 +95,10 @@ export async function runCodex(options: RunCodexOptions): Promise<AgentExecution
 		}, timeoutMs);
 
 		child.stdout?.on("data", (chunk: Buffer | string) => {
-			stdout = appendOutput(stdout, chunk);
+			stdout = appendBoundedOutput(stdout, chunk, OUTPUT_LIMIT_BYTES);
 		});
 		child.stderr?.on("data", (chunk: Buffer | string) => {
-			stderr = appendOutput(stderr, chunk);
+			stderr = appendBoundedOutput(stderr, chunk, OUTPUT_LIMIT_BYTES);
 		});
 		child.once("error", (error) => {
 			clearTimeout(timeout);

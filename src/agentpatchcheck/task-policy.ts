@@ -2,7 +2,14 @@ import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { getGitStdout } from "../workspace/git-utils";
-import { type AgentPatchCheckSandbox, TASK_POLICY_BRAND, type TaskPolicy, type TaskPolicyInput } from "./types";
+import {
+	type AgentPatchCheckSandbox,
+	type PatchExpectation,
+	TASK_POLICY_BRAND,
+	type TaskPolicy,
+	type TaskPolicyInput,
+} from "./types";
+import { validateVerificationPolicy } from "./verification-policy";
 
 export const DEFAULT_TASK_TIMEOUT_MS = 15 * 60 * 1_000;
 export const MAX_TASK_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -11,6 +18,7 @@ export const MAX_TASK_PROMPT_LENGTH = 16_000;
 const SANDBOXES = new Set<AgentPatchCheckSandbox>(["read-only", "workspace-write"]);
 const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+const PATCH_EXPECTATIONS = new Set<PatchExpectation>(["changes-required", "changes-optional"]);
 
 function assertNoNullBytes(value: string, label: string): void {
 	if (value.includes("\0")) {
@@ -105,6 +113,14 @@ function normalizePrompt(prompt: string): string {
 	return prompt;
 }
 
+function normalizePatchExpectation(expectation: PatchExpectation | undefined): PatchExpectation {
+	const normalized = expectation ?? "changes-required";
+	if (!PATCH_EXPECTATIONS.has(normalized)) {
+		throw new Error('Patch expectation must be "changes-required" or "changes-optional".');
+	}
+	return normalized;
+}
+
 export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPolicy> {
 	if (input.allowDangerousParameters === true) {
 		throw new Error("Dangerous Codex parameters are not supported by Headless Core.");
@@ -162,5 +178,7 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		sandbox,
 		allowNetwork: input.allowNetwork === true,
 		allowDangerousParameters: false,
+		verification: validateVerificationPolicy(input.verification),
+		patchExpectation: normalizePatchExpectation(input.patchExpectation),
 	};
 }
