@@ -4,6 +4,7 @@ export { buildCodexLaunchPlan, runCodex } from "./codex-runner";
 export { runCommandVerification } from "./command-verifier";
 export { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
 export { listEvidenceBundles } from "./evidence-list";
+export { showEvidenceBundle } from "./evidence-show";
 export { executeAgentPatchCheck } from "./execute";
 export { readEvidenceBundle, verifyGitPatchBundle, verifyGitPatchEvidence } from "./git-patch-verifier";
 export { collectPatchSnapshot, createIsolatedWorkspace, getIsolatedWorkspacePath } from "./isolated-workspace";
@@ -35,6 +36,7 @@ export type {
 	EvidenceBundleReference,
 	EvidenceListEntry,
 	EvidenceListResult,
+	EvidenceShowResult,
 	GitPatchVerification,
 	GitPatchVerificationStatus,
 	IsolatedWorkspace,
