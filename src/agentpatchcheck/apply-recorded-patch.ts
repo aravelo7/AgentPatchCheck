@@ -100,7 +100,8 @@ export async function applyRecordedPatch(
 	}
 
 	const bundle = await dependencies.readBundle(resolve(options.evidencePath));
-	await dependencies.applyPatch(targetRepositoryRoot, bundle.patch.trackedPatch);
+	if (bundle.patch.trackedPatch.length > 0)
+		await dependencies.applyPatch(targetRepositoryRoot, bundle.patch.trackedPatch);
 	await dependencies.writeUntrackedFiles?.(targetRepositoryRoot, bundle);
 	return {
 		status: "applied",
