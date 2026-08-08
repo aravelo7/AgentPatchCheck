@@ -47,6 +47,7 @@ function redactAgentExecution(agent: AgentExecution, prompt: string): AgentExecu
 
 function redactPatchSnapshot(patch: PatchSnapshot, prompt: string): PatchSnapshot {
 	return {
+		...patch,
 		changedFiles: patch.changedFiles.map((path) => redactSensitiveText(path, prompt)),
 		trackedPatch: redactSensitiveText(patch.trackedPatch, prompt),
 	};
