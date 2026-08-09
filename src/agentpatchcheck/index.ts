@@ -1,3 +1,5 @@
+export type { AgentAdapter, AgentAdapterContext } from "./agent-adapter";
+export { getAgentAdapter, SCRIPT_ADAPTER_WORKTREE_ENV } from "./agent-adapter";
 export { createApplyPlan } from "./apply-plan";
 export { applyRecordedPatch } from "./apply-recorded-patch";
 export {
@@ -35,6 +37,7 @@ export {
 export type { TaskSpec } from "./task-spec";
 export { loadTaskSpec } from "./task-spec";
 export type {
+	AgentAdapterId,
 	AgentExecution,
 	AgentPatchCheckExecutionResult,
 	AgentPatchCheckResult,

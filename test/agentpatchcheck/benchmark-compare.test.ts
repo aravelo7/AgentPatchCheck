@@ -29,6 +29,7 @@ function createReport(statuses: Record<string, BenchmarkTaskStatus>): BenchmarkR
 				riskPolicyProfile: null,
 				codexExecutable: "codex",
 				model: null,
+				agentAdapter: "codex",
 			},
 			status,
 			durationMs: 1,

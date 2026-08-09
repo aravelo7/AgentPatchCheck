@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { getAgentAdapter } from "./agent-adapter";
 import { assessEvidenceBundle } from "./assessment-report";
-import { runCodex } from "./codex-runner";
 import { runCommandVerification } from "./command-verifier";
 import { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
 
@@ -18,7 +18,7 @@ import type {
 interface HeadlessCoreDependencies {
 	createWorkspace: typeof createIsolatedWorkspace;
 	collectPatch: typeof collectPatchSnapshot;
-	runAgent: typeof runCodex;
+	runAgent: (policy: TaskPolicy, worktreePath: string) => Promise<AgentExecution>;
 	runVerification: typeof runCommandVerification;
 	writeEvidence: typeof writeEvidenceBundle;
 	assessEvidence: typeof assessEvidenceBundle;
@@ -27,7 +27,8 @@ interface HeadlessCoreDependencies {
 const defaultDependencies: HeadlessCoreDependencies = {
 	createWorkspace: createIsolatedWorkspace,
 	collectPatch: collectPatchSnapshot,
-	runAgent: runCodex,
+	runAgent: async (policy, worktreePath) =>
+		await getAgentAdapter(policy.agentAdapter).execute({ policy, worktreePath }),
 	runVerification: runCommandVerification,
 	writeEvidence: writeEvidenceBundle,
 	assessEvidence: assessEvidenceBundle,
@@ -50,19 +51,11 @@ export async function executeAgentPatchCheck(
 	});
 	let agent: AgentExecution;
 	try {
-		agent = await dependencies.runAgent({
-			cwd: workspace.path,
-			prompt: policy.prompt,
-			executable: policy.codexExecutable,
-			model: policy.model,
-			timeoutMs: policy.timeoutMs,
-			sandbox: policy.sandbox,
-			allowNetwork: policy.allowNetwork,
-		});
+		agent = await dependencies.runAgent(policy, workspace.path);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		agent = {
-			executable: policy.codexExecutable?.trim() || "codex",
+			executable: policy.agentAdapter === "codex" ? policy.codexExecutable?.trim() || "codex" : process.execPath,
 			args: [],
 			exitCode: null,
 			signal: null,

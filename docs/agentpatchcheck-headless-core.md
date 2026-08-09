@@ -88,6 +88,23 @@ The report roots are an explicit operational boundary: supply every location tha
 
 This separates agent execution, read-only assessment, explicit patch application, and cleanup. No command stages, commits, pushes, stashes, merges, or resolves conflicts for the user.
 
+## Agent adapters
+
+`codex` remains the default adapter. The execution boundary now also supports a controlled `script` adapter for deterministic local fixtures and Benchmark development. A Script Adapter is a Node script supplied from the Harness/TaskSpec side; its resolved path must be outside the target repository, and it receives the managed worktree path only through `AGENTPATCHCHECK_AGENT_WORKTREE`. It is not an external hosted agent, does not add network access, and does not weaken TaskPolicy, verification, Hidden Oracle, Risk Policy, Approval, or Safe Apply.
+
+```json
+{
+  "version": 1,
+  "repositoryRoot": "../target-repo",
+  "prompt": "Apply the fixture change.",
+  "agentAdapter": "script",
+  "agentScript": "../harness-fixtures/update-readme.mjs",
+  "patchExpectation": "changes-required"
+}
+```
+
+The validated adapter id is persisted in Evidence and Benchmark configuration. The Script Adapter is intentionally limited to local Harness-owned scripts; arbitrary command adapters, network adapters, parallel scheduling, and retry are outside this phase.
+
 ## Approval history
 
 Approval remains a local, single-operator safety gate; it is not an identity or RBAC system. Every `approve` and `reject` appends an immutable decision record beside the Evidence. Each record contains the Evidence reference, risk fingerprint, decision, optional reason, timestamp, and the Headless CLI version that made the decision. `show --evidence <path>` returns both the current approval state and the full `approvalHistory`.
