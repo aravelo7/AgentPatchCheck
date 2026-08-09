@@ -27,6 +27,8 @@ const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const PATCH_EXPECTATIONS = new Set<PatchExpectation>(["changes-required", "changes-optional"]);
 const AGENT_ADAPTERS = new Set<AgentAdapterId>(["codex", "script"]);
 const HIDDEN_ORACLE_ISOLATION_LEVELS = new Set<HiddenOracleIsolationLevel>(["none", "network", "process", "strict"]);
+const DEFAULT_HIDDEN_ORACLE_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024;
+const DEFAULT_HIDDEN_ORACLE_CPU_RATE_PERCENT = 50;
 
 function assertNoNullBytes(value: string, label: string): void {
 	if (value.includes("\0")) {
@@ -151,7 +153,15 @@ async function normalizeHiddenOracle(
 	assertPathOutsideRoot(repositoryRoot, scriptPath, "Hidden Oracle script");
 	const isolation = oracle.isolation ?? "none";
 	if (!HIDDEN_ORACLE_ISOLATION_LEVELS.has(isolation)) throw new Error("Hidden Oracle isolation level is invalid.");
-	return { scriptPath, timeoutMs: normalizeTimeout(oracle.timeoutMs), isolation };
+	const memoryLimitBytes = oracle.memoryLimitBytes ?? DEFAULT_HIDDEN_ORACLE_MEMORY_LIMIT_BYTES;
+	const cpuRatePercent = oracle.cpuRatePercent ?? DEFAULT_HIDDEN_ORACLE_CPU_RATE_PERCENT;
+	if (!Number.isSafeInteger(memoryLimitBytes) || memoryLimitBytes < 64 * 1024 * 1024) {
+		throw new Error("Hidden Oracle memory limit must be an integer of at least 64 MiB.");
+	}
+	if (!Number.isSafeInteger(cpuRatePercent) || cpuRatePercent < 1 || cpuRatePercent > 100) {
+		throw new Error("Hidden Oracle CPU rate must be an integer between 1 and 100.");
+	}
+	return { scriptPath, timeoutMs: normalizeTimeout(oracle.timeoutMs), isolation, memoryLimitBytes, cpuRatePercent };
 }
 
 async function normalizeAgentScript(
