@@ -86,4 +86,22 @@ describe("evaluateRiskPolicy", () => {
 		expect(oracle.findings.map((finding) => finding.code)).toContain("hidden-oracle-failed");
 		expect(oracle.blocksApply).toBe(true);
 	});
+
+	it("applies profile additions and stricter thresholds without replacing built-in rules", () => {
+		const configured = bundle(["infra/release.yml", "deploy/secrets/key.txt"]);
+		configured.policy.riskPolicy = {
+			configuration: {
+				protectedPaths: ["infra/"],
+				sensitivePaths: ["deploy/secrets/"],
+				maxChangedFiles: 2,
+				maxTrackedPatchBytes: 100,
+			},
+			profile: { path: "D:\\harness\\risk.json", name: "strict", sha256: "a".repeat(64) },
+		};
+		const result = evaluateRiskPolicy(configured, null);
+		expect(result.findings.map((finding) => finding.code)).toEqual(
+			expect.arrayContaining(["profile-protected-path-change", "profile-sensitive-path-change"]),
+		);
+		expect(result.blocksApply).toBe(true);
+	});
 });

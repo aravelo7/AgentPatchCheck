@@ -2,11 +2,13 @@ import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { getGitStdout } from "../workspace/git-utils";
+import { DEFAULT_RISK_POLICY_CONFIGURATION } from "./risk-policy";
 import {
 	type AgentPatchCheckSandbox,
 	type HiddenOracleInput,
 	type HiddenOraclePolicy,
 	type PatchExpectation,
+	type RiskPolicy,
 	TASK_POLICY_BRAND,
 	type TaskPolicy,
 	type TaskPolicyInput,
@@ -146,6 +148,26 @@ async function normalizeHiddenOracle(
 	return { scriptPath, timeoutMs: normalizeTimeout(oracle.timeoutMs) };
 }
 
+async function normalizeRiskPolicy(
+	riskPolicy: TaskPolicyInput["riskPolicy"],
+	repositoryRoot: string,
+): Promise<RiskPolicy> {
+	if (riskPolicy === undefined) return { configuration: { ...DEFAULT_RISK_POLICY_CONFIGURATION }, profile: null };
+	assertNoNullBytes(riskPolicy.profile.path, "RiskPolicy Profile path");
+	const profilePath = await realpath(resolve(riskPolicy.profile.path));
+	const profileStat = await stat(profilePath);
+	if (!profileStat.isFile()) throw new Error("RiskPolicy Profile is not a file.");
+	assertPathOutsideRoot(repositoryRoot, profilePath, "RiskPolicy Profile");
+	if (riskPolicy.configuration.maxChangedFiles > DEFAULT_RISK_POLICY_CONFIGURATION.maxChangedFiles)
+		throw new Error("RiskPolicy Profile maxChangedFiles may not exceed the built-in safety limit.");
+	if (riskPolicy.configuration.maxTrackedPatchBytes > DEFAULT_RISK_POLICY_CONFIGURATION.maxTrackedPatchBytes)
+		throw new Error("RiskPolicy Profile maxTrackedPatchBytes may not exceed the built-in safety limit.");
+	return {
+		configuration: riskPolicy.configuration,
+		profile: { ...riskPolicy.profile, path: profilePath },
+	};
+}
+
 export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPolicy> {
 	if (input.allowDangerousParameters === true) {
 		throw new Error("Dangerous Codex parameters are not supported by Headless Core.");
@@ -205,6 +227,7 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		allowDangerousParameters: false,
 		verification: validateVerificationPolicy(input.verification),
 		verificationProfile: input.verificationProfile ?? null,
+		riskPolicy: await normalizeRiskPolicy(input.riskPolicy, repositoryRoot),
 		hiddenOracle: await normalizeHiddenOracle(input.hiddenOracle, repositoryRoot),
 		patchExpectation: normalizePatchExpectation(input.patchExpectation),
 	};

@@ -99,6 +99,7 @@ export function createEvidenceBundle(options: {
 			allowDangerousParameters: false,
 			verification: options.policy.verification,
 			verificationProfile: options.policy.verificationProfile,
+			riskPolicy: options.policy.riskPolicy,
 			hiddenOracle:
 				options.policy.hiddenOracle === null
 					? null

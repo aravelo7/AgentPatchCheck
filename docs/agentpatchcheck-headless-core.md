@@ -68,7 +68,7 @@ npm.cmd run agentpatchcheck:benchmark -- --spec D:\Projects\benchmarks\local-smo
 
 Each task runs sequentially through `validateTaskPolicy` and `executeAgentPatchCheck`, retaining its ordinary EvidenceBundle and AssessmentReport in the task repository. The benchmark report is atomically written beside the spec at `.agentpatchcheck/benchmarks/<benchmark-runId>.json`. It contains task ids, evidence and assessment references, agent exit/timeout facts, verification status, verdict, computed risk level and observed approval state, task classification, counts derived from those real results, and a deterministic `summaryText` for terminal logs.
 
-Classifications are `passed`, `timed-out`, `agent-failed`, `verification-failed`, `assessment-failed`, and `setup-failed`. A failed task is recorded and does not stop later independent tasks. The aggregate CLI response is `ok: false` with `benchmark-failed` when any task is not `passed`; the report and completed task evidence remain available for inspection. Hidden or semantic oracles, non-Codex adapters, parallel scheduling, retries, and CI-specific policy selection are intentionally outside this minimal runner.
+Classifications are `passed`, `timed-out`, `agent-failed`, `verification-failed`, `hidden-oracle-failed`, `hidden-oracle-error`, `assessment-failed`, and `setup-failed`. A failed task is recorded and does not stop later independent tasks. The aggregate CLI response is `ok: false` with `benchmark-failed` when any task is not `passed`; the report and completed task evidence remain available for inspection. Non-Codex adapters, parallel scheduling, retries, and CI-specific policy selection are intentionally outside this minimal runner.
 
 Assess an existing EvidenceBundle without launching Codex or creating a worktree:
 
@@ -116,7 +116,8 @@ npm.cmd run agentpatchcheck:apply -- --evidence D:\Projects\target-repo\.agentpa
   "model": "gpt-5.4",
   "sandbox": "read-only",
   "patchExpectation": "changes-optional",
-  "verificationProfile": "node-version"
+  "verificationProfile": "node-version",
+  "riskPolicyProfile": "policies/strict-local.json"
 }
 ```
 
@@ -190,6 +191,25 @@ npm.cmd run agentpatchcheck:reject -- --evidence D:\Projects\target-repo\.agentp
 ```
 
 The approval is stored atomically beside Evidence as `<runId>.approval.json`; Evidence itself remains immutable. `show` reports the current computed risk and approval state. Approval never suppresses assessment, base-commit, patch-integrity, target-repository, exclusive-create, or explicit `--apply` checks. There is intentionally no user identity, RBAC, automatic approval, or wildcard policy in this local single-operator boundary.
+
+### RiskPolicy Profile
+
+`riskPolicyProfile` is an optional strict JSON file relative to the TaskSpec directory. It is a Harness input: validation rejects any profile path inside the target repository, so the Agent worktree cannot provide or replace it. The resolved profile path, name, SHA-256, and effective rules are retained in the EvidenceBundle; later assessment and apply planning use that stored snapshot rather than re-reading the source profile.
+
+```json
+{
+  "version": 1,
+  "name": "strict-local",
+  "risk": {
+    "protectedPaths": ["infra/", "scripts/release.mjs"],
+    "sensitivePaths": ["deploy/secrets/"],
+    "maxChangedFiles": 10,
+    "maxTrackedPatchBytes": 65536
+  }
+}
+```
+
+Protected paths require approval; sensitive paths prohibit apply. Paths are repository-relative literals; a trailing slash means a descendant prefix. A profile can add paths and lower `maxChangedFiles` (default 25) or `maxTrackedPatchBytes` (default 131072), but cannot remove built-in findings, raise either limit, lower a finding severity, or disable approval. Omitting a profile uses the built-in default policy.
 
 `applyRecordedPatch({ evidencePath, repositoryPath, apply })` re-runs that preflight, requires the explicit repository to resolve to the exact recorded Git root, and writes only when `apply` is true and the result is `ready`. It invokes `git apply --binary` through stdin with no shell, does not stage or commit, and strictly fails rather than stashing, merging, overwriting, or resolving conflicts.
 

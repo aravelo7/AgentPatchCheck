@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 
-import type { AssessmentReport, EvidenceBundle, RiskFinding, RiskLevel, RiskResult } from "./types";
+import type {
+	AssessmentReport,
+	EvidenceBundle,
+	RiskFinding,
+	RiskLevel,
+	RiskPolicyConfiguration,
+	RiskResult,
+} from "./types";
 
 const LEVEL_ORDER: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 const TEST_PATH = /(^|\/)(test|tests|__tests__)(\/|$)|\.(test|spec)\.[^/]+$/iu;
@@ -9,6 +16,13 @@ const CI_PATH =
 const DEPENDENCY_PATH = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock)$/iu;
 const SENSITIVE_PATH = /(^|\/)(\.env(?:$|\..*)|[^/]+\.(pem|key|p12|pfx))$/iu;
 const SCRIPT_PATH = /(^|\/)(scripts\/|[^/]+\.(sh|ps1|bat|cmd))$/iu;
+
+export const DEFAULT_RISK_POLICY_CONFIGURATION: RiskPolicyConfiguration = {
+	protectedPaths: [],
+	sensitivePaths: [],
+	maxChangedFiles: 25,
+	maxTrackedPatchBytes: 131_072,
+};
 
 function add(
 	findings: RiskFinding[],
@@ -25,6 +39,15 @@ function diffFiles(bundle: EvidenceBundle, pattern: RegExp): string[] {
 	return bundle.patch.changedFiles.filter((file) => pattern.test(file));
 }
 
+function normalizeRepositoryPath(path: string): string {
+	return path.replaceAll("\\", "/");
+}
+
+function matchesConfiguredPath(path: string, configuredPath: string): boolean {
+	const normalizedPath = normalizeRepositoryPath(path);
+	return configuredPath.endsWith("/") ? normalizedPath.startsWith(configuredPath) : normalizedPath === configuredPath;
+}
+
 function maxLevel(findings: RiskFinding[]): RiskLevel {
 	return findings.reduce<RiskLevel>(
 		(current, finding) => (LEVEL_ORDER[finding.level] > LEVEL_ORDER[current] ? finding.level : current),
@@ -35,11 +58,36 @@ function maxLevel(findings: RiskFinding[]): RiskLevel {
 export function evaluateRiskPolicy(bundle: EvidenceBundle, assessment: AssessmentReport | null): RiskResult {
 	const findings: RiskFinding[] = [];
 	const files = bundle.patch.changedFiles;
+	const configuration = bundle.policy.riskPolicy?.configuration ?? DEFAULT_RISK_POLICY_CONFIGURATION;
 	const testFiles = diffFiles(bundle, TEST_PATH);
 	const ciFiles = diffFiles(bundle, CI_PATH);
 	const dependencyFiles = diffFiles(bundle, DEPENDENCY_PATH);
 	const sensitiveFiles = diffFiles(bundle, SENSITIVE_PATH);
 	const scriptFiles = diffFiles(bundle, SCRIPT_PATH);
+	const configuredProtectedFiles = files.filter((file) =>
+		configuration.protectedPaths.some((path) => matchesConfiguredPath(file, path)),
+	);
+	const configuredSensitiveFiles = files.filter((file) =>
+		configuration.sensitivePaths.some((path) => matchesConfiguredPath(file, path)),
+	);
+	if (configuredSensitiveFiles.length)
+		add(
+			findings,
+			"profile-sensitive-path",
+			"critical",
+			"profile-sensitive-path-change",
+			"Patch changes a RiskPolicy Profile sensitive path.",
+			configuredSensitiveFiles,
+		);
+	if (configuredProtectedFiles.length)
+		add(
+			findings,
+			"profile-protected-path",
+			"high",
+			"profile-protected-path-change",
+			"Patch changes a RiskPolicy Profile protected path.",
+			configuredProtectedFiles,
+		);
 	if (sensitiveFiles.length)
 		add(
 			findings,
@@ -103,10 +151,24 @@ export function evaluateRiskPolicy(bundle: EvidenceBundle, assessment: Assessmen
 		else if (!deleted.length)
 			add(findings, "test-integrity", "medium", "test-change", "Patch changes public test files.", testFiles);
 	}
-	if (files.length > 25)
-		add(findings, "change-size", "medium", "changed-file-limit", "Patch changes more than 25 files.", files);
-	if (Buffer.byteLength(bundle.patch.trackedPatch, "utf8") > 131_072)
-		add(findings, "change-size", "medium", "diff-size-limit", "Tracked patch exceeds 128 KiB.", files);
+	if (files.length > configuration.maxChangedFiles)
+		add(
+			findings,
+			"change-size",
+			"medium",
+			"changed-file-limit",
+			`Patch changes more than the ${configuration.maxChangedFiles}-file limit.`,
+			files,
+		);
+	if (Buffer.byteLength(bundle.patch.trackedPatch, "utf8") > configuration.maxTrackedPatchBytes)
+		add(
+			findings,
+			"change-size",
+			"medium",
+			"diff-size-limit",
+			`Tracked patch exceeds the ${configuration.maxTrackedPatchBytes}-byte limit.`,
+			files,
+		);
 	if (assessment && assessment.verdict.status !== "pass")
 		add(findings, "assessment", "critical", "assessment-not-pass", "Assessment verdict is not pass.", []);
 	if (bundle.hiddenOracle && bundle.hiddenOracle.status !== "passed")

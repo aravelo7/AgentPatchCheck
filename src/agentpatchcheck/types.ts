@@ -15,6 +15,7 @@ export interface TaskPolicyInput {
 	allowDangerousParameters?: boolean;
 	verification?: VerificationPolicyInput;
 	verificationProfile?: VerificationProfileReference;
+	riskPolicy?: RiskPolicyInput;
 	hiddenOracle?: HiddenOracleInput;
 	patchExpectation?: PatchExpectation;
 }
@@ -59,6 +60,29 @@ export interface VerificationProfileReference {
 	sha256: string;
 }
 
+export interface RiskPolicyProfileReference {
+	path: string;
+	name: string;
+	sha256: string;
+}
+
+export interface RiskPolicyConfiguration {
+	protectedPaths: string[];
+	sensitivePaths: string[];
+	maxChangedFiles: number;
+	maxTrackedPatchBytes: number;
+}
+
+export interface RiskPolicyInput {
+	configuration: RiskPolicyConfiguration;
+	profile: RiskPolicyProfileReference;
+}
+
+export interface RiskPolicy {
+	configuration: RiskPolicyConfiguration;
+	profile: RiskPolicyProfileReference | null;
+}
+
 export interface TaskPolicy {
 	readonly [TASK_POLICY_BRAND]: true;
 	repositoryRoot: string;
@@ -75,6 +99,7 @@ export interface TaskPolicy {
 	allowDangerousParameters: false;
 	verification: VerificationPolicy;
 	verificationProfile: VerificationProfileReference | null;
+	riskPolicy: RiskPolicy;
 	hiddenOracle: HiddenOraclePolicy | null;
 	patchExpectation: PatchExpectation;
 }
@@ -142,6 +167,7 @@ export interface TaskPolicyEvidenceSnapshot {
 	allowDangerousParameters: false;
 	verification: VerificationPolicy;
 	verificationProfile: VerificationProfileReference | null;
+	riskPolicy?: RiskPolicy;
 	hiddenOracle?: { configured: true; timeoutMs: number } | null;
 	patchExpectation: PatchExpectation;
 }
