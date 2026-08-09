@@ -104,7 +104,11 @@ export function createEvidenceBundle(options: {
 			hiddenOracle:
 				options.policy.hiddenOracle === null
 					? null
-					: { configured: true, timeoutMs: options.policy.hiddenOracle.timeoutMs },
+					: {
+							configured: true,
+							timeoutMs: options.policy.hiddenOracle.timeoutMs,
+							isolation: options.policy.hiddenOracle.isolation,
+						},
 			patchExpectation: options.policy.patchExpectation,
 		},
 		repository: {

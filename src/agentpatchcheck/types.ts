@@ -26,11 +26,24 @@ export interface TaskPolicyInput {
 export interface HiddenOracleInput {
 	scriptPath: string;
 	timeoutMs?: number;
+	isolation?: HiddenOracleIsolationLevel;
+}
+
+export type HiddenOracleIsolationLevel = "none" | "network" | "process" | "strict";
+
+export interface HiddenOracleIsolationCapability {
+	version: 1;
+	requested: HiddenOracleIsolationLevel;
+	platform: NodeJS.Platform;
+	available: boolean;
+	backend: "none" | null;
+	reason: string | null;
 }
 
 export interface HiddenOraclePolicy {
 	scriptPath: string;
 	timeoutMs: number;
+	isolation: HiddenOracleIsolationLevel;
 }
 
 export interface VerificationCommandInput {
@@ -174,7 +187,7 @@ export interface TaskPolicyEvidenceSnapshot {
 	verification: VerificationPolicy;
 	verificationProfile: VerificationProfileReference | null;
 	riskPolicy?: RiskPolicy;
-	hiddenOracle?: { configured: true; timeoutMs: number } | null;
+	hiddenOracle?: { configured: true; timeoutMs: number; isolation: HiddenOracleIsolationLevel } | null;
 	patchExpectation: PatchExpectation;
 }
 
@@ -213,6 +226,7 @@ export interface VerifierPluginResult {
 	exitCode: number | null;
 	signal: NodeJS.Signals | null;
 	diagnostic: string | null;
+	isolation?: HiddenOracleIsolationCapability;
 }
 
 export interface CommandVerificationResult {
