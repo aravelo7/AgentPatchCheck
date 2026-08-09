@@ -137,6 +137,12 @@ Each task runs sequentially through `validateTaskPolicy` and `executeAgentPatchC
 
 Classifications are `passed`, `timed-out`, `agent-failed`, `verification-failed`, `hidden-oracle-failed`, `hidden-oracle-error`, `assessment-failed`, and `setup-failed`. A failed task is recorded and does not stop later independent tasks. The aggregate CLI response is `ok: false` with `benchmark-failed` when any task is not `passed`; the report and completed task evidence remain available for inspection. Non-Codex adapters, parallel scheduling, retries, and CI-specific policy selection are intentionally outside this minimal runner.
 
+### Harness Benchmark Suite v1
+
+The Headless CI suite includes a Harness-owned, real orchestration fixture named `headless-core` / `v1`. It creates a temporary Git target and runs versioned TaskSpecs through the Script Adapter, existing worktree execution, Evidence, Assessment, verifier, Oracle, and Benchmark report paths. Its expected classifications cover success, agent failure, public verification failure, Hidden Oracle rejection, Oracle isolation fail-closed, and timeout. It does not call Codex or require a UI runtime, so it is a deterministic CI regression gate rather than an agent-quality score.
+
+The suite asserts its expected classifications directly and retains each task's TaskSpec hash, adapter id, Evidence and Assessment references in the generated benchmark report. Real Codex benchmarks remain an explicit local/operator workflow; they are not run automatically in CI.
+
 Compare two persisted reports without launching an agent, reading a worktree, or mutating either report:
 
 ```powershell
