@@ -69,6 +69,10 @@ describe("EvidenceBundle", () => {
 			name: "node-version",
 			sha256: "a".repeat(64),
 		});
+		expect(bundle.policy.riskPolicy).toMatchObject({
+			configuration: { maxChangedFiles: 25, maxTrackedPatchBytes: 131_072 },
+			profile: null,
+		});
 		expect(bundle.result).toEqual({ status: "failed", durationMs: 42 });
 		expect(serialized).not.toContain("super-secret-value");
 		expect(serialized).not.toContain("abcdefghijklmnop");

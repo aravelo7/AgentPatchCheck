@@ -81,6 +81,49 @@ describe("TaskSpec", () => {
 		}
 	});
 
+	it("loads a Harness-side RiskPolicy Profile with an auditable hash", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-task-spec-"));
+		try {
+			const profilePath = join(directory, "risk-policy.json");
+			await writeFile(
+				profilePath,
+				JSON.stringify({
+					version: 1,
+					name: "strict-local",
+					risk: {
+						protectedPaths: ["infra/"],
+						sensitivePaths: ["deploy/secrets/"],
+						maxChangedFiles: 10,
+						maxTrackedPatchBytes: 10_000,
+					},
+				}),
+				"utf8",
+			);
+			const specPath = join(directory, "task.json");
+			await writeFile(
+				specPath,
+				JSON.stringify({
+					version: 1,
+					repositoryRoot: process.cwd(),
+					prompt: "Inspect the requested change.",
+					patchExpectation: "changes-required",
+					riskPolicyProfile: "risk-policy.json",
+				}),
+				"utf8",
+			);
+
+			const input = await loadTaskSpec(specPath);
+
+			expect(input.riskPolicy).toMatchObject({
+				configuration: { protectedPaths: ["infra/"], sensitivePaths: ["deploy/secrets/"], maxChangedFiles: 10 },
+				profile: { path: profilePath, name: "strict-local" },
+			});
+			expect(input.riskPolicy?.profile.sha256).toMatch(/^[a-f0-9]{64}$/u);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects catalog paths and profile files with a mismatched name", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-task-spec-"));
 		try {

@@ -15,7 +15,8 @@ export { readEvidenceBundle, verifyGitPatchBundle, verifyGitPatchEvidence } from
 export { HIDDEN_ORACLE_WORKTREE_ENV, hiddenOracleVerifierPlugin, runHiddenOracle } from "./hidden-oracle";
 export { collectPatchSnapshot, createIsolatedWorkspace, getIsolatedWorkspacePath } from "./isolated-workspace";
 export { decidePatchVerdict } from "./patch-verdict";
-export { evaluateRiskPolicy } from "./risk-policy";
+export { DEFAULT_RISK_POLICY_CONFIGURATION, evaluateRiskPolicy } from "./risk-policy";
+export { loadRiskPolicyProfile } from "./risk-policy-profile";
 export {
 	DEFAULT_TASK_TIMEOUT_MS,
 	MAX_TASK_PROMPT_LENGTH,
@@ -71,6 +72,10 @@ export type {
 	PatchVerdictStatus,
 	RiskFinding,
 	RiskLevel,
+	RiskPolicy,
+	RiskPolicyConfiguration,
+	RiskPolicyInput,
+	RiskPolicyProfileReference,
 	RiskResult,
 	TaskPolicy,
 	TaskPolicyInput,

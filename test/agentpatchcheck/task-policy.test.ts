@@ -87,4 +87,22 @@ describe("validateTaskPolicy", () => {
 			}),
 		).rejects.toThrow("Verification output limit");
 	});
+
+	it("rejects a RiskPolicy Profile inside the target repository", async () => {
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				riskPolicy: {
+					configuration: {
+						protectedPaths: [],
+						sensitivePaths: [],
+						maxChangedFiles: 26,
+						maxTrackedPatchBytes: 131_072,
+					},
+					profile: { path: join(process.cwd(), "package.json"), name: "unsafe", sha256: "a".repeat(64) },
+				},
+			}),
+		).rejects.toThrow("RiskPolicy Profile must be outside the repository root");
+	});
 });

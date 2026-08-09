@@ -2,7 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import { z } from "zod";
-
+import { loadRiskPolicyProfile } from "./risk-policy-profile";
 import type { TaskPolicyInput } from "./types";
 import { loadVerificationProfile, verificationPolicyInputSchema } from "./verification-profile";
 
@@ -30,6 +30,7 @@ const taskSpecSchema = z
 		patchExpectation: z.enum(["changes-required", "changes-optional"]),
 		verification: verificationPolicyInputSchema.optional(),
 		verificationProfile: z.string().optional(),
+		riskPolicyProfile: z.string().optional(),
 	})
 	.strict()
 	.superRefine((spec, context) => {
@@ -120,6 +121,10 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 		parsed.data.verificationProfile === undefined
 			? undefined
 			: await loadVerificationProfile(repositoryRoot, parsed.data.verificationProfile);
+	const riskPolicy =
+		parsed.data.riskPolicyProfile === undefined
+			? undefined
+			: await loadRiskPolicyProfile(specDirectory, parsed.data.riskPolicyProfile);
 
 	return {
 		repositoryRoot,
@@ -138,6 +143,7 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 		patchExpectation: parsed.data.patchExpectation,
 		verification: loadedVerificationProfile?.verification ?? parsed.data.verification,
 		verificationProfile: loadedVerificationProfile?.reference,
+		riskPolicy,
 		hiddenOracle:
 			parsed.data.hiddenOracle === undefined
 				? undefined
