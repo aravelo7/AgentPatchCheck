@@ -1,11 +1,20 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
-
+import type { ProcessTreeKiller } from "./codex-runner";
+import { terminateCodexProcess } from "./codex-runner";
 import type { HiddenOraclePolicy, VerifierPluginResult } from "./types";
 import type { VerifierPlugin } from "./verifier-plugin";
 
 export const HIDDEN_ORACLE_WORKTREE_ENV = "AGENTPATCHCHECK_ORACLE_WORKTREE";
+
+export function terminateHiddenOracleProcess(
+	child: Pick<ChildProcess, "pid" | "kill">,
+	platform: NodeJS.Platform = process.platform,
+	killTree?: ProcessTreeKiller,
+): void {
+	terminateCodexProcess(child, platform, killTree);
+}
 
 export const hiddenOracleVerifierPlugin: VerifierPlugin<HiddenOraclePolicy, { worktreePath: string }> = {
 	id: "hidden-oracle",
@@ -42,7 +51,7 @@ export const hiddenOracleVerifierPlugin: VerifierPlugin<HiddenOraclePolicy, { wo
 			};
 			const timeout = setTimeout(() => {
 				timedOut = true;
-				child.kill();
+				terminateHiddenOracleProcess(child);
 			}, oracle.timeoutMs);
 			child.once("error", () => {
 				finish({

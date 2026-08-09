@@ -4,9 +4,48 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { HIDDEN_ORACLE_WORKTREE_ENV, runHiddenOracle } from "../../src/agentpatchcheck/hidden-oracle";
+import {
+	HIDDEN_ORACLE_WORKTREE_ENV,
+	runHiddenOracle,
+	terminateHiddenOracleProcess,
+} from "../../src/agentpatchcheck/hidden-oracle";
 
 describe("Hidden Oracle", () => {
+	it("terminates the complete Windows Oracle process tree on timeout", () => {
+		let childKilled = false;
+		let treePid: number | undefined;
+		const child = {
+			pid: 42,
+			kill: () => {
+				childKilled = true;
+				return true;
+			},
+		};
+
+		terminateHiddenOracleProcess(child, "win32", (pid, callback) => {
+			treePid = pid;
+			callback();
+		});
+
+		expect(treePid).toBe(42);
+		expect(childKilled).toBe(false);
+	});
+
+	it("keeps direct Oracle process termination on Unix", () => {
+		let childKilled = false;
+		terminateHiddenOracleProcess(
+			{
+				pid: 42,
+				kill: () => {
+					childKilled = true;
+					return true;
+				},
+			},
+			"linux",
+		);
+		expect(childKilled).toBe(true);
+	});
+
 	it("runs outside the agent workspace and records only a structural result", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-hidden-oracle-"));
 		try {

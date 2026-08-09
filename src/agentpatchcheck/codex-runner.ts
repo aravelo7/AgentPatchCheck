@@ -30,7 +30,7 @@ export interface RunCodexOptions {
 	env?: NodeJS.ProcessEnv;
 }
 
-type ProcessTreeKiller = (pid: number, callback: (error?: Error) => void) => void;
+export type ProcessTreeKiller = (pid: number, callback: (error?: Error) => void) => void;
 
 export function terminateCodexProcess(
 	child: Pick<ChildProcess, "pid" | "kill">,
