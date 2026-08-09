@@ -30,7 +30,7 @@ Every Headless CLI command writes one versioned JSON response. Scripts should br
 }
 ```
 
-`run`, `assess`, `cleanup`, `list`, `show`, `apply-plan`, `apply`, and `benchmark` all use this envelope. A successful command exits `0`; a business or runtime failure exits `1`; malformed or missing command arguments exit `2`. Failure responses retain `data` when an operation produced a structured result, such as a blocked apply plan, and otherwise use `data: null`. Stable error codes are `invalid-arguments`, `operation-failed`, `execution-failed`, `assessment-not-pass`, `apply-plan-blocked`, `apply-blocked`, and `benchmark-failed`.
+`run`, `assess`, `cleanup`, `list`, `show`, `apply-plan`, `approve`, `reject`, `apply`, and `benchmark` all use this envelope. A successful command exits `0`; a business or runtime failure exits `1`; malformed or missing command arguments exit `2`. Failure responses retain `data` when an operation produced a structured result, such as a blocked apply plan, and otherwise use `data: null`. Stable error codes are `invalid-arguments`, `operation-failed`, `execution-failed`, `assessment-not-pass`, `apply-plan-blocked`, `apply-blocked`, and `benchmark-failed`.
 
 When a script needs stdout to contain only the JSON response, invoke the local `tsx src/agentpatchcheck/cli.ts <command> ...` entry directly rather than the `npm run` convenience wrapper, which may print npm's own preamble.
 
@@ -39,7 +39,7 @@ When a script needs stdout to contain only the JSON response, invoke the local `
 1. Create a strict TaskSpec and run `run`; retain the evidence path returned in `data.evidence.path`.
 2. Use `show` or `list` to inspect persisted, redacted metadata without re-running Codex.
 3. Run `assess` to re-check the retained worktree and write a matching assessment.
-4. Run `apply-plan`; proceed only when `data.status` is `ready`.
+4. Run `apply-plan`; proceed only when `data.decision` is `ready`. A `requires-approval` decision needs an explicit `approve` record; `prohibited` cannot be approved or applied.
 5. Run `apply` without `--apply` for a final no-write preview, then repeat it with the exact repository root and `--apply` only after review.
 6. Run `cleanup` without `--apply` to preview removal, then add `--apply` to remove only the registered managed worktree. Evidence and assessment files remain.
 
@@ -66,7 +66,7 @@ Task ids are unique and paths must be relative descendants of the BenchmarkSpec 
 npm.cmd run agentpatchcheck:benchmark -- --spec <path-to-benchmark-spec.json>
 ```
 
-Each task runs sequentially through `validateTaskPolicy` and `executeAgentPatchCheck`, retaining its ordinary EvidenceBundle and AssessmentReport in the task repository. The benchmark report is atomically written beside the spec at `.agentpatchcheck/benchmarks/<benchmark-runId>.json`. It contains task ids, evidence and assessment references, agent exit/timeout facts, verification status, verdict, task classification, counts derived from those real results, and a deterministic `summaryText` for terminal logs.
+Each task runs sequentially through `validateTaskPolicy` and `executeAgentPatchCheck`, retaining its ordinary EvidenceBundle and AssessmentReport in the task repository. The benchmark report is atomically written beside the spec at `.agentpatchcheck/benchmarks/<benchmark-runId>.json`. It contains task ids, evidence and assessment references, agent exit/timeout facts, verification status, verdict, computed risk level and observed approval state, task classification, counts derived from those real results, and a deterministic `summaryText` for terminal logs.
 
 Classifications are `passed`, `timed-out`, `agent-failed`, `verification-failed`, `assessment-failed`, and `setup-failed`. A failed task is recorded and does not stop later independent tasks. The aggregate CLI response is `ok: false` with `benchmark-failed` when any task is not `passed`; the report and completed task evidence remain available for inspection. Hidden or semantic oracles, non-Codex adapters, parallel scheduling, retries, and CI-specific policy selection are intentionally outside this minimal runner.
 
@@ -150,6 +150,23 @@ For untracked files, a new run records an applyable snapshot only when the path 
 
 `VerificationPolicy` provides that first task-specific command stage. It is constructed programmatically as an explicit list of argv commands; the CLI deliberately does not accept arbitrary verification-command text. Each command runs directly in the retained worktree with `shell: false`, a bounded timeout and captured output. Shell launchers and Codex bypass parameters are rejected. Commands run before the final Git snapshot, their structured results are written to the EvidenceBundle, and a failed command makes the PatchVerdict fail. The policy does not grant network access; OS-level network isolation is a future sandbox integration concern.
 
+## Verifier Plugins and Hidden Oracle
+
+Assessment exposes public command verification and Hidden Oracle outcomes through one structural verifier result shape: verifier id and kind, `passed` / `failed` / `timed-out` / `error` / `not-run` status, duration, exit code, signal, and a short safe diagnostic. The existing `VerificationPolicy` remains the public command verifier; its recorded command facts are summarized into this common result at assessment time. This is the extension boundary for future verifier kinds without replacing Headless Core execution, evidence, or workspace management.
+
+`hiddenOracle` is an optional TaskSpec block whose `script` is relative to the TaskSpec directory and must resolve outside the target repository. The Harness executes that Node script only after the agent has exited and its patch has been collected. The script runs with its own external directory as cwd and receives only the retained worktree path through `AGENTPATCHCHECK_ORACLE_WORKTREE`; the Oracle path and contents are never supplied to the prompt or Codex arguments.
+
+```json
+{
+  "hiddenOracle": {
+    "script": "oracles/semantic-check.mjs",
+    "timeoutMs": 10000
+  }
+}
+```
+
+Hidden Oracle exit `0` means pass, exit `1` means the patch did not satisfy the hidden semantic check, and any other exit code, missing script, or spawn failure is Oracle infrastructure error. A timeout is separately recorded. Evidence stores only the structural Oracle result and generic diagnostic, never the script path, script body, or Oracle stdout/stderr. Assessment maps rejection to `hidden-oracle-failed` and infrastructure/timeout to distinct verdict reason codes; Benchmark consumes those existing results as `hidden-oracle-failed` or `hidden-oracle-error` task classifications.
+
 `assessEvidenceBundle({ evidencePath })` closes the first evaluation loop: it reads the immutable EvidenceBundle, runs GitPatchVerifier, applies PatchVerdict (including recorded CommandVerifier facts) using the recorded TaskPolicy patch expectation, and atomically writes `<runId>.assessment.json` alongside the source evidence. The assessment never launches Codex, creates a worktree, changes the worktree, or alters the original bundle.
 
 `cleanupEvidenceWorktree({ evidencePath })` is dry-run by default. It requires a completed assessment matching that evidence, verifies the evidence and worktree paths are the exact managed paths recorded for the run, and checks that Git still registers the worktree. With explicit `--apply`, it removes only that registered worktree through `git worktree remove --force`. EvidenceBundle and AssessmentReport JSON files are always retained.
@@ -159,6 +176,20 @@ For untracked files, a new run records an applyable snapshot only when the path 
 `showEvidenceBundle({ evidencePath })` is read-only and does not re-run verification. It returns the stored TaskPolicy and workspace, a redacted agent invocation summary with output byte counts, command-verification summaries, changed files and tracked-patch metadata, plus the matching recorded assessment when present.
 
 `createApplyPlan({ evidencePath })` is read-only. It does not apply a patch; it requires a matching `pass` assessment, confirms the recorded repository remains at its recorded base commit, rejects changed files not materialized in the stored tracked diff, and runs `git apply --check --binary` through stdin. A future write-capable apply command must consume only a `ready` plan.
+
+## Risk Policy and human approval
+
+`apply-plan` also evaluates the immutable EvidenceBundle and matching AssessmentReport with a pure rule-based Risk Policy. It emits a structured `risk` object (level, findings, reason codes, affected paths, and fingerprint), an `approval` state, and a decision of `ready`, `requires-approval`, or `prohibited`. The current policy requires explicit human approval for CI/build files, dependency manifests and lockfiles, scripts, public test changes, and oversized changes. It prohibits apply for sensitive key-like or `.env` paths, an assessment that is not `pass`, or a Hidden Oracle result that is not `passed`.
+
+For a `requires-approval` result, record a deliberate decision bound to the exact EvidenceBundle creation timestamp and risk fingerprint:
+
+```powershell
+npm.cmd run agentpatchcheck:approve -- --evidence <path-to-target-repository>\.agentpatchcheck\evidence\<runId>.json --reason "reviewed dependency update"
+# or explicitly prevent later application
+npm.cmd run agentpatchcheck:reject -- --evidence <path-to-target-repository>\.agentpatchcheck\evidence\<runId>.json --reason "not approved"
+```
+
+The approval is stored atomically beside Evidence as `<runId>.approval.json`; Evidence itself remains immutable. `show` reports the current computed risk and approval state. Approval never suppresses assessment, base-commit, patch-integrity, target-repository, exclusive-create, or explicit `--apply` checks. There is intentionally no user identity, RBAC, automatic approval, or wildcard policy in this local single-operator boundary.
 
 `applyRecordedPatch({ evidencePath, repositoryPath, apply })` re-runs that preflight, requires the explicit repository to resolve to the exact recorded Git root, and writes only when `apply` is true and the result is `ready`. It invokes `git apply --binary` through stdin with no shell, does not stage or commit, and strictly fails rather than stashing, merging, overwriting, or resolving conflicts.
 

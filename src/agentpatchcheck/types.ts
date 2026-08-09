@@ -15,7 +15,18 @@ export interface TaskPolicyInput {
 	allowDangerousParameters?: boolean;
 	verification?: VerificationPolicyInput;
 	verificationProfile?: VerificationProfileReference;
+	hiddenOracle?: HiddenOracleInput;
 	patchExpectation?: PatchExpectation;
+}
+
+export interface HiddenOracleInput {
+	scriptPath: string;
+	timeoutMs?: number;
+}
+
+export interface HiddenOraclePolicy {
+	scriptPath: string;
+	timeoutMs: number;
 }
 
 export interface VerificationCommandInput {
@@ -64,6 +75,7 @@ export interface TaskPolicy {
 	allowDangerousParameters: false;
 	verification: VerificationPolicy;
 	verificationProfile: VerificationProfileReference | null;
+	hiddenOracle: HiddenOraclePolicy | null;
 	patchExpectation: PatchExpectation;
 }
 
@@ -107,6 +119,7 @@ export interface AgentPatchCheckExecutionResult {
 	agent: AgentExecution;
 	patch: PatchSnapshot;
 	commandVerification: CommandVerification;
+	hiddenOracle?: VerifierPluginResult | null;
 }
 
 export interface EvidenceBundleReference {
@@ -129,6 +142,7 @@ export interface TaskPolicyEvidenceSnapshot {
 	allowDangerousParameters: false;
 	verification: VerificationPolicy;
 	verificationProfile: VerificationProfileReference | null;
+	hiddenOracle?: { configured: true; timeoutMs: number } | null;
 	patchExpectation: PatchExpectation;
 }
 
@@ -144,6 +158,7 @@ export interface EvidenceBundle {
 	workspace: IsolatedWorkspace;
 	agent: AgentExecution;
 	commandVerification: CommandVerification;
+	hiddenOracle?: VerifierPluginResult | null;
 	patch: PatchSnapshot & {
 		trackedPatchSha256: string;
 	};
@@ -154,6 +169,19 @@ export interface EvidenceBundle {
 }
 
 export type CommandVerificationStatus = "passed" | "failed" | "not-run";
+
+export type VerifierPluginKind = "command" | "hidden-oracle";
+export type VerifierPluginStatus = "passed" | "failed" | "timed-out" | "error" | "not-run";
+
+export interface VerifierPluginResult {
+	id: string;
+	kind: VerifierPluginKind;
+	status: VerifierPluginStatus;
+	durationMs: number;
+	exitCode: number | null;
+	signal: NodeJS.Signals | null;
+	diagnostic: string | null;
+}
 
 export interface CommandVerificationResult {
 	command: string;
@@ -203,6 +231,9 @@ export type PatchVerdictReasonCode =
 	| "agent-timed-out"
 	| "agent-failed"
 	| "command-verification-failed"
+	| "hidden-oracle-failed"
+	| "hidden-oracle-timed-out"
+	| "hidden-oracle-error"
 	| "changes-required-but-none-recorded";
 
 export interface PatchVerdict {
@@ -217,6 +248,10 @@ export interface AssessmentReport {
 	createdAt: string;
 	evidence: EvidenceBundleReference;
 	gitPatchVerification: GitPatchVerification;
+	verifiers?: {
+		command: VerifierPluginResult;
+		hiddenOracle: VerifierPluginResult | null;
+	};
 	verdict: PatchVerdict;
 }
 
@@ -290,6 +325,9 @@ export interface EvidenceShowResult {
 		untrackedFileCount: number;
 		untrackedFileBytes: number;
 	};
+	hiddenOracle: VerifierPluginResult | null;
+	risk: RiskResult;
+	approval: ApprovalState;
 	result: EvidenceBundle["result"];
 	assessment: {
 		status: EvidenceAssessmentStatus;
@@ -300,6 +338,37 @@ export interface EvidenceShowResult {
 
 export type ApplyPlanStatus = "ready" | "nothing-to-apply" | "blocked";
 
+export type RiskLevel = "low" | "medium" | "high" | "critical";
+export interface RiskFinding {
+	policyId: string;
+	level: RiskLevel;
+	code: string;
+	message: string;
+	files: string[];
+}
+export interface RiskResult {
+	version: 1;
+	level: RiskLevel;
+	findings: RiskFinding[];
+	requiresApproval: boolean;
+	blocksApply: boolean;
+	fingerprint: string;
+}
+export type ApprovalDecision = "approved" | "rejected";
+export interface ApprovalRecord {
+	version: 1;
+	evidence: EvidenceBundleReference;
+	riskFingerprint: string;
+	decision: ApprovalDecision;
+	createdAt: string;
+	reason: string | null;
+}
+export interface ApprovalState {
+	status: "not-required" | "pending" | "approved" | "rejected" | "invalid";
+	record: ApprovalRecord | null;
+}
+export type ApplyDecision = "ready" | "requires-approval" | "prohibited";
+
 export interface ApplyPlanResult {
 	status: ApplyPlanStatus;
 	evidencePath: string;
@@ -309,6 +378,9 @@ export interface ApplyPlanResult {
 	changedFiles: string[];
 	unmaterializedFiles: string[];
 	checks: { assessmentPasses: boolean; headMatchesBaseCommit: boolean; patchApplies: boolean };
+	risk: RiskResult;
+	approval: ApprovalState;
+	decision: ApplyDecision;
 	failures: string[];
 }
 
@@ -328,6 +400,8 @@ export type BenchmarkTaskStatus =
 	| "timed-out"
 	| "agent-failed"
 	| "verification-failed"
+	| "hidden-oracle-failed"
+	| "hidden-oracle-error"
 	| "assessment-failed"
 	| "setup-failed";
 
@@ -352,6 +426,9 @@ export interface BenchmarkTaskResult {
 	assessment: AssessmentReportReference | null;
 	agent: Pick<AgentExecution, "exitCode" | "signal" | "durationMs" | "timedOut"> | null;
 	verificationStatus: CommandVerificationStatus | null;
+	hiddenOracleStatus: VerifierPluginStatus | null;
+	riskLevel: RiskLevel | null;
+	approvalStatus: ApprovalState["status"] | null;
 	verdict: PatchVerdictStatus | null;
 	error: { code: "task-failed"; message: string } | null;
 }

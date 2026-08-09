@@ -3,6 +3,8 @@ import { assessEvidenceBundle } from "./assessment-report";
 import { runCodex } from "./codex-runner";
 import { runCommandVerification } from "./command-verifier";
 import { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
+
+import { runHiddenOracle } from "./hidden-oracle";
 import { collectPatchSnapshot, createIsolatedWorkspace } from "./isolated-workspace";
 import type {
 	AgentExecution,
@@ -94,12 +96,14 @@ export async function executeAgentPatchCheck(
 		};
 	}
 	const patch = await dependencies.collectPatch(workspace.path);
+	const hiddenOracle = await runHiddenOracle(policy.hiddenOracle, workspace.path);
 	const execution: AgentPatchCheckExecutionResult = {
 		status: agent.exitCode === 0 && !agent.timedOut ? "succeeded" : "failed",
 		workspace,
 		agent,
 		patch,
 		commandVerification,
+		hiddenOracle,
 	};
 	const bundle = createEvidenceBundle({ policy, execution });
 	const evidence = await dependencies.writeEvidence({

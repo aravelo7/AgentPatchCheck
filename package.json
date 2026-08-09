@@ -59,6 +59,8 @@
     "agentpatchcheck:list": "tsx src/agentpatchcheck/cli.ts list",
     "agentpatchcheck:show": "tsx src/agentpatchcheck/cli.ts show",
     "agentpatchcheck:apply-plan": "tsx src/agentpatchcheck/cli.ts apply-plan",
+    "agentpatchcheck:approve": "tsx src/agentpatchcheck/cli.ts approve",
+    "agentpatchcheck:reject": "tsx src/agentpatchcheck/cli.ts reject",
     "agentpatchcheck:apply": "tsx src/agentpatchcheck/cli.ts apply",
     "agentpatchcheck:benchmark": "tsx src/agentpatchcheck/cli.ts benchmark",
     "web:dev": "npm --prefix web-ui run dev",

@@ -20,6 +20,13 @@ const taskSpecSchema = z
 		timeoutMs: z.number().int().optional(),
 		sandbox: z.enum(["read-only", "workspace-write"]).optional(),
 		allowNetwork: z.boolean().optional(),
+		hiddenOracle: z
+			.object({
+				script: z.string().min(1),
+				timeoutMs: z.number().int().optional(),
+			})
+			.strict()
+			.optional(),
 		patchExpectation: z.enum(["changes-required", "changes-optional"]),
 		verification: verificationPolicyInputSchema.optional(),
 		verificationProfile: z.string().optional(),
@@ -83,6 +90,16 @@ async function readPromptFile(specDirectory: string, promptFile: string): Promis
 	return await readFile(promptPath, "utf8");
 }
 
+async function resolveHiddenOracleScript(specDirectory: string, script: string): Promise<string> {
+	if (isAbsolute(script)) throw new Error("TaskSpec hiddenOracle script must be relative to the TaskSpec directory.");
+	const scriptPath = resolveFromSpecDirectory(specDirectory, script);
+	if (!isPathWithinDirectory(specDirectory, scriptPath))
+		throw new Error("TaskSpec hiddenOracle script must stay within the TaskSpec directory.");
+	const scriptStat = await stat(scriptPath);
+	if (!scriptStat.isFile()) throw new Error(`TaskSpec hiddenOracle script is not a file: ${scriptPath}`);
+	return scriptPath;
+}
+
 export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 	const resolvedSpecPath = resolve(specPath);
 	let parsedJson: unknown;
@@ -121,5 +138,12 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 		patchExpectation: parsed.data.patchExpectation,
 		verification: loadedVerificationProfile?.verification ?? parsed.data.verification,
 		verificationProfile: loadedVerificationProfile?.reference,
+		hiddenOracle:
+			parsed.data.hiddenOracle === undefined
+				? undefined
+				: {
+						scriptPath: await resolveHiddenOracleScript(specDirectory, parsed.data.hiddenOracle.script),
+						timeoutMs: parsed.data.hiddenOracle.timeoutMs,
+					},
 	};
 }

@@ -11,6 +11,7 @@ import type {
 	GitPatchVerification,
 	PatchExpectation,
 } from "./types";
+import { summarizeCommandVerification } from "./verifier-plugin";
 
 interface AssessmentDependencies {
 	readBundle: (path: string) => Promise<EvidenceBundle>;
@@ -54,6 +55,10 @@ export async function assessEvidenceBundle(
 			createdAt: bundle.createdAt,
 		},
 		gitPatchVerification,
+		verifiers: {
+			command: summarizeCommandVerification(bundle.commandVerification),
+			hiddenOracle: bundle.hiddenOracle ?? null,
+		},
 		verdict: decidePatchVerdict({
 			bundle,
 			verification: gitPatchVerification,

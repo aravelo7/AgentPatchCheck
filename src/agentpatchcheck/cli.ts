@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { Command, CommanderError } from "commander";
 import { createApplyPlan } from "./apply-plan";
 import { applyRecordedPatch } from "./apply-recorded-patch";
+import { recordApprovalDecision } from "./approval";
 import { assessEvidenceBundle } from "./assessment-report";
 import { runBenchmark } from "./benchmark-runner";
 import { loadBenchmarkSpec } from "./benchmark-spec";
@@ -10,6 +11,7 @@ import { cleanupEvidenceWorktree } from "./cleanup";
 import { listEvidenceBundles } from "./evidence-list";
 import { showEvidenceBundle } from "./evidence-show";
 import { executeAgentPatchCheck } from "./execute";
+import { readEvidenceBundle } from "./git-patch-verifier";
 import { validateTaskPolicy } from "./task-policy";
 import { loadTaskSpec } from "./task-spec";
 
@@ -23,6 +25,8 @@ export type HeadlessCliCommand =
 	| "show"
 	| "apply-plan"
 	| "apply"
+	| "approve"
+	| "reject"
 	| "benchmark"
 	| "unknown";
 export type HeadlessCliErrorCode =
@@ -68,6 +72,8 @@ function commandFromArgv(argv: string[]): HeadlessCliCommand {
 			value === "show" ||
 			value === "apply-plan" ||
 			value === "apply" ||
+			value === "approve" ||
+			value === "reject" ||
 			value === "benchmark"
 		)
 			return value;
@@ -202,6 +208,27 @@ export function createHeadlessCliProgram(io: HeadlessCliIo = defaultIo): Command
 				return failure(io, "apply", result, "apply-blocked", "Patch application is blocked.");
 			success(io, "apply", result);
 		});
+
+	for (const approvalCommand of ["approve", "reject"] as const) {
+		program
+			.command(approvalCommand)
+			.description(`${approvalCommand === "approve" ? "Approve" : "Reject"} a risk-gated recorded patch.`)
+			.requiredOption("--evidence <path>", "Path to a persisted EvidenceBundle JSON file.")
+			.option("--reason <text>", "Optional human decision reason.")
+			.action(async (options: { evidence: string; reason?: string }) => {
+				const plan = await createApplyPlan({ evidencePath: options.evidence });
+				if (approvalCommand === "approve" && plan.risk.blocksApply)
+					return failure(io, "approve", plan, "apply-plan-blocked", "Risk policy prohibits approving this patch.");
+				const bundle = await readEvidenceBundle(plan.evidencePath);
+				const record = await recordApprovalDecision({
+					evidence: { path: plan.evidencePath, createdAt: bundle.createdAt },
+					risk: plan.risk,
+					decision: approvalCommand === "approve" ? "approved" : "rejected",
+					reason: options.reason,
+				});
+				success(io, approvalCommand, { plan, approval: record });
+			});
+	}
 
 	return program;
 }

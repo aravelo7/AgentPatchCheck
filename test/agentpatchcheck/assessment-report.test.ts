@@ -97,6 +97,10 @@ describe("AssessmentReport", () => {
 			version: 1,
 			evidence: { path: evidencePath, createdAt: "2026-08-07T00:00:00.000Z" },
 			gitPatchVerification: { status: "verified" },
+			verifiers: {
+				command: { id: "command-verification", kind: "command", status: "not-run" },
+				hiddenOracle: null,
+			},
 			verdict: { status: "pass" },
 		});
 		expect(reports[0]?.verdict.expectation).toBe("changes-required");

@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
 import { lockedFileSystem } from "../fs/locked-file-system";
+import { getApprovalRecordPath, getApprovalState, readApprovalRecord } from "./approval";
 import { executeAgentPatchCheck } from "./execute";
+import { readEvidenceBundle } from "./git-patch-verifier";
+import { evaluateRiskPolicy } from "./risk-policy";
 import { validateTaskPolicy } from "./task-policy";
 import { loadTaskSpec } from "./task-spec";
 import type {
@@ -22,6 +25,7 @@ interface BenchmarkDependencies {
 	execute: typeof executeAgentPatchCheck;
 	writeReport: typeof writeBenchmarkReport;
 	createRunId: () => string;
+	readEvidence: typeof readEvidenceBundle;
 }
 
 const allStatuses: BenchmarkTaskStatus[] = [
@@ -29,6 +33,8 @@ const allStatuses: BenchmarkTaskStatus[] = [
 	"timed-out",
 	"agent-failed",
 	"verification-failed",
+	"hidden-oracle-failed",
+	"hidden-oracle-error",
 	"assessment-failed",
 	"setup-failed",
 ];
@@ -45,6 +51,9 @@ function classifyTask(result: AgentPatchCheckResult): BenchmarkTaskStatus {
 	if (result.agent.timedOut) return "timed-out";
 	if (result.status !== "succeeded") return "agent-failed";
 	if (result.commandVerification.status === "failed") return "verification-failed";
+	if (result.hiddenOracle?.status === "failed") return "hidden-oracle-failed";
+	if (result.hiddenOracle?.status === "timed-out" || result.hiddenOracle?.status === "error")
+		return "hidden-oracle-error";
 	if (result.assessment.report.verdict.status !== "pass") return "assessment-failed";
 	return "passed";
 }
@@ -85,23 +94,39 @@ const defaultDependencies: BenchmarkDependencies = {
 	execute: executeAgentPatchCheck,
 	writeReport: writeBenchmarkReport,
 	createRunId,
+	readEvidence: readEvidenceBundle,
 };
 
 export async function runBenchmark(
 	definition: BenchmarkDefinition,
-	dependencies: BenchmarkDependencies = defaultDependencies,
+	dependencies: Partial<BenchmarkDependencies> = {},
 ): Promise<BenchmarkResult> {
-	const runId = dependencies.createRunId();
+	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
+	const runId = resolvedDependencies.createRunId();
 	const tasks: BenchmarkTaskResult[] = [];
 	for (const task of definition.tasks) {
 		const startedAt = Date.now();
 		try {
-			const input = await dependencies.loadTaskSpec(task.taskSpecPath);
-			const policy = await dependencies.validateTaskPolicy({
+			const input = await resolvedDependencies.loadTaskSpec(task.taskSpecPath);
+			const policy = await resolvedDependencies.validateTaskPolicy({
 				...input,
 				runId: input.runId ?? createTaskRunId(runId, task.id),
 			});
-			const result = await dependencies.execute(policy);
+			const result = await resolvedDependencies.execute(policy);
+			let riskLevel: BenchmarkTaskResult["riskLevel"] = null;
+			let approvalStatus: BenchmarkTaskResult["approvalStatus"] = null;
+			try {
+				const bundle = await resolvedDependencies.readEvidence(result.evidence.path);
+				const risk = evaluateRiskPolicy(bundle, result.assessment.report);
+				riskLevel = risk.level;
+				approvalStatus = getApprovalState(
+					await readApprovalRecord(getApprovalRecordPath(result.evidence.path)),
+					result.evidence,
+					risk,
+				).status;
+			} catch {
+				riskLevel = null;
+			}
 			tasks.push({
 				taskId: task.id,
 				taskSpecPath: task.taskSpecPath,
@@ -116,6 +141,9 @@ export async function runBenchmark(
 					timedOut: result.agent.timedOut,
 				},
 				verificationStatus: result.commandVerification.status,
+				hiddenOracleStatus: result.hiddenOracle?.status ?? null,
+				riskLevel,
+				approvalStatus,
 				verdict: result.assessment.report.verdict.status,
 				error: null,
 			});
@@ -129,6 +157,9 @@ export async function runBenchmark(
 				assessment: null,
 				agent: null,
 				verificationStatus: null,
+				hiddenOracleStatus: null,
+				riskLevel: null,
+				approvalStatus: null,
 				verdict: null,
 				error: { code: "task-failed", message: error instanceof Error ? error.message : String(error) },
 			});
@@ -143,6 +174,9 @@ export async function runBenchmark(
 	};
 	return {
 		report,
-		reference: await dependencies.writeReport({ path: getBenchmarkReportPath(definition.sourcePath, runId), report }),
+		reference: await resolvedDependencies.writeReport({
+			path: getBenchmarkReportPath(definition.sourcePath, runId),
+			report,
+		}),
 	};
 }

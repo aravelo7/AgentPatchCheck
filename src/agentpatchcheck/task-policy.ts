@@ -4,6 +4,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { getGitStdout } from "../workspace/git-utils";
 import {
 	type AgentPatchCheckSandbox,
+	type HiddenOracleInput,
+	type HiddenOraclePolicy,
 	type PatchExpectation,
 	TASK_POLICY_BRAND,
 	type TaskPolicy,
@@ -36,6 +38,16 @@ function assertPathWithinRoot(root: string, candidate: string, label: string): v
 		isAbsolute(relativePath)
 	) {
 		throw new Error(`${label} must be a descendant of the repository root.`);
+	}
+}
+
+function assertPathOutsideRoot(root: string, candidate: string, label: string): void {
+	const relativePath = relative(root, candidate);
+	if (
+		relativePath === "" ||
+		(!relativePath.startsWith("../") && !relativePath.startsWith("..\\") && !isAbsolute(relativePath))
+	) {
+		throw new Error(`${label} must be outside the repository root.`);
 	}
 }
 
@@ -121,6 +133,19 @@ function normalizePatchExpectation(expectation: PatchExpectation | undefined): P
 	return normalized;
 }
 
+async function normalizeHiddenOracle(
+	oracle: HiddenOracleInput | undefined,
+	repositoryRoot: string,
+): Promise<HiddenOraclePolicy | null> {
+	if (oracle === undefined) return null;
+	assertNoNullBytes(oracle.scriptPath, "Hidden Oracle script path");
+	const scriptPath = await realpath(resolve(oracle.scriptPath));
+	const scriptStat = await stat(scriptPath);
+	if (!scriptStat.isFile()) throw new Error(`Hidden Oracle script is not a file: ${scriptPath}`);
+	assertPathOutsideRoot(repositoryRoot, scriptPath, "Hidden Oracle script");
+	return { scriptPath, timeoutMs: normalizeTimeout(oracle.timeoutMs) };
+}
+
 export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPolicy> {
 	if (input.allowDangerousParameters === true) {
 		throw new Error("Dangerous Codex parameters are not supported by Headless Core.");
@@ -180,6 +205,7 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		allowDangerousParameters: false,
 		verification: validateVerificationPolicy(input.verification),
 		verificationProfile: input.verificationProfile ?? null,
+		hiddenOracle: await normalizeHiddenOracle(input.hiddenOracle, repositoryRoot),
 		patchExpectation: normalizePatchExpectation(input.patchExpectation),
 	};
 }
