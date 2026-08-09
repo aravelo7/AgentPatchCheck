@@ -17,6 +17,9 @@ const readyPlan: ApplyPlanResult = {
 	changedFiles: ["README.md"],
 	unmaterializedFiles: [],
 	checks: { assessmentPasses: true, headMatchesBaseCommit: true, patchApplies: true },
+	risk: { version: 1, level: "low", findings: [], requiresApproval: false, blocksApply: false, fingerprint: "risk" },
+	approval: { status: "not-required", record: null },
+	decision: "ready",
 	failures: [],
 };
 

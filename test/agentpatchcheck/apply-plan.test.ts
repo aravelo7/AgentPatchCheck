@@ -161,4 +161,56 @@ describe("createApplyPlan", () => {
 		expect(result.status).toBe("blocked");
 		expect(result.failures).toContain("A matching passing assessment is required.");
 	});
+
+	it("requires explicit approval for a protected patch and accepts a matching approval", async () => {
+		const bundle = createBundle();
+		bundle.patch.changedFiles = ["package.json"];
+		bundle.patch.trackedPatch = "diff --git a/package.json b/package.json\n+++ b/package.json\n";
+		const baseDependencies = {
+			readBundle: async () => bundle,
+			readAssessment: async () => createAssessment(),
+			resolveRepositoryRoot: async () => "D:\\repo",
+			readHeadCommit: async () => "base",
+			checkPatch: async () => ({ ok: true, error: null }),
+		};
+		const pending = await createApplyPlan({ evidencePath }, { ...baseDependencies, readApproval: async () => null });
+		expect(pending).toMatchObject({
+			status: "blocked",
+			decision: "requires-approval",
+			approval: { status: "pending" },
+		});
+		const approved = await createApplyPlan(
+			{ evidencePath },
+			{
+				...baseDependencies,
+				readApproval: async () => ({
+					version: 1,
+					evidence: { path: evidencePath, createdAt: bundle.createdAt },
+					riskFingerprint: pending.risk.fingerprint,
+					decision: "approved",
+					createdAt: "2026-08-08T01:00:00.000Z",
+					reason: null,
+				}),
+			},
+		);
+		expect(approved).toMatchObject({ status: "ready", decision: "ready", approval: { status: "approved" } });
+	});
+
+	it("prohibits sensitive changes even when an approval record exists", async () => {
+		const bundle = createBundle();
+		bundle.patch.changedFiles = [".env.production"];
+		bundle.patch.trackedPatch = "diff --git a/.env.production b/.env.production\n+++ b/.env.production\n";
+		const result = await createApplyPlan(
+			{ evidencePath },
+			{
+				readBundle: async () => bundle,
+				readAssessment: async () => createAssessment(),
+				readApproval: async () => null,
+				resolveRepositoryRoot: async () => "D:\\repo",
+				readHeadCommit: async () => "base",
+				checkPatch: async () => ({ ok: true, error: null }),
+			},
+		);
+		expect(result).toMatchObject({ status: "blocked", decision: "prohibited", risk: { blocksApply: true } });
+	});
 });

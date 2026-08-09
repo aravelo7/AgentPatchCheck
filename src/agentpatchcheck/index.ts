@@ -1,5 +1,6 @@
 export { createApplyPlan } from "./apply-plan";
 export { applyRecordedPatch } from "./apply-recorded-patch";
+export { getApprovalRecordPath, getApprovalState, readApprovalRecord, recordApprovalDecision } from "./approval";
 export { assessEvidenceBundle, getAssessmentReportPath, writeAssessmentReport } from "./assessment-report";
 export { getBenchmarkReportPath, runBenchmark, writeBenchmarkReport } from "./benchmark-runner";
 export { loadBenchmarkSpec } from "./benchmark-spec";
@@ -11,8 +12,10 @@ export { listEvidenceBundles } from "./evidence-list";
 export { showEvidenceBundle } from "./evidence-show";
 export { executeAgentPatchCheck } from "./execute";
 export { readEvidenceBundle, verifyGitPatchBundle, verifyGitPatchEvidence } from "./git-patch-verifier";
+export { HIDDEN_ORACLE_WORKTREE_ENV, hiddenOracleVerifierPlugin, runHiddenOracle } from "./hidden-oracle";
 export { collectPatchSnapshot, createIsolatedWorkspace, getIsolatedWorkspacePath } from "./isolated-workspace";
 export { decidePatchVerdict } from "./patch-verdict";
+export { evaluateRiskPolicy } from "./risk-policy";
 export {
 	DEFAULT_TASK_TIMEOUT_MS,
 	MAX_TASK_PROMPT_LENGTH,
@@ -27,10 +30,14 @@ export type {
 	AgentPatchCheckResult,
 	AgentPatchCheckSandbox,
 	AgentPatchCheckStatus,
+	ApplyDecision,
 	ApplyExecutionResult,
 	ApplyExecutionStatus,
 	ApplyPlanResult,
 	ApplyPlanStatus,
+	ApprovalDecision,
+	ApprovalRecord,
+	ApprovalState,
 	AssessmentReport,
 	AssessmentReportReference,
 	AssessmentResult,
@@ -54,12 +61,17 @@ export type {
 	EvidenceShowResult,
 	GitPatchVerification,
 	GitPatchVerificationStatus,
+	HiddenOracleInput,
+	HiddenOraclePolicy,
 	IsolatedWorkspace,
 	PatchExpectation,
 	PatchSnapshot,
 	PatchVerdict,
 	PatchVerdictReasonCode,
 	PatchVerdictStatus,
+	RiskFinding,
+	RiskLevel,
+	RiskResult,
 	TaskPolicy,
 	TaskPolicyInput,
 	UntrackedFileSnapshot,
@@ -68,6 +80,9 @@ export type {
 	VerificationPolicy,
 	VerificationPolicyInput,
 	VerificationProfileReference,
+	VerifierPluginKind,
+	VerifierPluginResult,
+	VerifierPluginStatus,
 } from "./types";
 export {
 	DEFAULT_VERIFICATION_OUTPUT_LIMIT_BYTES,
@@ -79,3 +94,5 @@ export {
 } from "./verification-policy";
 export type { VerificationProfile } from "./verification-profile";
 export { getVerificationProfilePath, loadVerificationProfile } from "./verification-profile";
+export type { VerifierPlugin } from "./verifier-plugin";
+export { summarizeCommandVerification } from "./verifier-plugin";

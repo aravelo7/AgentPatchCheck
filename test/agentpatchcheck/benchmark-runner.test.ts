@@ -8,12 +8,14 @@ function createResult(options: {
 	exitCode?: number | null;
 	timedOut?: boolean;
 	verificationStatus?: "passed" | "failed" | "not-run";
+	hiddenOracleStatus?: "passed" | "failed" | "timed-out" | "error" | "not-run";
 	verdict?: PatchVerdictStatus;
 }): AgentPatchCheckResult {
 	const exitCode = options.exitCode ?? 0;
 	const timedOut = options.timedOut ?? false;
 	const verificationStatus = options.verificationStatus ?? "not-run";
 	const verdict = options.verdict ?? "pass";
+	const hiddenOracleStatus = options.hiddenOracleStatus;
 	const evidencePath = "D:\\repo\\.agentpatchcheck\\evidence\\task.json";
 	return {
 		status: exitCode === 0 && !timedOut ? "succeeded" : "failed",
@@ -36,6 +38,18 @@ function createResult(options: {
 		},
 		patch: { changedFiles: ["README.md"], trackedPatch: "diff" },
 		commandVerification: { status: verificationStatus, cwd: "D:\\repo", commands: [] },
+		hiddenOracle:
+			hiddenOracleStatus === undefined
+				? null
+				: {
+						id: "hidden-oracle",
+						kind: "hidden-oracle",
+						status: hiddenOracleStatus,
+						durationMs: 1,
+						exitCode: hiddenOracleStatus === "passed" ? 0 : 1,
+						signal: null,
+						diagnostic: null,
+					},
 		evidence: { path: evidencePath, createdAt: "2026-08-08T00:00:00.000Z" },
 		assessment: {
 			report: {
@@ -77,6 +91,8 @@ describe("Benchmark Runner", () => {
 				{ id: "agent", taskSpecPath: "agent.json" },
 				{ id: "verification", taskSpecPath: "verification.json" },
 				{ id: "assessment", taskSpecPath: "assessment.json" },
+				{ id: "oracle-failed", taskSpecPath: "oracle-failed.json" },
+				{ id: "oracle-error", taskSpecPath: "oracle-error.json" },
 			],
 		};
 		const executionOrder: string[] = [];
@@ -86,6 +102,8 @@ describe("Benchmark Runner", () => {
 			agent: createResult({ exitCode: 1, verdict: "fail" }),
 			verification: createResult({ verificationStatus: "failed", verdict: "fail" }),
 			assessment: createResult({ verdict: "inconclusive" }),
+			"oracle-failed": createResult({ hiddenOracleStatus: "failed", verdict: "fail" }),
+			"oracle-error": createResult({ hiddenOracleStatus: "error", verdict: "fail" }),
 		};
 		let writtenSummary: { total: number; passed: number; failed: number; summaryText: string } | undefined;
 
@@ -107,7 +125,15 @@ describe("Benchmark Runner", () => {
 			createRunId: () => "benchmark-test",
 		});
 
-		expect(executionOrder).toEqual(["passed", "timeout", "agent", "verification", "assessment"]);
+		expect(executionOrder).toEqual([
+			"passed",
+			"timeout",
+			"agent",
+			"verification",
+			"assessment",
+			"oracle-failed",
+			"oracle-error",
+		]);
 		expect(result.report.tasks.map((task) => task.status)).toEqual([
 			"passed",
 			"setup-failed",
@@ -115,30 +141,34 @@ describe("Benchmark Runner", () => {
 			"agent-failed",
 			"verification-failed",
 			"assessment-failed",
+			"hidden-oracle-failed",
+			"hidden-oracle-error",
 		]);
 		expect(result.report.tasks[0]).toMatchObject({
 			evidence: { path: "D:\\repo\\.agentpatchcheck\\evidence\\task.json" },
 		});
 		expect(result.report.tasks[1]).toMatchObject({ evidence: null, error: { code: "task-failed" } });
 		expect(result.report.summary).toEqual({
-			total: 6,
+			total: 8,
 			passed: 1,
-			failed: 5,
+			failed: 7,
 			byStatus: {
 				passed: 1,
 				"timed-out": 1,
 				"agent-failed": 1,
 				"verification-failed": 1,
+				"hidden-oracle-failed": 1,
+				"hidden-oracle-error": 1,
 				"assessment-failed": 1,
 				"setup-failed": 1,
 			},
 			summaryText:
-				"1/6 tasks passed; 5 failed (timed-out=1, agent-failed=1, verification-failed=1, assessment-failed=1, setup-failed=1).",
+				"1/8 tasks passed; 7 failed (timed-out=1, agent-failed=1, verification-failed=1, hidden-oracle-failed=1, hidden-oracle-error=1, assessment-failed=1, setup-failed=1).",
 		});
 		expect(writtenSummary).toMatchObject({
-			total: 6,
+			total: 8,
 			passed: 1,
-			failed: 5,
+			failed: 7,
 			summaryText: result.report.summary.summaryText,
 		});
 	});

@@ -5,9 +5,11 @@ import { resolve } from "node:path";
 
 import { createGitProcessEnv } from "../core/git-process-env";
 import { getGitStdout } from "../workspace/git-utils";
+import { getApprovalRecordPath, getApprovalState, readApprovalRecord } from "./approval";
 import { getAssessmentReportPath } from "./assessment-report";
 import { readEvidenceBundle } from "./git-patch-verifier";
-import type { ApplyPlanResult, AssessmentReport, EvidenceBundle } from "./types";
+import { evaluateRiskPolicy } from "./risk-policy";
+import type { ApplyPlanResult, ApprovalRecord, AssessmentReport, EvidenceBundle } from "./types";
 
 interface ApplyPlanDependencies {
 	readBundle: (path: string) => Promise<EvidenceBundle>;
@@ -15,6 +17,7 @@ interface ApplyPlanDependencies {
 	resolveRepositoryRoot: (path: string) => Promise<string>;
 	readHeadCommit: (repositoryRoot: string) => Promise<string>;
 	checkPatch: (repositoryRoot: string, patch: string) => Promise<{ ok: boolean; error: string | null }>;
+	readApproval: (path: string) => Promise<ApprovalRecord | null>;
 }
 
 function pathsEqual(left: string, right: string): boolean {
@@ -87,30 +90,39 @@ const defaultDependencies: ApplyPlanDependencies = {
 	resolveRepositoryRoot,
 	readHeadCommit: async (repositoryRoot) => await getGitStdout(["rev-parse", "--verify", "HEAD"], repositoryRoot),
 	checkPatch,
+	readApproval: readApprovalRecord,
 };
 
 export async function createApplyPlan(
 	options: { evidencePath: string },
-	dependencies: ApplyPlanDependencies = defaultDependencies,
+	dependencies: Partial<ApplyPlanDependencies> = {},
 ): Promise<ApplyPlanResult> {
+	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
 	const evidencePath = resolve(options.evidencePath);
-	const bundle = await dependencies.readBundle(evidencePath);
+	const bundle = await resolvedDependencies.readBundle(evidencePath);
 	const assessmentPath = getAssessmentReportPath(evidencePath);
 	const failures: string[] = [];
-	const assessmentPasses = hasPassingAssessment(
-		await dependencies.readAssessment(assessmentPath),
-		evidencePath,
-		bundle.createdAt,
-	);
+	const assessmentValue = await resolvedDependencies.readAssessment(assessmentPath);
+	const assessmentPasses = hasPassingAssessment(assessmentValue, evidencePath, bundle.createdAt);
 	if (!assessmentPasses) failures.push("A matching passing assessment is required.");
+	const assessment =
+		assessmentValue && typeof assessmentValue === "object" ? (assessmentValue as AssessmentReport) : null;
+	const risk = evaluateRiskPolicy(bundle, assessment);
+	const approval = getApprovalState(
+		await resolvedDependencies.readApproval(getApprovalRecordPath(evidencePath)),
+		{ path: evidencePath, createdAt: bundle.createdAt },
+		risk,
+	);
 
 	let repositoryRoot: string | null = null;
 	let headMatchesBaseCommit = false;
 	try {
-		repositoryRoot = await dependencies.resolveRepositoryRoot(bundle.repository.root);
+		repositoryRoot = await resolvedDependencies.resolveRepositoryRoot(bundle.repository.root);
 		if (!pathsEqual(repositoryRoot, resolve(bundle.repository.root)))
 			failures.push("Recorded repository root no longer matches its Git root.");
-		else headMatchesBaseCommit = (await dependencies.readHeadCommit(repositoryRoot)) === bundle.repository.baseCommit;
+		else
+			headMatchesBaseCommit =
+				(await resolvedDependencies.readHeadCommit(repositoryRoot)) === bundle.repository.baseCommit;
 		if (!headMatchesBaseCommit) failures.push("Repository HEAD does not match the recorded base commit.");
 	} catch {
 		failures.push("Recorded repository is unavailable as a Git repository.");
@@ -121,10 +133,17 @@ export async function createApplyPlan(
 		failures.push("Some changed files are not materialized in the recorded tracked patch.");
 	let patchApplies = bundle.patch.trackedPatch.length === 0;
 	if (repositoryRoot && failures.length === 0 && bundle.patch.trackedPatch.length > 0) {
-		const check = await dependencies.checkPatch(repositoryRoot, bundle.patch.trackedPatch);
+		const check = await resolvedDependencies.checkPatch(repositoryRoot, bundle.patch.trackedPatch);
 		patchApplies = check.ok;
 		if (!check.ok) failures.push(check.error ?? "Recorded patch cannot be applied cleanly.");
 	}
+	if (risk.blocksApply) failures.push("Risk policy prohibits applying this Patch.");
+	else if (risk.requiresApproval && approval.status !== "approved")
+		failures.push(
+			approval.status === "rejected"
+				? "Human approval was rejected."
+				: "Explicit human approval is required before apply.",
+		);
 
 	return {
 		status:
@@ -136,6 +155,13 @@ export async function createApplyPlan(
 		changedFiles: bundle.patch.changedFiles,
 		unmaterializedFiles,
 		checks: { assessmentPasses, headMatchesBaseCommit, patchApplies },
+		risk,
+		approval,
+		decision: risk.blocksApply
+			? "prohibited"
+			: risk.requiresApproval && approval.status !== "approved"
+				? "requires-approval"
+				: "ready",
 		failures,
 	};
 }

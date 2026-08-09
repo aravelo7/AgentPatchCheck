@@ -5,7 +5,7 @@ import type { EvidenceBundle, GitPatchVerification, PatchExpectation } from "../
 
 function createBundle(
 	changedFiles: string[] = ["README.md"],
-): Pick<EvidenceBundle, "agent" | "patch" | "result" | "commandVerification"> {
+): Pick<EvidenceBundle, "agent" | "patch" | "result" | "commandVerification" | "hiddenOracle"> {
 	return {
 		agent: {
 			executable: "codex",
@@ -51,7 +51,7 @@ function createVerification(status: GitPatchVerification["status"] = "verified")
 
 function decide(
 	options: {
-		bundle?: Pick<EvidenceBundle, "agent" | "patch" | "result" | "commandVerification">;
+		bundle?: Pick<EvidenceBundle, "agent" | "patch" | "result" | "commandVerification" | "hiddenOracle">;
 		verification?: GitPatchVerification;
 		expectation?: PatchExpectation;
 	} = {},
@@ -110,6 +110,30 @@ describe("PatchVerdict", () => {
 		expect(decide({ bundle })).toMatchObject({
 			status: "fail",
 			reasonCodes: ["command-verification-failed"],
+		});
+	});
+
+	it("distinguishes a rejected patch from Hidden Oracle infrastructure failure", () => {
+		const rejected = createBundle();
+		rejected.hiddenOracle = {
+			id: "hidden-oracle",
+			kind: "hidden-oracle",
+			status: "failed",
+			durationMs: 1,
+			exitCode: 1,
+			signal: null,
+			diagnostic: "Hidden Oracle rejected the patch.",
+		};
+		const infrastructureFailure = createBundle();
+		infrastructureFailure.hiddenOracle = { ...rejected.hiddenOracle, status: "error", exitCode: 2 };
+
+		expect(decide({ bundle: rejected })).toMatchObject({
+			status: "fail",
+			reasonCodes: ["hidden-oracle-failed"],
+		});
+		expect(decide({ bundle: infrastructureFailure })).toMatchObject({
+			status: "fail",
+			reasonCodes: ["hidden-oracle-error"],
 		});
 	});
 });

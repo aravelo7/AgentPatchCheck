@@ -99,6 +99,10 @@ export function createEvidenceBundle(options: {
 			allowDangerousParameters: false,
 			verification: options.policy.verification,
 			verificationProfile: options.policy.verificationProfile,
+			hiddenOracle:
+				options.policy.hiddenOracle === null
+					? null
+					: { configured: true, timeoutMs: options.policy.hiddenOracle.timeoutMs },
 			patchExpectation: options.policy.patchExpectation,
 		},
 		repository: {
@@ -109,6 +113,7 @@ export function createEvidenceBundle(options: {
 		workspace: options.execution.workspace,
 		agent,
 		commandVerification,
+		hiddenOracle: options.execution.hiddenOracle,
 		patch: {
 			...patch,
 			trackedPatchSha256,

@@ -1,13 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-
+import { getApprovalRecordPath, getApprovalState, readApprovalRecord } from "./approval";
 import { getAssessmentReportPath } from "./assessment-report";
 import { readEvidenceBundle } from "./git-patch-verifier";
+import { evaluateRiskPolicy } from "./risk-policy";
 import type { AssessmentReport, EvidenceAssessmentStatus, EvidenceBundle, EvidenceShowResult } from "./types";
 
 interface EvidenceShowDependencies {
 	readBundle: (path: string) => Promise<EvidenceBundle>;
 	readAssessment: (path: string) => Promise<unknown | null>;
+	readApproval: typeof readApprovalRecord;
 }
 
 function pathsEqual(left: string, right: string): boolean {
@@ -51,19 +53,27 @@ function getMatchingAssessment(
 const defaultDependencies: EvidenceShowDependencies = {
 	readBundle: readEvidenceBundle,
 	readAssessment,
+	readApproval: readApprovalRecord,
 };
 
 export async function showEvidenceBundle(
 	options: { evidencePath: string },
-	dependencies: EvidenceShowDependencies = defaultDependencies,
+	dependencies: Partial<EvidenceShowDependencies> = {},
 ): Promise<EvidenceShowResult> {
+	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
 	const evidencePath = resolve(options.evidencePath);
-	const bundle = await dependencies.readBundle(evidencePath);
+	const bundle = await resolvedDependencies.readBundle(evidencePath);
 	const assessmentPath = getAssessmentReportPath(evidencePath);
 	const assessment = getMatchingAssessment(
-		await dependencies.readAssessment(assessmentPath),
+		await resolvedDependencies.readAssessment(assessmentPath),
 		evidencePath,
 		bundle.createdAt,
+	);
+	const risk = evaluateRiskPolicy(bundle, assessment.report);
+	const approval = getApprovalState(
+		await resolvedDependencies.readApproval(getApprovalRecordPath(evidencePath)),
+		{ path: evidencePath, createdAt: bundle.createdAt },
+		risk,
 	);
 
 	return {
@@ -101,6 +111,9 @@ export async function showEvidenceBundle(
 			untrackedFileCount: bundle.patch.untrackedFiles?.length ?? 0,
 			untrackedFileBytes: (bundle.patch.untrackedFiles ?? []).reduce((total, file) => total + file.byteLength, 0),
 		},
+		hiddenOracle: bundle.hiddenOracle ?? null,
+		risk,
+		approval,
 		result: bundle.result,
 		assessment: {
 			status: assessment.status,

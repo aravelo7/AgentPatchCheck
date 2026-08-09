@@ -7,7 +7,7 @@ import type {
 } from "./types";
 
 export interface PatchVerdictInput {
-	bundle: Pick<EvidenceBundle, "agent" | "patch" | "result" | "commandVerification">;
+	bundle: Pick<EvidenceBundle, "agent" | "patch" | "result" | "commandVerification" | "hiddenOracle">;
 	verification: GitPatchVerification;
 	expectation: PatchExpectation;
 }
@@ -40,6 +40,24 @@ function getFailure(input: PatchVerdictInput): VerdictFailure | undefined {
 		return {
 			code: "command-verification-failed",
 			message: "An authorized verification command did not complete successfully.",
+		};
+	}
+	if (input.bundle.hiddenOracle?.status === "failed") {
+		return {
+			code: "hidden-oracle-failed",
+			message: "Hidden Oracle rejected the patch.",
+		};
+	}
+	if (input.bundle.hiddenOracle?.status === "timed-out") {
+		return {
+			code: "hidden-oracle-timed-out",
+			message: "Hidden Oracle timed out.",
+		};
+	}
+	if (input.bundle.hiddenOracle?.status === "error") {
+		return {
+			code: "hidden-oracle-error",
+			message: "Hidden Oracle infrastructure failed.",
 		};
 	}
 	return undefined;

@@ -66,6 +66,15 @@ function createBundle(): EvidenceBundle {
 			trackedPatchSha256: "patch-hash",
 			untrackedFiles: [{ path: "new.txt", content: "new", sha256: "hash", byteLength: 3 }],
 		},
+		hiddenOracle: {
+			id: "hidden-oracle",
+			kind: "hidden-oracle",
+			status: "passed",
+			durationMs: 1,
+			exitCode: 0,
+			signal: null,
+			diagnostic: null,
+		},
 		result: { status: "succeeded", durationMs: 2 },
 	};
 }
@@ -116,6 +125,7 @@ describe("showEvidenceBundle", () => {
 				untrackedFileCount: 1,
 				untrackedFileBytes: 3,
 			},
+			hiddenOracle: { status: "passed" },
 			assessment: { status: "valid", report: { verdict: { status: "pass" } } },
 		});
 		expect(JSON.stringify(result)).not.toContain('"stdout"');
