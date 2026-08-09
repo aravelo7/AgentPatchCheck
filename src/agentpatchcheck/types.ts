@@ -1,4 +1,5 @@
 export type AgentPatchCheckSandbox = "read-only" | "workspace-write";
+export type AgentAdapterId = "codex" | "script";
 export const TASK_POLICY_BRAND: unique symbol = Symbol("TaskPolicy");
 
 export interface TaskPolicyInput {
@@ -8,6 +9,8 @@ export interface TaskPolicyInput {
 	worktreeRoot?: string;
 	runId?: string;
 	codexExecutable?: string;
+	agentAdapter?: AgentAdapterId;
+	agentScript?: string;
 	model?: string;
 	timeoutMs?: number;
 	sandbox?: AgentPatchCheckSandbox;
@@ -92,6 +95,8 @@ export interface TaskPolicy {
 	prompt: string;
 	runId?: string;
 	codexExecutable?: string;
+	agentAdapter: AgentAdapterId;
+	agentScript: string | null;
 	model?: string;
 	timeoutMs: number;
 	sandbox: AgentPatchCheckSandbox;
@@ -160,6 +165,7 @@ export interface TaskPolicyEvidenceSnapshot {
 	promptLength: number;
 	promptSha256: string;
 	codexExecutable: string | null;
+	agentAdapter?: AgentAdapterId;
 	model: string | null;
 	timeoutMs: number;
 	sandbox: AgentPatchCheckSandbox;
@@ -497,6 +503,7 @@ export interface BenchmarkTaskConfiguration {
 	riskPolicyProfile: RiskPolicyProfileReference | null;
 	codexExecutable: string | null;
 	model: string | null;
+	agentAdapter: AgentAdapterId;
 }
 
 export interface BenchmarkTaskResult {

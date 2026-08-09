@@ -16,6 +16,8 @@ const taskSpecSchema = z
 		worktreeRoot: z.string().optional(),
 		runId: z.string().optional(),
 		codexExecutable: z.string().optional(),
+		agentAdapter: z.enum(["codex", "script"]).optional(),
+		agentScript: z.string().optional(),
 		model: z.string().optional(),
 		timeoutMs: z.number().int().optional(),
 		sandbox: z.enum(["read-only", "workspace-write"]).optional(),
@@ -48,6 +50,20 @@ const taskSpecSchema = z
 				path: ["verification"],
 			});
 		}
+		if (spec.agentAdapter === "script" && spec.agentScript === undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Script Adapter requires agentScript.",
+				path: ["agentScript"],
+			});
+		}
+		if (spec.agentAdapter !== "script" && spec.agentScript !== undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "agentScript requires the Script Adapter.",
+				path: ["agentScript"],
+			});
+		}
 	});
 
 export type TaskSpec = z.infer<typeof taskSpecSchema>;
@@ -74,6 +90,15 @@ function resolveExecutable(specDirectory: string, executable: string | undefined
 	return executable.includes("/") || executable.includes("\\") || executable.startsWith(".")
 		? resolveFromSpecDirectory(specDirectory, executable)
 		: executable;
+}
+
+function resolveAgentScript(specDirectory: string, script: string | undefined): string | undefined {
+	if (script === undefined) return undefined;
+	if (isAbsolute(script)) throw new Error("TaskSpec agentScript must be relative to the TaskSpec directory.");
+	const scriptPath = resolveFromSpecDirectory(specDirectory, script);
+	if (!isPathWithinDirectory(specDirectory, scriptPath))
+		throw new Error("TaskSpec agentScript must stay within the TaskSpec directory.");
+	return scriptPath;
 }
 
 async function readPromptFile(specDirectory: string, promptFile: string): Promise<string> {
@@ -136,6 +161,8 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 				: resolveFromSpecDirectory(specDirectory, parsed.data.worktreeRoot),
 		runId: parsed.data.runId,
 		codexExecutable: resolveExecutable(specDirectory, parsed.data.codexExecutable),
+		agentAdapter: parsed.data.agentAdapter,
+		agentScript: resolveAgentScript(specDirectory, parsed.data.agentScript),
 		model: parsed.data.model,
 		timeoutMs: parsed.data.timeoutMs,
 		sandbox: parsed.data.sandbox,

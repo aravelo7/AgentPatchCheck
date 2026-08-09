@@ -92,6 +92,7 @@ export function createEvidenceBundle(options: {
 			promptLength: options.policy.prompt.length,
 			promptSha256,
 			codexExecutable: options.policy.codexExecutable ?? null,
+			agentAdapter: options.policy.agentAdapter,
 			model: options.policy.model ?? null,
 			timeoutMs: options.policy.timeoutMs,
 			sandbox: options.policy.sandbox,

@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { getGitStdout } from "../workspace/git-utils";
 import { DEFAULT_RISK_POLICY_CONFIGURATION } from "./risk-policy";
 import {
+	type AgentAdapterId,
 	type AgentPatchCheckSandbox,
 	type HiddenOracleInput,
 	type HiddenOraclePolicy,
@@ -23,6 +24,7 @@ const SANDBOXES = new Set<AgentPatchCheckSandbox>(["read-only", "workspace-write
 const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const PATCH_EXPECTATIONS = new Set<PatchExpectation>(["changes-required", "changes-optional"]);
+const AGENT_ADAPTERS = new Set<AgentAdapterId>(["codex", "script"]);
 
 function assertNoNullBytes(value: string, label: string): void {
 	if (value.includes("\0")) {
@@ -148,6 +150,23 @@ async function normalizeHiddenOracle(
 	return { scriptPath, timeoutMs: normalizeTimeout(oracle.timeoutMs) };
 }
 
+async function normalizeAgentScript(
+	adapter: AgentAdapterId,
+	script: string | undefined,
+	repositoryRoot: string,
+): Promise<string | null> {
+	if (adapter === "codex") {
+		if (script !== undefined) throw new Error("Codex Adapter must not define an agent script.");
+		return null;
+	}
+	if (script === undefined) throw new Error("Script Adapter requires an agent script.");
+	assertNoNullBytes(script, "Agent script path");
+	const scriptPath = await realpath(resolve(script));
+	if (!(await stat(scriptPath)).isFile()) throw new Error(`Agent script is not a file: ${scriptPath}`);
+	assertPathOutsideRoot(repositoryRoot, scriptPath, "Agent script");
+	return scriptPath;
+}
+
 async function normalizeRiskPolicy(
 	riskPolicy: TaskPolicyInput["riskPolicy"],
 	repositoryRoot: string,
@@ -210,6 +229,8 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 	if (!SANDBOXES.has(sandbox)) {
 		throw new Error('Sandbox must be "read-only" or "workspace-write".');
 	}
+	const agentAdapter = input.agentAdapter ?? "codex";
+	if (!AGENT_ADAPTERS.has(agentAdapter)) throw new Error('Agent Adapter must be "codex" or "script".');
 
 	return {
 		[TASK_POLICY_BRAND]: true,
@@ -220,6 +241,8 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		prompt: normalizePrompt(input.prompt),
 		runId: normalizeOptionalRunId(input.runId),
 		codexExecutable: normalizeOptionalExecutable(input.codexExecutable),
+		agentAdapter,
+		agentScript: await normalizeAgentScript(agentAdapter, input.agentScript, repositoryRoot),
 		model: normalizeOptionalModel(input.model),
 		timeoutMs: normalizeTimeout(input.timeoutMs),
 		sandbox,

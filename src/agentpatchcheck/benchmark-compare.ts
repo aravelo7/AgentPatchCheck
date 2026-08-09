@@ -50,6 +50,7 @@ const benchmarkReportSchema = z.object({
 				riskPolicyProfile: riskProfileSchema.nullable(),
 				codexExecutable: z.string().nullable(),
 				model: z.string().nullable(),
+				agentAdapter: z.enum(["codex", "script"]),
 			}),
 		}),
 	),
