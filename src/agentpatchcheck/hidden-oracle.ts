@@ -3,10 +3,32 @@ import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { ProcessTreeKiller } from "./codex-runner";
 import { terminateCodexProcess } from "./codex-runner";
-import type { HiddenOraclePolicy, VerifierPluginResult } from "./types";
+import type {
+	HiddenOracleIsolationCapability,
+	HiddenOracleIsolationLevel,
+	HiddenOraclePolicy,
+	VerifierPluginResult,
+} from "./types";
 import type { VerifierPlugin } from "./verifier-plugin";
 
 export const HIDDEN_ORACLE_WORKTREE_ENV = "AGENTPATCHCHECK_ORACLE_WORKTREE";
+
+export function probeHiddenOracleIsolation(
+	requested: HiddenOracleIsolationLevel,
+	platform: NodeJS.Platform = process.platform,
+): HiddenOracleIsolationCapability {
+	if (requested === "none") {
+		return { version: 1, requested, platform, available: true, backend: "none", reason: null };
+	}
+	return {
+		version: 1,
+		requested,
+		platform,
+		available: false,
+		backend: null,
+		reason: "No verified OS isolation backend is configured for this platform.",
+	};
+}
 
 export function terminateHiddenOracleProcess(
 	child: Pick<ChildProcess, "pid" | "kill">,
@@ -21,6 +43,19 @@ export const hiddenOracleVerifierPlugin: VerifierPlugin<HiddenOraclePolicy, { wo
 	kind: "hidden-oracle",
 	execute: async (oracle, context) => {
 		const startedAt = Date.now();
+		const isolation = probeHiddenOracleIsolation(oracle.isolation);
+		if (!isolation.available) {
+			return {
+				id: "hidden-oracle",
+				kind: "hidden-oracle",
+				status: "error",
+				durationMs: Date.now() - startedAt,
+				exitCode: null,
+				signal: null,
+				diagnostic: "Requested Hidden Oracle isolation is unavailable.",
+				isolation,
+			};
+		}
 		try {
 			if (!(await stat(oracle.scriptPath)).isFile()) throw new Error("Hidden Oracle script is unavailable.");
 		} catch {
@@ -32,6 +67,7 @@ export const hiddenOracleVerifierPlugin: VerifierPlugin<HiddenOraclePolicy, { wo
 				exitCode: null,
 				signal: null,
 				diagnostic: "Hidden Oracle infrastructure is unavailable.",
+				isolation,
 			};
 		}
 		return await new Promise((resolve) => {
@@ -62,6 +98,7 @@ export const hiddenOracleVerifierPlugin: VerifierPlugin<HiddenOraclePolicy, { wo
 					exitCode: null,
 					signal: null,
 					diagnostic: "Hidden Oracle could not start.",
+					isolation,
 				});
 			});
 			child.once("close", (exitCode, signal) => {
@@ -79,6 +116,7 @@ export const hiddenOracleVerifierPlugin: VerifierPlugin<HiddenOraclePolicy, { wo
 							: exitCode === 1
 								? "Hidden Oracle rejected the patch."
 								: "Hidden Oracle infrastructure failed.",
+					isolation,
 				});
 			});
 		});

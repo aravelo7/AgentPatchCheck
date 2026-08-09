@@ -7,6 +7,7 @@ import {
 	type AgentAdapterId,
 	type AgentPatchCheckSandbox,
 	type HiddenOracleInput,
+	type HiddenOracleIsolationLevel,
 	type HiddenOraclePolicy,
 	type PatchExpectation,
 	type RiskPolicy,
@@ -25,6 +26,7 @@ const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const PATCH_EXPECTATIONS = new Set<PatchExpectation>(["changes-required", "changes-optional"]);
 const AGENT_ADAPTERS = new Set<AgentAdapterId>(["codex", "script"]);
+const HIDDEN_ORACLE_ISOLATION_LEVELS = new Set<HiddenOracleIsolationLevel>(["none", "network", "process", "strict"]);
 
 function assertNoNullBytes(value: string, label: string): void {
 	if (value.includes("\0")) {
@@ -147,7 +149,9 @@ async function normalizeHiddenOracle(
 	const scriptStat = await stat(scriptPath);
 	if (!scriptStat.isFile()) throw new Error(`Hidden Oracle script is not a file: ${scriptPath}`);
 	assertPathOutsideRoot(repositoryRoot, scriptPath, "Hidden Oracle script");
-	return { scriptPath, timeoutMs: normalizeTimeout(oracle.timeoutMs) };
+	const isolation = oracle.isolation ?? "none";
+	if (!HIDDEN_ORACLE_ISOLATION_LEVELS.has(isolation)) throw new Error("Hidden Oracle isolation level is invalid.");
+	return { scriptPath, timeoutMs: normalizeTimeout(oracle.timeoutMs), isolation };
 }
 
 async function normalizeAgentScript(

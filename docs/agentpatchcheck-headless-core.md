@@ -243,6 +243,12 @@ Assessment exposes public command verification and Hidden Oracle outcomes throug
 
 Hidden Oracle exit `0` means pass, exit `1` means the patch did not satisfy the hidden semantic check, and any other exit code, missing script, or spawn failure is Oracle infrastructure error. A timeout is separately recorded. Evidence stores only the structural Oracle result and generic diagnostic, never the script path, script body, or Oracle stdout/stderr. Assessment maps rejection to `hidden-oracle-failed` and infrastructure/timeout to distinct verdict reason codes; Benchmark consumes those existing results as `hidden-oracle-failed` or `hidden-oracle-error` task classifications.
 
+### Isolation capability contract
+
+Hidden Oracle supports the TaskSpec isolation request `none`, `network`, `process`, or `strict`; omitted means `none` and preserves the existing local Harness execution. The requested level is included in the TaskPolicy/Evidence snapshot. The runtime probes an enforced OS isolation backend before launching the Oracle and persists the structural capability result with the Oracle verifier result.
+
+This release intentionally configures no OS-level network/process/resource backend. Therefore `network`, `process`, and `strict` fail closed as a Hidden Oracle infrastructure error: the Oracle process is not spawned, the patch does not receive a false semantic pass, and Evidence records that no backend was available. This is a safety boundary, not a claim of sandboxing. A future platform backend must make the probe report an actual backend before any such request may run.
+
 `assessEvidenceBundle({ evidencePath })` closes the first evaluation loop: it reads the immutable EvidenceBundle, runs GitPatchVerifier, applies PatchVerdict (including recorded CommandVerifier facts) using the recorded TaskPolicy patch expectation, and atomically writes `<runId>.assessment.json` alongside the source evidence. The assessment never launches Codex, creates a worktree, changes the worktree, or alters the original bundle.
 
 `cleanupEvidenceWorktree({ evidencePath })` is dry-run by default. It requires a completed assessment matching that evidence, verifies the evidence and worktree paths are the exact managed paths recorded for the run, and checks that Git still registers the worktree. With explicit `--apply`, it removes only that registered worktree through `git worktree remove --force`. EvidenceBundle and AssessmentReport JSON files are always retained.

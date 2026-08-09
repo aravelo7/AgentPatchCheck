@@ -23,7 +23,12 @@ export { manageEvidenceRetention } from "./evidence-retention";
 export { showEvidenceBundle } from "./evidence-show";
 export { executeAgentPatchCheck } from "./execute";
 export { readEvidenceBundle, verifyGitPatchBundle, verifyGitPatchEvidence } from "./git-patch-verifier";
-export { HIDDEN_ORACLE_WORKTREE_ENV, hiddenOracleVerifierPlugin, runHiddenOracle } from "./hidden-oracle";
+export {
+	HIDDEN_ORACLE_WORKTREE_ENV,
+	hiddenOracleVerifierPlugin,
+	probeHiddenOracleIsolation,
+	runHiddenOracle,
+} from "./hidden-oracle";
 export { collectPatchSnapshot, createIsolatedWorkspace, getIsolatedWorkspacePath } from "./isolated-workspace";
 export { decidePatchVerdict } from "./patch-verdict";
 export { DEFAULT_RISK_POLICY_CONFIGURATION, evaluateRiskPolicy } from "./risk-policy";
@@ -79,6 +84,8 @@ export type {
 	GitPatchVerification,
 	GitPatchVerificationStatus,
 	HiddenOracleInput,
+	HiddenOracleIsolationCapability,
+	HiddenOracleIsolationLevel,
 	HiddenOraclePolicy,
 	IsolatedWorkspace,
 	PatchExpectation,

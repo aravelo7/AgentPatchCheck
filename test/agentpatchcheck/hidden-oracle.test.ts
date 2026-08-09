@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	HIDDEN_ORACLE_WORKTREE_ENV,
+	probeHiddenOracleIsolation,
 	runHiddenOracle,
 	terminateHiddenOracleProcess,
 } from "../../src/agentpatchcheck/hidden-oracle";
@@ -56,9 +57,9 @@ describe("Hidden Oracle", () => {
 				"utf8",
 			);
 
-			const result = await runHiddenOracle({ scriptPath, timeoutMs: 5_000 }, "worktree-path");
+			const result = await runHiddenOracle({ scriptPath, timeoutMs: 5_000, isolation: "none" }, "worktree-path");
 
-			expect(result).toEqual({
+			expect(result).toMatchObject({
 				id: "hidden-oracle",
 				kind: "hidden-oracle",
 				status: "passed",
@@ -66,6 +67,7 @@ describe("Hidden Oracle", () => {
 				exitCode: 0,
 				signal: null,
 				diagnostic: null,
+				isolation: { requested: "none", available: true, backend: "none" },
 			});
 			expect(JSON.stringify(result)).not.toContain("hidden body");
 			expect(JSON.stringify(result)).not.toContain(scriptPath);
@@ -84,10 +86,16 @@ describe("Hidden Oracle", () => {
 			await writeFile(timeoutPath, "setTimeout(() => process.exit(0), 1_000)", "utf8");
 			await writeFile(infrastructurePath, "process.exit(2)", "utf8");
 
-			const rejected = await runHiddenOracle({ scriptPath: rejectedPath, timeoutMs: 5_000 }, "worktree-path");
-			const timedOut = await runHiddenOracle({ scriptPath: timeoutPath, timeoutMs: 10 }, "worktree-path");
+			const rejected = await runHiddenOracle(
+				{ scriptPath: rejectedPath, timeoutMs: 5_000, isolation: "none" },
+				"worktree-path",
+			);
+			const timedOut = await runHiddenOracle(
+				{ scriptPath: timeoutPath, timeoutMs: 10, isolation: "none" },
+				"worktree-path",
+			);
 			const infrastructureFailure = await runHiddenOracle(
-				{ scriptPath: infrastructurePath, timeoutMs: 5_000 },
+				{ scriptPath: infrastructurePath, timeoutMs: 5_000, isolation: "none" },
 				"worktree-path",
 			);
 
@@ -102,6 +110,32 @@ describe("Hidden Oracle", () => {
 				exitCode: 2,
 				diagnostic: "Hidden Oracle infrastructure failed.",
 			});
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed without starting an Oracle when requested OS isolation is unavailable", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-hidden-oracle-"));
+		try {
+			const markerPath = join(directory, "started.txt");
+			const scriptPath = join(directory, "oracle.mjs");
+			await writeFile(
+				scriptPath,
+				`import { writeFile } from "node:fs/promises"; await writeFile(${JSON.stringify(markerPath)}, "started");`,
+				"utf8",
+			);
+
+			const capability = probeHiddenOracleIsolation("network");
+			const result = await runHiddenOracle({ scriptPath, timeoutMs: 5_000, isolation: "network" }, "worktree-path");
+
+			expect(capability).toMatchObject({ requested: "network", available: false, backend: null });
+			expect(result).toMatchObject({
+				status: "error",
+				diagnostic: "Requested Hidden Oracle isolation is unavailable.",
+				isolation: capability,
+			});
+			await expect(writeFile(markerPath, "check", { flag: "wx" })).resolves.toBeUndefined();
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}
