@@ -39,4 +39,22 @@ describe("Headless CLI contract", () => {
 		});
 		expect(exitCodes).toEqual([1]);
 	});
+
+	it("uses the stable benchmark-compare command name for argument failures", async () => {
+		const output: string[] = [];
+		const exitCodes: number[] = [];
+		await runHeadlessCli(["node", "agentpatchcheck", "benchmark-compare", "--left", "left.json"], {
+			write: (value) => output.push(value),
+			setExitCode: (code) => exitCodes.push(code),
+		});
+
+		expect(JSON.parse(output[0] ?? "{}")).toEqual({
+			contractVersion: HEADLESS_CLI_CONTRACT_VERSION,
+			command: "benchmark-compare",
+			ok: false,
+			data: null,
+			error: expect.objectContaining({ code: "invalid-arguments" }),
+		});
+		expect(exitCodes).toEqual([2]);
+	});
 });

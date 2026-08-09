@@ -190,6 +190,7 @@ describe("createApplyPlan", () => {
 					decision: "approved",
 					createdAt: "2026-08-08T01:00:00.000Z",
 					reason: null,
+					cliVersion: "0.1.70",
 				}),
 			},
 		);

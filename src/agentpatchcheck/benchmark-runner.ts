@@ -130,11 +130,21 @@ export async function runBenchmark(
 			tasks.push({
 				taskId: task.id,
 				taskSpecPath: task.taskSpecPath,
+				configuration: {
+					taskSpecSha256: task.taskSpecSha256,
+					expectedStatus: task.expectedStatus,
+					verificationProfile: policy.verificationProfile,
+					riskPolicyProfile: policy.riskPolicy.profile,
+					codexExecutable: policy.codexExecutable ?? null,
+					model: policy.model ?? null,
+				},
 				status: classifyTask(result),
 				durationMs: Date.now() - startedAt,
 				evidence: result.evidence,
 				assessment: result.assessment.reference,
 				agent: {
+					executable: result.agent.executable,
+					args: result.agent.args,
 					exitCode: result.agent.exitCode,
 					signal: result.agent.signal,
 					durationMs: result.agent.durationMs,
@@ -151,6 +161,14 @@ export async function runBenchmark(
 			tasks.push({
 				taskId: task.id,
 				taskSpecPath: task.taskSpecPath,
+				configuration: {
+					taskSpecSha256: task.taskSpecSha256,
+					expectedStatus: task.expectedStatus,
+					verificationProfile: null,
+					riskPolicyProfile: null,
+					codexExecutable: null,
+					model: null,
+				},
 				status: "setup-failed",
 				durationMs: Date.now() - startedAt,
 				evidence: null,
@@ -168,7 +186,19 @@ export async function runBenchmark(
 	const report: BenchmarkReport = {
 		version: 1,
 		createdAt: new Date().toISOString(),
-		benchmark: { sourcePath: definition.sourcePath, name: definition.name, runId },
+		benchmark: {
+			sourcePath: definition.sourcePath,
+			sourceSha256: definition.sourceSha256,
+			name: definition.name,
+			suite: definition.suite,
+			runId,
+		},
+		environment: {
+			nodeVersion: process.version,
+			platform: process.platform,
+			arch: process.arch,
+			coreSchemaVersion: 1,
+		},
 		tasks,
 		summary: createSummary(tasks),
 	};

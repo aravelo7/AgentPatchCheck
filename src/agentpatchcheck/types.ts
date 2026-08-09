@@ -320,6 +320,47 @@ export interface EvidenceListResult {
 	invalidEvidence: string[];
 }
 
+export interface EvidenceListFilter {
+	status?: AgentPatchCheckStatus;
+	assessmentStatus?: EvidenceAssessmentStatus;
+	runId?: string;
+	createdAfter?: string;
+	createdBefore?: string;
+}
+
+export interface EvidenceAuditResult {
+	version: 1;
+	repositoryRoot: string;
+	auditedAt: string;
+	olderThanDays: number;
+	missingAssessments: EvidenceListEntry[];
+	missingWorktrees: EvidenceListEntry[];
+	expiredBundles: EvidenceListEntry[];
+	orphanApprovalPaths: string[];
+	invalidEvidence: string[];
+}
+
+export interface EvidenceRetentionCandidate {
+	runId: string;
+	evidencePath: string;
+	assessmentPath: string;
+	approvalPath: string;
+	approvalHistoryPath: string;
+	createdAt: string;
+	benchmarkReferences: string[];
+}
+
+export interface EvidenceRetentionResult {
+	version: 1;
+	status: "dry-run" | "removed";
+	repositoryRoot: string;
+	olderThanDays: number;
+	benchmarkReportRoots: string[];
+	candidates: EvidenceRetentionCandidate[];
+	protectedByBenchmark: EvidenceRetentionCandidate[];
+	removedEvidencePaths: string[];
+}
+
 export interface EvidenceShowResult {
 	evidence: EvidenceBundleReference;
 	policy: TaskPolicyEvidenceSnapshot;
@@ -354,6 +395,7 @@ export interface EvidenceShowResult {
 	hiddenOracle: VerifierPluginResult | null;
 	risk: RiskResult;
 	approval: ApprovalState;
+	approvalHistory: ApprovalRecord[];
 	result: EvidenceBundle["result"];
 	assessment: {
 		status: EvidenceAssessmentStatus;
@@ -388,6 +430,7 @@ export interface ApprovalRecord {
 	decision: ApprovalDecision;
 	createdAt: string;
 	reason: string | null;
+	cliVersion: string;
 }
 export interface ApprovalState {
 	status: "not-required" | "pending" | "approved" | "rejected" | "invalid";
@@ -434,23 +477,37 @@ export type BenchmarkTaskStatus =
 export interface BenchmarkTaskDefinition {
 	id: string;
 	taskSpecPath: string;
+	taskSpecSha256: string;
+	expectedStatus: BenchmarkTaskStatus | null;
 }
 
 export interface BenchmarkDefinition {
 	version: 1;
 	sourcePath: string;
+	sourceSha256: string;
 	name: string | null;
+	suite: { id: string; fixtureVersion: string } | null;
 	tasks: BenchmarkTaskDefinition[];
+}
+
+export interface BenchmarkTaskConfiguration {
+	taskSpecSha256: string;
+	expectedStatus: BenchmarkTaskStatus | null;
+	verificationProfile: VerificationProfileReference | null;
+	riskPolicyProfile: RiskPolicyProfileReference | null;
+	codexExecutable: string | null;
+	model: string | null;
 }
 
 export interface BenchmarkTaskResult {
 	taskId: string;
 	taskSpecPath: string;
+	configuration: BenchmarkTaskConfiguration;
 	status: BenchmarkTaskStatus;
 	durationMs: number;
 	evidence: EvidenceBundleReference | null;
 	assessment: AssessmentReportReference | null;
-	agent: Pick<AgentExecution, "exitCode" | "signal" | "durationMs" | "timedOut"> | null;
+	agent: Pick<AgentExecution, "executable" | "args" | "exitCode" | "signal" | "durationMs" | "timedOut"> | null;
 	verificationStatus: CommandVerificationStatus | null;
 	hiddenOracleStatus: VerifierPluginStatus | null;
 	riskLevel: RiskLevel | null;
@@ -464,8 +521,16 @@ export interface BenchmarkReport {
 	createdAt: string;
 	benchmark: {
 		sourcePath: string;
+		sourceSha256: string;
 		name: string | null;
+		suite: { id: string; fixtureVersion: string } | null;
 		runId: string;
+	};
+	environment: {
+		nodeVersion: string;
+		platform: NodeJS.Platform;
+		arch: string;
+		coreSchemaVersion: 1;
 	};
 	tasks: BenchmarkTaskResult[];
 	summary: {
@@ -485,4 +550,29 @@ export interface BenchmarkReportReference {
 export interface BenchmarkResult {
 	report: BenchmarkReport;
 	reference: BenchmarkReportReference;
+}
+
+export type BenchmarkComparisonChange = "unchanged" | "improved" | "regressed" | "changed" | "added" | "removed";
+
+export interface BenchmarkReportComparison {
+	version: 1;
+	left: { path: string; createdAt: string; benchmark: BenchmarkReport["benchmark"] };
+	right: { path: string; createdAt: string; benchmark: BenchmarkReport["benchmark"] };
+	tasks: Array<{
+		taskId: string;
+		change: BenchmarkComparisonChange;
+		configurationChanged: boolean | null;
+		left: Pick<BenchmarkTaskResult, "status" | "configuration"> | null;
+		right: Pick<BenchmarkTaskResult, "status" | "configuration"> | null;
+	}>;
+	summary: {
+		total: number;
+		unchanged: number;
+		improved: number;
+		regressed: number;
+		changed: number;
+		added: number;
+		removed: number;
+		configurationChanged: number;
+	};
 }

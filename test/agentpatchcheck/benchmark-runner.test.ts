@@ -83,17 +83,19 @@ describe("Benchmark Runner", () => {
 		const definition: BenchmarkDefinition = {
 			version: 1,
 			sourcePath: "D:\\benchmarks\\smoke.json",
+			sourceSha256: "benchmark-sha",
 			name: "smoke",
+			suite: { id: "smoke", fixtureVersion: "1" },
 			tasks: [
-				{ id: "passed", taskSpecPath: "passed.json" },
-				{ id: "setup", taskSpecPath: "setup.json" },
-				{ id: "timeout", taskSpecPath: "timeout.json" },
-				{ id: "agent", taskSpecPath: "agent.json" },
-				{ id: "verification", taskSpecPath: "verification.json" },
-				{ id: "assessment", taskSpecPath: "assessment.json" },
-				{ id: "oracle-failed", taskSpecPath: "oracle-failed.json" },
-				{ id: "oracle-error", taskSpecPath: "oracle-error.json" },
-			],
+				"passed",
+				"setup",
+				"timeout",
+				"agent",
+				"verification",
+				"assessment",
+				"oracle-failed",
+				"oracle-error",
+			].map((id) => ({ id, taskSpecPath: `${id}.json`, taskSpecSha256: `${id}-sha`, expectedStatus: null })),
 		};
 		const executionOrder: string[] = [];
 		const outcomes: Record<string, AgentPatchCheckResult> = {
@@ -146,6 +148,7 @@ describe("Benchmark Runner", () => {
 		]);
 		expect(result.report.tasks[0]).toMatchObject({
 			evidence: { path: "D:\\repo\\.agentpatchcheck\\evidence\\task.json" },
+			configuration: { taskSpecSha256: "passed-sha", expectedStatus: null },
 		});
 		expect(result.report.tasks[1]).toMatchObject({ evidence: null, error: { code: "task-failed" } });
 		expect(result.report.summary).toEqual({
