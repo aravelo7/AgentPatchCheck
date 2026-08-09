@@ -13,6 +13,10 @@ local Git repository
 Run it with a strict local TaskSpec JSON file:
 
 ```powershell
+# Installed package / CI entrypoint
+agentpatchcheck run --task-spec D:\Projects\task-spec.json
+
+# Repository development convenience wrapper
 npm.cmd run agentpatchcheck:run -- --task-spec D:\Projects\task-spec.json
 ```
 
@@ -32,7 +36,7 @@ Every Headless CLI command writes one versioned JSON response. Scripts should br
 
 `run`, `assess`, `cleanup`, `list`, `show`, `apply-plan`, `approve`, `reject`, `apply`, and `benchmark` all use this envelope. A successful command exits `0`; a business or runtime failure exits `1`; malformed or missing command arguments exit `2`. Failure responses retain `data` when an operation produced a structured result, such as a blocked apply plan, and otherwise use `data: null`. Stable error codes are `invalid-arguments`, `operation-failed`, `execution-failed`, `assessment-not-pass`, `apply-plan-blocked`, `apply-blocked`, and `benchmark-failed`.
 
-When a script needs stdout to contain only the JSON response, invoke the local `tsx src/agentpatchcheck/cli.ts <command> ...` entry directly rather than the `npm run` convenience wrapper, which may print npm's own preamble.
+The published package exposes `agentpatchcheck` as a standalone Node CLI at `dist/agentpatchcheck.js`; it does not require `tsx` at runtime. When a repository development script needs stdout to contain only the JSON response, invoke that built entry directly rather than an `npm run` convenience wrapper, which may print npm's own preamble.
 
 ## Recommended operating flow
 
