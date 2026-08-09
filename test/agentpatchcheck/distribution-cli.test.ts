@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { HEADLESS_CLI_CONTRACT_VERSION } from "../../src/agentpatchcheck/cli";
+import { HEADLESS_CLI_VERSION } from "../../src/agentpatchcheck/cli-version";
 
 const repositoryRoot = process.cwd();
 const distributionCliPath = join(repositoryRoot, "dist", "agentpatchcheck.js");
@@ -30,7 +31,14 @@ async function runNode(args: string[]): Promise<{ exitCode: number | null; stdou
 }
 
 describe("distributed Headless CLI", () => {
-	it("runs the built agentpatchcheck binary without tsx and preserves the JSON argument contract", async () => {
+	it("keeps the public CLI version aligned with the package version", async () => {
+		const packageJson = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8")) as {
+			version: string;
+		};
+		expect(HEADLESS_CLI_VERSION).toBe(packageJson.version);
+	});
+
+	it("runs the built agentpatchcheck binary without tsx and preserves its public command contract", async () => {
 		const build = await runNode(["scripts/build.mjs"]);
 		expect(build).toMatchObject({ exitCode: 0, stderr: "" });
 		await expect(access(distributionCliPath)).resolves.toBeUndefined();
@@ -44,5 +52,20 @@ describe("distributed Headless CLI", () => {
 			data: null,
 			error: expect.objectContaining({ code: "invalid-arguments" }),
 		});
+
+		const benchmark = await runNode([distributionCliPath, "benchmark"]);
+		expect(benchmark).toMatchObject({ exitCode: 2, stderr: "" });
+		expect(JSON.parse(benchmark.stdout)).toMatchObject({
+			contractVersion: HEADLESS_CLI_CONTRACT_VERSION,
+			command: "benchmark",
+			ok: false,
+			error: { code: "invalid-arguments" },
+		});
+
+		const version = await runNode([distributionCliPath, "--version"]);
+		expect(version).toEqual({ exitCode: 0, stdout: `${HEADLESS_CLI_VERSION}\n`, stderr: "" });
+		const help = await runNode([distributionCliPath, "--help"]);
+		expect(help).toMatchObject({ exitCode: 0, stderr: "" });
+		expect(help.stdout).toContain("benchmark-compare");
 	});
 });

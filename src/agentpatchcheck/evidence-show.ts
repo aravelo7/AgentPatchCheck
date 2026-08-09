@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { getApprovalRecordPath, getApprovalState, readApprovalRecord } from "./approval";
+import { getApprovalRecordPath, getApprovalState, readApprovalHistory, readApprovalRecord } from "./approval";
 import { getAssessmentReportPath } from "./assessment-report";
 import { readEvidenceBundle } from "./git-patch-verifier";
 import { evaluateRiskPolicy } from "./risk-policy";
@@ -10,6 +10,7 @@ interface EvidenceShowDependencies {
 	readBundle: (path: string) => Promise<EvidenceBundle>;
 	readAssessment: (path: string) => Promise<unknown | null>;
 	readApproval: typeof readApprovalRecord;
+	readApprovalHistory: typeof readApprovalHistory;
 }
 
 function pathsEqual(left: string, right: string): boolean {
@@ -54,6 +55,7 @@ const defaultDependencies: EvidenceShowDependencies = {
 	readBundle: readEvidenceBundle,
 	readAssessment,
 	readApproval: readApprovalRecord,
+	readApprovalHistory: readApprovalHistory,
 };
 
 export async function showEvidenceBundle(
@@ -114,6 +116,7 @@ export async function showEvidenceBundle(
 		hiddenOracle: bundle.hiddenOracle ?? null,
 		risk,
 		approval,
+		approvalHistory: await resolvedDependencies.readApprovalHistory(evidencePath),
 		result: bundle.result,
 		assessment: {
 			status: assessment.status,

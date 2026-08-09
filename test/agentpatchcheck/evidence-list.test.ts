@@ -123,4 +123,31 @@ describe("listEvidenceBundles", () => {
 
 		expect(result.entries[0]).toMatchObject({ assessmentStatus: "invalid", verdict: null });
 	});
+
+	it("applies exact run, status, assessment, and timestamp filters after stable ordering", async () => {
+		const older = createBundle("run-old", "2026-08-08T00:00:00.000Z");
+		const newer = createBundle("run-new", "2026-08-08T02:00:00.000Z");
+		const result = await listEvidenceBundles(
+			{
+				repositoryPath: repositoryRoot,
+				filter: {
+					status: "succeeded",
+					assessmentStatus: "valid",
+					runId: "run-new",
+					createdAfter: "2026-08-08T01:00:00.000Z",
+					createdBefore: "2026-08-08T03:00:00.000Z",
+				},
+			},
+			{
+				resolveRepositoryRoot: async () => repositoryRoot,
+				listEvidenceFiles: async () => [olderEvidencePath, newerEvidencePath],
+				readBundle: async (path) => (path === olderEvidencePath ? older : newer),
+				readAssessment: async (path) =>
+					path.includes("run-new") ? createAssessment(newerEvidencePath, newer.createdAt) : null,
+				pathExists: async (path) => path.includes("run-new"),
+			},
+		);
+
+		expect(result.entries.map((entry) => entry.runId)).toEqual(["run-new"]);
+	});
 });

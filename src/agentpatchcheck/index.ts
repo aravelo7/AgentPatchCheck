@@ -1,14 +1,23 @@
 export { createApplyPlan } from "./apply-plan";
 export { applyRecordedPatch } from "./apply-recorded-patch";
-export { getApprovalRecordPath, getApprovalState, readApprovalRecord, recordApprovalDecision } from "./approval";
+export {
+	getApprovalHistoryPath,
+	getApprovalRecordPath,
+	getApprovalState,
+	readApprovalHistory,
+	readApprovalRecord,
+	recordApprovalDecision,
+} from "./approval";
 export { assessEvidenceBundle, getAssessmentReportPath, writeAssessmentReport } from "./assessment-report";
 export { getBenchmarkReportPath, runBenchmark, writeBenchmarkReport } from "./benchmark-runner";
 export { loadBenchmarkSpec } from "./benchmark-spec";
 export { cleanupEvidenceWorktree } from "./cleanup";
 export { buildCodexLaunchPlan, runCodex } from "./codex-runner";
 export { runCommandVerification } from "./command-verifier";
+export { auditEvidenceBundles } from "./evidence-audit";
 export { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
 export { listEvidenceBundles } from "./evidence-list";
+export { manageEvidenceRetention } from "./evidence-retention";
 export { showEvidenceBundle } from "./evidence-show";
 export { executeAgentPatchCheck } from "./execute";
 export { readEvidenceBundle, verifyGitPatchBundle, verifyGitPatchEvidence } from "./git-patch-verifier";
@@ -55,10 +64,14 @@ export type {
 	CommandVerificationResult,
 	CommandVerificationStatus,
 	EvidenceAssessmentStatus,
+	EvidenceAuditResult,
 	EvidenceBundle,
 	EvidenceBundleReference,
 	EvidenceListEntry,
+	EvidenceListFilter,
 	EvidenceListResult,
+	EvidenceRetentionCandidate,
+	EvidenceRetentionResult,
 	EvidenceShowResult,
 	GitPatchVerification,
 	GitPatchVerificationStatus,

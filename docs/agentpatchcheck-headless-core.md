@@ -34,9 +34,48 @@ Every Headless CLI command writes one versioned JSON response. Scripts should br
 }
 ```
 
-`run`, `assess`, `cleanup`, `list`, `show`, `apply-plan`, `approve`, `reject`, `apply`, and `benchmark` all use this envelope. A successful command exits `0`; a business or runtime failure exits `1`; malformed or missing command arguments exit `2`. Failure responses retain `data` when an operation produced a structured result, such as a blocked apply plan, and otherwise use `data: null`. Stable error codes are `invalid-arguments`, `operation-failed`, `execution-failed`, `assessment-not-pass`, `apply-plan-blocked`, `apply-blocked`, and `benchmark-failed`.
+`run`, `assess`, `cleanup`, `list`, `evidence-audit`, `evidence-retention`, `show`, `apply-plan`, `approve`, `reject`, `apply`, `benchmark`, and `benchmark-compare` all use this envelope. A successful command exits `0`; a business or runtime failure exits `1`; malformed or missing command arguments exit `2`. Failure responses retain `data` when an operation produced a structured result, such as a blocked apply plan, and otherwise use `data: null`. Stable error codes are `invalid-arguments`, `operation-failed`, `execution-failed`, `assessment-not-pass`, `apply-plan-blocked`, `apply-blocked`, and `benchmark-failed`.
 
 The published package exposes `agentpatchcheck` as a standalone Node CLI at `dist/agentpatchcheck.js`; it does not require `tsx` at runtime. When a repository development script needs stdout to contain only the JSON response, invoke that built entry directly rather than an `npm run` convenience wrapper, which may print npm's own preamble.
+
+### Version and compatibility policy
+
+`agentpatchcheck --version` prints the installed package version. `agentpatchcheck --help` is the human-facing command reference; automation must use the JSON response envelope rather than parsing help text.
+
+The Headless CLI contract is independently versioned by `contractVersion`. Within a contract version, the envelope keys `contractVersion`, `command`, `ok`, `data`, and `error` are stable. Existing command names and their documented error codes are stable; fields may be added inside `data`, but existing field names, value types, error codes, and exit-code meanings are not changed. A breaking envelope, command, error-code, or exit-code change requires a new contract version and a documented migration path.
+
+| Exit code | Stable meaning | Error codes |
+| --- | --- | --- |
+| `0` | Command completed successfully. | `null` |
+| `1` | Valid command could not complete, or a recorded result was not acceptable. | `operation-failed`, `execution-failed`, `assessment-not-pass`, `apply-plan-blocked`, `apply-blocked`, `benchmark-failed` |
+| `2` | Command arguments are malformed or incomplete. | `invalid-arguments` |
+
+For CI that consumes only Headless Core, run `node scripts/build.mjs`, then invoke `node dist/agentpatchcheck.js ...` (or the installed `agentpatchcheck` bin). The repository provides `npm.cmd run check:headless` and `npm.cmd run smoke:headless-cli`; neither installs or starts the Web UI, desktop package, or Kanban Runtime. `npm.cmd run test:kanban` remains the broader project/UI test entrypoint.
+
+## Evidence lifecycle operations
+
+Evidence is retained by default, including after `cleanup` removes its managed worktree. This preserves auditability. Use `list` for deterministic operational filtering without writing any state:
+
+```powershell
+agentpatchcheck list --repository <path-to-target-repository> --status failed --assessment-status valid --created-after 2026-01-01T00:00:00.000Z
+```
+
+Supported filters are exact `--run-id`, `--status succeeded|failed`, `--assessment-status missing|valid|invalid`, and strict ISO-8601 `--created-after` / `--created-before` bounds.
+
+`evidence-audit` is read-only. It identifies missing or invalid assessments, Evidence whose managed worktree no longer exists, bundles older than a conservative 30-day default (or `--older-than-days`), invalid bundle files, and approval records without a matching Evidence bundle:
+
+```powershell
+agentpatchcheck evidence-audit --repository <path-to-target-repository> --older-than-days 90
+```
+
+`evidence-retention` never deletes by default. It only considers Evidence that is older than the explicit threshold, has a valid matching assessment, and whose managed worktree has already been removed. Every retention invocation requires one or more directories containing BenchmarkReport JSON files; an Evidence referenced by any scanned report remains protected. Review the dry-run output first, then repeat with `--apply`:
+
+```powershell
+agentpatchcheck evidence-retention --repository <path-to-target-repository> --older-than-days 90 --benchmark-report-root <path-to-benchmark-reports>
+agentpatchcheck evidence-retention --repository <path-to-target-repository> --older-than-days 90 --benchmark-report-root <path-to-benchmark-reports> --apply
+```
+
+The report roots are an explicit operational boundary: supply every location that stores Benchmark reports for the repository. Retention removes only the exact managed Evidence JSON and its matching assessment/approval sidecars (including approval history); it never removes worktrees, Git data, benchmark reports, invalid Evidence, or entries with missing/invalid assessments.
 
 ## Recommended operating flow
 
@@ -49,6 +88,12 @@ The published package exposes `agentpatchcheck` as a standalone Node CLI at `dis
 
 This separates agent execution, read-only assessment, explicit patch application, and cleanup. No command stages, commits, pushes, stashes, merges, or resolves conflicts for the user.
 
+## Approval history
+
+Approval remains a local, single-operator safety gate; it is not an identity or RBAC system. Every `approve` and `reject` appends an immutable decision record beside the Evidence. Each record contains the Evidence reference, risk fingerprint, decision, optional reason, timestamp, and the Headless CLI version that made the decision. `show --evidence <path>` returns both the current approval state and the full `approvalHistory`.
+
+Safe Apply reads the latest history decision for the matching Evidence and risk fingerprint. A later rejection therefore blocks apply even if an earlier decision approved it; a manually altered legacy latest-state sidecar cannot override an existing append-only history. Critical/prohibited risk remains non-approvable.
+
 ## Benchmark Runner
 
 `benchmark` is an orchestration layer over existing Headless Core execution. It does not introduce another workspace, agent, verifier, or evidence implementation. A BenchmarkSpec references one or more strict TaskSpec files; each referenced TaskSpec continues to define the repository root, base ref, prompt, sandbox, model, timeout, and inline or catalog verification profile.
@@ -57,22 +102,31 @@ This separates agent execution, read-only assessment, explicit patch application
 {
   "version": 1,
   "name": "local-smoke",
+  "suite": { "id": "local-smoke", "fixtureVersion": "fixture-v1" },
   "tasks": [
-    { "id": "modify-readme", "taskSpec": "tasks/modify-readme.json" },
+    { "id": "modify-readme", "taskSpec": "tasks/modify-readme.json", "expectedStatus": "passed" },
     { "id": "add-file", "taskSpec": "tasks/add-file.json" }
   ]
 }
 ```
 
-Task ids are unique and paths must be relative descendants of the BenchmarkSpec directory. Run the benchmark with:
+Task ids are unique and paths must be relative descendants of the BenchmarkSpec directory. `suite` is optional for compatibility, but a reusable benchmark suite should set both its stable id and fixture version. `expectedStatus` records the intended classification without changing the actual result classification. Run the benchmark with:
 
 ```powershell
 npm.cmd run agentpatchcheck:benchmark -- --spec <path-to-benchmark-spec.json>
 ```
 
-Each task runs sequentially through `validateTaskPolicy` and `executeAgentPatchCheck`, retaining its ordinary EvidenceBundle and AssessmentReport in the task repository. The benchmark report is atomically written beside the spec at `.agentpatchcheck/benchmarks/<benchmark-runId>.json`. It contains task ids, evidence and assessment references, agent exit/timeout facts, verification status, verdict, computed risk level and observed approval state, task classification, counts derived from those real results, and a deterministic `summaryText` for terminal logs.
+Each task runs sequentially through `validateTaskPolicy` and `executeAgentPatchCheck`, retaining its ordinary EvidenceBundle and AssessmentReport in the task repository. The benchmark report is atomically written beside the spec at `.agentpatchcheck/benchmarks/<benchmark-runId>.json`. It contains the BenchmarkSpec and TaskSpec SHA-256 values, Suite/fixture identity, verification and risk-profile references and hashes, configured model, actual agent executable/args, Node/platform/architecture metadata, task evidence and assessment references, real task classification, and a deterministic `summaryText` for terminal logs.
 
 Classifications are `passed`, `timed-out`, `agent-failed`, `verification-failed`, `hidden-oracle-failed`, `hidden-oracle-error`, `assessment-failed`, and `setup-failed`. A failed task is recorded and does not stop later independent tasks. The aggregate CLI response is `ok: false` with `benchmark-failed` when any task is not `passed`; the report and completed task evidence remain available for inspection. Non-Codex adapters, parallel scheduling, retries, and CI-specific policy selection are intentionally outside this minimal runner.
+
+Compare two persisted reports without launching an agent, reading a worktree, or mutating either report:
+
+```powershell
+agentpatchcheck benchmark-compare --left <path-to-baseline-report.json> --right <path-to-candidate-report.json>
+```
+
+The result is a versioned JSON comparison keyed by task id. Each task is `unchanged`, `improved`, `regressed`, `changed`, `added`, or `removed`, and includes `configurationChanged` plus the compared reproducibility configuration so automation can distinguish a behavioral result change from a changed task/profile input.
 
 Assess an existing EvidenceBundle without launching Codex or creating a worktree:
 

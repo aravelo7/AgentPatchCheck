@@ -4,7 +4,13 @@ import { join, resolve } from "node:path";
 import { getGitStdout } from "../workspace/git-utils";
 import { getAssessmentReportPath } from "./assessment-report";
 import { readEvidenceBundle } from "./git-patch-verifier";
-import type { AssessmentReport, EvidenceBundle, EvidenceListEntry, EvidenceListResult } from "./types";
+import type {
+	AssessmentReport,
+	EvidenceBundle,
+	EvidenceListEntry,
+	EvidenceListFilter,
+	EvidenceListResult,
+} from "./types";
 
 const EVIDENCE_DIRECTORY_NAME = "evidence";
 
@@ -95,7 +101,7 @@ const defaultDependencies: EvidenceListDependencies = {
 };
 
 export async function listEvidenceBundles(
-	options: { repositoryPath: string },
+	options: { repositoryPath: string; filter?: EvidenceListFilter },
 	dependencies: EvidenceListDependencies = defaultDependencies,
 ): Promise<EvidenceListResult> {
 	const repositoryRoot = await dependencies.resolveRepositoryRoot(options.repositoryPath);
@@ -132,6 +138,19 @@ export async function listEvidenceBundles(
 	entries.sort(
 		(left, right) => right.createdAt.localeCompare(left.createdAt) || left.runId.localeCompare(right.runId),
 	);
+	const filter = options.filter;
+	const filteredEntries =
+		filter === undefined
+			? entries
+			: entries.filter((entry) => {
+					if (filter.status !== undefined && entry.status !== filter.status) return false;
+					if (filter.assessmentStatus !== undefined && entry.assessmentStatus !== filter.assessmentStatus)
+						return false;
+					if (filter.runId !== undefined && entry.runId !== filter.runId) return false;
+					if (filter.createdAfter !== undefined && entry.createdAt <= filter.createdAfter) return false;
+					if (filter.createdBefore !== undefined && entry.createdAt >= filter.createdBefore) return false;
+					return true;
+				});
 	invalidEvidence.sort((left, right) => left.localeCompare(right));
-	return { repositoryRoot, evidenceDirectory, entries, invalidEvidence };
+	return { repositoryRoot, evidenceDirectory, entries: filteredEntries, invalidEvidence };
 }

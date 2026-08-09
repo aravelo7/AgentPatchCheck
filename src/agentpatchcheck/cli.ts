@@ -5,10 +5,14 @@ import { createApplyPlan } from "./apply-plan";
 import { applyRecordedPatch } from "./apply-recorded-patch";
 import { recordApprovalDecision } from "./approval";
 import { assessEvidenceBundle } from "./assessment-report";
+import { compareBenchmarkReports } from "./benchmark-compare";
 import { runBenchmark } from "./benchmark-runner";
 import { loadBenchmarkSpec } from "./benchmark-spec";
 import { cleanupEvidenceWorktree } from "./cleanup";
+import { HEADLESS_CLI_VERSION } from "./cli-version";
+import { auditEvidenceBundles } from "./evidence-audit";
 import { listEvidenceBundles } from "./evidence-list";
+import { manageEvidenceRetention } from "./evidence-retention";
 import { showEvidenceBundle } from "./evidence-show";
 import { executeAgentPatchCheck } from "./execute";
 import { readEvidenceBundle } from "./git-patch-verifier";
@@ -22,12 +26,15 @@ export type HeadlessCliCommand =
 	| "assess"
 	| "cleanup"
 	| "list"
+	| "evidence-audit"
+	| "evidence-retention"
 	| "show"
 	| "apply-plan"
 	| "apply"
 	| "approve"
 	| "reject"
 	| "benchmark"
+	| "benchmark-compare"
 	| "unknown";
 export type HeadlessCliErrorCode =
 	| "invalid-arguments"
@@ -69,12 +76,15 @@ function commandFromArgv(argv: string[]): HeadlessCliCommand {
 			value === "assess" ||
 			value === "cleanup" ||
 			value === "list" ||
+			value === "evidence-audit" ||
+			value === "evidence-retention" ||
 			value === "show" ||
 			value === "apply-plan" ||
 			value === "apply" ||
 			value === "approve" ||
 			value === "reject" ||
-			value === "benchmark"
+			value === "benchmark" ||
+			value === "benchmark-compare"
 		)
 			return value;
 	}
@@ -109,11 +119,25 @@ function success<T>(io: HeadlessCliIo, command: HeadlessCliCommand, data: T): vo
 	});
 }
 
+function parsePositiveWholeNumber(value: string, label: string): number {
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 36_500)
+		throw new Error(`${label} must be a whole number between 1 and 36500.`);
+	return parsed;
+}
+
+function validateIsoTimestamp(value: string | undefined, label: string): string | undefined {
+	if (value === undefined) return undefined;
+	if (!Number.isFinite(Date.parse(value))) throw new Error(`${label} must be an ISO-8601 timestamp.`);
+	return value;
+}
+
 export function createHeadlessCliProgram(io: HeadlessCliIo = defaultIo): Command {
 	const program = new Command();
 	program
 		.name("agentpatchcheck")
 		.description("Run and assess controlled Codex patch tasks in isolated Git worktrees.")
+		.version(HEADLESS_CLI_VERSION, "--version", "Print the installed agentpatchcheck CLI version.")
 		.exitOverride()
 		.configureOutput({ writeErr: () => undefined });
 
@@ -158,9 +182,94 @@ export function createHeadlessCliProgram(io: HeadlessCliIo = defaultIo): Command
 		.command("list")
 		.description("List persisted Headless Core evidence for one local Git repository.")
 		.requiredOption("--repository <path>", "Git repository root containing .agentpatchcheck evidence.")
-		.action(async (options: { repository: string }) => {
-			success(io, "list", await listEvidenceBundles({ repositoryPath: options.repository }));
+		.option("--status <status>", "Filter by succeeded or failed execution status.")
+		.option("--assessment-status <status>", "Filter by missing, valid, or invalid assessment status.")
+		.option("--run-id <id>", "Filter by exact managed run id.")
+		.option("--created-after <timestamp>", "Filter entries strictly newer than this ISO-8601 timestamp.")
+		.option("--created-before <timestamp>", "Filter entries strictly older than this ISO-8601 timestamp.")
+		.action(
+			async (options: {
+				repository: string;
+				status?: "succeeded" | "failed";
+				assessmentStatus?: "missing" | "valid" | "invalid";
+				runId?: string;
+				createdAfter?: string;
+				createdBefore?: string;
+			}) => {
+				if (options.status !== undefined && options.status !== "succeeded" && options.status !== "failed")
+					throw new Error("status must be succeeded or failed.");
+				if (
+					options.assessmentStatus !== undefined &&
+					options.assessmentStatus !== "missing" &&
+					options.assessmentStatus !== "valid" &&
+					options.assessmentStatus !== "invalid"
+				)
+					throw new Error("assessmentStatus must be missing, valid, or invalid.");
+				success(
+					io,
+					"list",
+					await listEvidenceBundles({
+						repositoryPath: options.repository,
+						filter: {
+							status: options.status,
+							assessmentStatus: options.assessmentStatus,
+							runId: options.runId,
+							createdAfter: validateIsoTimestamp(options.createdAfter, "createdAfter"),
+							createdBefore: validateIsoTimestamp(options.createdBefore, "createdBefore"),
+						},
+					}),
+				);
+			},
+		);
+
+	program
+		.command("evidence-audit")
+		.description("Read-only audit of evidence lifecycle state and orphaned approval records.")
+		.requiredOption("--repository <path>", "Git repository root containing .agentpatchcheck evidence.")
+		.option("--older-than-days <days>", "Expiration threshold; defaults to 30 days.")
+		.action(async (options: { repository: string; olderThanDays?: string }) => {
+			success(
+				io,
+				"evidence-audit",
+				await auditEvidenceBundles({
+					repositoryPath: options.repository,
+					olderThanDays:
+						options.olderThanDays === undefined
+							? undefined
+							: parsePositiveWholeNumber(options.olderThanDays, "olderThanDays"),
+				}),
+			);
 		});
+
+	program
+		.command("evidence-retention")
+		.description("Plan or explicitly remove expired, assessed evidence with no managed worktree.")
+		.requiredOption("--repository <path>", "Git repository root containing .agentpatchcheck evidence.")
+		.requiredOption("--older-than-days <days>", "Expiration threshold for retention candidates.")
+		.requiredOption(
+			"--benchmark-report-root <path...>",
+			"Directories containing BenchmarkReport JSON files to protect referenced evidence.",
+		)
+		.option("--apply", "Remove only the planned unreferenced evidence, assessment, and approval files.")
+		.action(
+			async (options: {
+				repository: string;
+				olderThanDays: string;
+				benchmarkReportRoot: string[];
+				apply?: boolean;
+			}) => {
+				success(
+					io,
+					"evidence-retention",
+					await manageEvidenceRetention({
+						repositoryPath: options.repository,
+						olderThanDays: parsePositiveWholeNumber(options.olderThanDays, "olderThanDays"),
+						benchmarkReportRoots: options.benchmarkReportRoot,
+						apply: options.apply === true,
+					}),
+				);
+			},
+		);
 
 	program
 		.command("show")
@@ -179,6 +288,19 @@ export function createHeadlessCliProgram(io: HeadlessCliIo = defaultIo): Command
 			if (result.report.summary.failed > 0)
 				return failure(io, "benchmark", result, "benchmark-failed", "One or more benchmark tasks did not pass.");
 			success(io, "benchmark", result);
+		});
+
+	program
+		.command("benchmark-compare")
+		.description("Read-only comparison of two persisted BenchmarkReport JSON files.")
+		.requiredOption("--left <path>", "Path to the baseline BenchmarkReport JSON file.")
+		.requiredOption("--right <path>", "Path to the candidate BenchmarkReport JSON file.")
+		.action(async (options: { left: string; right: string }) => {
+			success(
+				io,
+				"benchmark-compare",
+				await compareBenchmarkReports({ leftReportPath: options.left, rightReportPath: options.right }),
+			);
 		});
 
 	program
@@ -237,6 +359,11 @@ export async function runHeadlessCli(argv: string[] = process.argv, io: Headless
 	try {
 		await createHeadlessCliProgram(io).parseAsync(argv);
 	} catch (error) {
+		if (
+			error instanceof CommanderError &&
+			(error.code === "commander.helpDisplayed" || error.code === "commander.version")
+		)
+			return;
 		const code: HeadlessCliErrorCode = error instanceof CommanderError ? "invalid-arguments" : "operation-failed";
 		const message = error instanceof Error ? error.message : String(error);
 		failure(io, commandFromArgv(argv), null, code, message, code === "invalid-arguments" ? 2 : 1);
