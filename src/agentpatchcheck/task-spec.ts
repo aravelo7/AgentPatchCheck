@@ -27,6 +27,8 @@ const taskSpecSchema = z
 				script: z.string().min(1),
 				timeoutMs: z.number().int().optional(),
 				isolation: z.enum(["none", "network", "process", "strict"]).optional(),
+				memoryLimitBytes: z.number().int().positive().optional(),
+				cpuRatePercent: z.number().int().min(1).max(100).optional(),
 			})
 			.strict()
 			.optional(),
@@ -179,6 +181,8 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 						scriptPath: await resolveHiddenOracleScript(specDirectory, parsed.data.hiddenOracle.script),
 						timeoutMs: parsed.data.hiddenOracle.timeoutMs,
 						isolation: parsed.data.hiddenOracle.isolation,
+						memoryLimitBytes: parsed.data.hiddenOracle.memoryLimitBytes,
+						cpuRatePercent: parsed.data.hiddenOracle.cpuRatePercent,
 					},
 	};
 }

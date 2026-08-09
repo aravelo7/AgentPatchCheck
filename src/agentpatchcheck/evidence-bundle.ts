@@ -108,6 +108,8 @@ export function createEvidenceBundle(options: {
 							configured: true,
 							timeoutMs: options.policy.hiddenOracle.timeoutMs,
 							isolation: options.policy.hiddenOracle.isolation,
+							memoryLimitBytes: options.policy.hiddenOracle.memoryLimitBytes,
+							cpuRatePercent: options.policy.hiddenOracle.cpuRatePercent,
 						},
 			patchExpectation: options.policy.patchExpectation,
 		},

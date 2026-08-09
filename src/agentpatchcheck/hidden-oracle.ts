@@ -10,6 +10,7 @@ import type {
 	VerifierPluginResult,
 } from "./types";
 import type { VerifierPlugin } from "./verifier-plugin";
+import { getWindowsJobCapability, runWindowsJob } from "./windows-job-backend";
 
 export const HIDDEN_ORACLE_WORKTREE_ENV = "AGENTPATCHCHECK_ORACLE_WORKTREE";
 
@@ -43,7 +44,10 @@ export const hiddenOracleVerifierPlugin: VerifierPlugin<HiddenOraclePolicy, { wo
 	kind: "hidden-oracle",
 	execute: async (oracle, context) => {
 		const startedAt = Date.now();
-		const isolation = probeHiddenOracleIsolation(oracle.isolation);
+		const isolation =
+			oracle.isolation === "process"
+				? await getWindowsJobCapability(oracle)
+				: probeHiddenOracleIsolation(oracle.isolation);
 		if (!isolation.available) {
 			return {
 				id: "hidden-oracle",
@@ -69,6 +73,57 @@ export const hiddenOracleVerifierPlugin: VerifierPlugin<HiddenOraclePolicy, { wo
 				diagnostic: "Hidden Oracle infrastructure is unavailable.",
 				isolation,
 			};
+		}
+		if (isolation.backend === "windows-job") {
+			try {
+				const result = await runWindowsJob(oracle, context.worktreePath);
+				const completedIsolation = {
+					...isolation,
+					execution: {
+						terminationReason: result.terminationReason,
+						resourceLimitsApplied: result.status !== "error",
+					},
+				};
+				return {
+					id: "hidden-oracle",
+					kind: "hidden-oracle",
+					status:
+						result.status === "timed-out"
+							? "timed-out"
+							: result.status === "exited"
+								? result.exitCode === 0
+									? "passed"
+									: result.exitCode === 1
+										? "failed"
+										: "error"
+								: "error",
+					durationMs: Date.now() - startedAt,
+					exitCode: result.status === "exited" ? result.exitCode : null,
+					signal: null,
+					diagnostic:
+						result.status === "timed-out"
+							? "Hidden Oracle timed out."
+							: result.status === "exited"
+								? result.exitCode === 0
+									? null
+									: result.exitCode === 1
+										? "Hidden Oracle rejected the patch."
+										: "Hidden Oracle infrastructure failed."
+								: "Hidden Oracle infrastructure failed.",
+					isolation: completedIsolation,
+				};
+			} catch {
+				return {
+					id: "hidden-oracle",
+					kind: "hidden-oracle",
+					status: "error",
+					durationMs: Date.now() - startedAt,
+					exitCode: null,
+					signal: null,
+					diagnostic: "Hidden Oracle infrastructure is unavailable.",
+					isolation,
+				};
+			}
 		}
 		return await new Promise((resolve) => {
 			const child = spawn(process.execPath, [oracle.scriptPath], {

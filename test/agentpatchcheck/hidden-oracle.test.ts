@@ -57,7 +57,16 @@ describe("Hidden Oracle", () => {
 				"utf8",
 			);
 
-			const result = await runHiddenOracle({ scriptPath, timeoutMs: 5_000, isolation: "none" }, "worktree-path");
+			const result = await runHiddenOracle(
+				{
+					scriptPath,
+					timeoutMs: 5_000,
+					isolation: "none",
+					memoryLimitBytes: 512 * 1024 * 1024,
+					cpuRatePercent: 50,
+				},
+				"worktree-path",
+			);
 
 			expect(result).toMatchObject({
 				id: "hidden-oracle",
@@ -87,15 +96,33 @@ describe("Hidden Oracle", () => {
 			await writeFile(infrastructurePath, "process.exit(2)", "utf8");
 
 			const rejected = await runHiddenOracle(
-				{ scriptPath: rejectedPath, timeoutMs: 5_000, isolation: "none" },
+				{
+					scriptPath: rejectedPath,
+					timeoutMs: 5_000,
+					isolation: "none",
+					memoryLimitBytes: 512 * 1024 * 1024,
+					cpuRatePercent: 50,
+				},
 				"worktree-path",
 			);
 			const timedOut = await runHiddenOracle(
-				{ scriptPath: timeoutPath, timeoutMs: 10, isolation: "none" },
+				{
+					scriptPath: timeoutPath,
+					timeoutMs: 10,
+					isolation: "none",
+					memoryLimitBytes: 512 * 1024 * 1024,
+					cpuRatePercent: 50,
+				},
 				"worktree-path",
 			);
 			const infrastructureFailure = await runHiddenOracle(
-				{ scriptPath: infrastructurePath, timeoutMs: 5_000, isolation: "none" },
+				{
+					scriptPath: infrastructurePath,
+					timeoutMs: 5_000,
+					isolation: "none",
+					memoryLimitBytes: 512 * 1024 * 1024,
+					cpuRatePercent: 50,
+				},
 				"worktree-path",
 			);
 
@@ -127,7 +154,16 @@ describe("Hidden Oracle", () => {
 			);
 
 			const capability = probeHiddenOracleIsolation("network");
-			const result = await runHiddenOracle({ scriptPath, timeoutMs: 5_000, isolation: "network" }, "worktree-path");
+			const result = await runHiddenOracle(
+				{
+					scriptPath,
+					timeoutMs: 5_000,
+					isolation: "network",
+					memoryLimitBytes: 512 * 1024 * 1024,
+					cpuRatePercent: 50,
+				},
+				"worktree-path",
+			);
 
 			expect(capability).toMatchObject({ requested: "network", available: false, backend: null });
 			expect(result).toMatchObject({

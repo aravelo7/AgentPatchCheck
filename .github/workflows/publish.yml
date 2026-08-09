@@ -20,9 +20,29 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
 
+  windows-helper:
+    name: Build verified Windows Job helper
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          cache: npm
+      - run: npm ci
+      - run: npm run build:windows-job-helper
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-job-helper
+          path: dist/native/windows
+          if-no-files-found: error
+
   publish:
     name: Publish npm package and create GitHub release
-    needs: test
+    needs: [test, windows-helper]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -67,6 +87,12 @@ jobs:
       - name: Install web-ui dependencies
         run: npm ci --prefix web-ui
 
+      - name: Download verified Windows helper
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-job-helper
+          path: .native-artifacts/windows
+
       - name: Verify tag matches package version
         id: version
         run: |
@@ -84,6 +110,8 @@ jobs:
       - name: Build and validate package
         run: npm run prepublishOnly
         env:
+
+          AGENTPATCHCHECK_WINDOWS_JOB_HELPER_SOURCE: ${{ github.workspace }}/.native-artifacts/windows
           POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
           OTEL_TELEMETRY_ENABLED: ${{ secrets.OTEL_TELEMETRY_ENABLED }}
@@ -99,6 +127,8 @@ jobs:
       - name: Publish to npm (OIDC trusted publishing)
         run: npm publish --access public
         env:
+
+          AGENTPATCHCHECK_WINDOWS_JOB_HELPER_SOURCE: ${{ github.workspace }}/.native-artifacts/windows
           POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

@@ -27,6 +27,8 @@ export interface HiddenOracleInput {
 	scriptPath: string;
 	timeoutMs?: number;
 	isolation?: HiddenOracleIsolationLevel;
+	memoryLimitBytes?: number;
+	cpuRatePercent?: number;
 }
 
 export type HiddenOracleIsolationLevel = "none" | "network" | "process" | "strict";
@@ -36,14 +38,19 @@ export interface HiddenOracleIsolationCapability {
 	requested: HiddenOracleIsolationLevel;
 	platform: NodeJS.Platform;
 	available: boolean;
-	backend: "none" | null;
+	backend: "none" | "windows-job" | null;
 	reason: string | null;
+	helper?: { version: string; sha256: string };
+	limits?: { memoryLimitBytes: number; cpuRatePercent: number; timeoutMs: number };
+	execution?: { terminationReason: string; resourceLimitsApplied: boolean };
 }
 
 export interface HiddenOraclePolicy {
 	scriptPath: string;
 	timeoutMs: number;
 	isolation: HiddenOracleIsolationLevel;
+	memoryLimitBytes: number;
+	cpuRatePercent: number;
 }
 
 export interface VerificationCommandInput {
@@ -187,7 +194,13 @@ export interface TaskPolicyEvidenceSnapshot {
 	verification: VerificationPolicy;
 	verificationProfile: VerificationProfileReference | null;
 	riskPolicy?: RiskPolicy;
-	hiddenOracle?: { configured: true; timeoutMs: number; isolation: HiddenOracleIsolationLevel } | null;
+	hiddenOracle?: {
+		configured: true;
+		timeoutMs: number;
+		isolation: HiddenOracleIsolationLevel;
+		memoryLimitBytes: number;
+		cpuRatePercent: number;
+	} | null;
 	patchExpectation: PatchExpectation;
 }
 
