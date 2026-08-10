@@ -1,19 +1,23 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createApplyPlan } from "../../src/agentpatchcheck/apply-plan";
 import type { AssessmentReport, EvidenceBundle } from "../../src/agentpatchcheck/types";
 
-const evidencePath = "D:\\repo\\.agentpatchcheck\\evidence\\run-1.json";
+const repositoryRoot = resolve("test-fixtures", "apply-plan-repo");
+const worktreeRoot = join(repositoryRoot, ".agentpatchcheck", "worktrees");
+const worktreePath = join(worktreeRoot, "run-1");
+const evidencePath = join(repositoryRoot, ".agentpatchcheck", "evidence", "run-1.json");
 
 function createBundle(): EvidenceBundle {
 	return {
 		version: 1,
 		createdAt: "2026-08-08T00:00:00.000Z",
 		policy: {
-			repositoryRoot: "D:\\repo",
+			repositoryRoot,
 			baseRef: "HEAD",
 			baseCommit: "base",
-			worktreeRoot: "D:\\repo\\.agentpatchcheck\\worktrees",
+			worktreeRoot,
 			promptLength: 1,
 			promptSha256: "hash",
 			codexExecutable: null,
@@ -26,11 +30,11 @@ function createBundle(): EvidenceBundle {
 			verificationProfile: null,
 			patchExpectation: "changes-required",
 		},
-		repository: { root: "D:\\repo", baseRef: "HEAD", baseCommit: "base" },
+		repository: { root: repositoryRoot, baseRef: "HEAD", baseCommit: "base" },
 		workspace: {
 			runId: "run-1",
-			repositoryPath: "D:\\repo",
-			path: "D:\\repo\\.agentpatchcheck\\worktrees\\run-1",
+			repositoryPath: repositoryRoot,
+			path: worktreePath,
 			baseRef: "HEAD",
 			baseCommit: "base",
 		},
@@ -44,7 +48,7 @@ function createBundle(): EvidenceBundle {
 			durationMs: 1,
 			timedOut: false,
 		},
-		commandVerification: { status: "passed", cwd: "D:\\repo", commands: [] },
+		commandVerification: { status: "passed", cwd: repositoryRoot, commands: [] },
 		patch: {
 			changedFiles: ["README.md"],
 			trackedPatch: "diff --git a/README.md b/README.md\n+++ b/README.md\n",
@@ -62,7 +66,7 @@ function createAssessment(status: "pass" | "fail" = "pass"): AssessmentReport {
 		gitPatchVerification: {
 			status: "verified",
 			evidencePath,
-			worktreePath: "D:\\repo\\.agentpatchcheck\\worktrees\\run-1",
+			worktreePath,
 			checkedAt: "2026-08-08T00:01:00.000Z",
 			durationMs: 1,
 			checks: {
@@ -86,7 +90,7 @@ describe("createApplyPlan", () => {
 			{
 				readBundle: async () => createBundle(),
 				readAssessment: async () => createAssessment(),
-				resolveRepositoryRoot: async () => "D:\\repo",
+				resolveRepositoryRoot: async () => repositoryRoot,
 				readHeadCommit: async () => "base",
 				checkPatch: async (_root, patch) => {
 					checkedPatch = patch;
@@ -110,7 +114,7 @@ describe("createApplyPlan", () => {
 			{
 				readBundle: async () => bundle,
 				readAssessment: async () => createAssessment(),
-				resolveRepositoryRoot: async () => "D:\\repo",
+				resolveRepositoryRoot: async () => repositoryRoot,
 				readHeadCommit: async () => "base",
 				checkPatch: async () => {
 					checked = true;
@@ -139,7 +143,7 @@ describe("createApplyPlan", () => {
 			{
 				readBundle: async () => bundle,
 				readAssessment: async () => createAssessment(),
-				resolveRepositoryRoot: async () => "D:\\repo",
+				resolveRepositoryRoot: async () => repositoryRoot,
 				readHeadCommit: async () => "base",
 				checkPatch: async () => ({ ok: true, error: null }),
 			},
@@ -153,7 +157,7 @@ describe("createApplyPlan", () => {
 			{
 				readBundle: async () => createBundle(),
 				readAssessment: async () => createAssessment("fail"),
-				resolveRepositoryRoot: async () => "D:\\repo",
+				resolveRepositoryRoot: async () => repositoryRoot,
 				readHeadCommit: async () => "base",
 				checkPatch: async () => ({ ok: true, error: null }),
 			},
@@ -169,7 +173,7 @@ describe("createApplyPlan", () => {
 		const baseDependencies = {
 			readBundle: async () => bundle,
 			readAssessment: async () => createAssessment(),
-			resolveRepositoryRoot: async () => "D:\\repo",
+			resolveRepositoryRoot: async () => repositoryRoot,
 			readHeadCommit: async () => "base",
 			checkPatch: async () => ({ ok: true, error: null }),
 		};
@@ -207,7 +211,7 @@ describe("createApplyPlan", () => {
 				readBundle: async () => bundle,
 				readAssessment: async () => createAssessment(),
 				readApproval: async () => null,
-				resolveRepositoryRoot: async () => "D:\\repo",
+				resolveRepositoryRoot: async () => repositoryRoot,
 				readHeadCommit: async () => "base",
 				checkPatch: async () => ({ ok: true, error: null }),
 			},

@@ -1,19 +1,23 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { showEvidenceBundle } from "../../src/agentpatchcheck/evidence-show";
 import type { AssessmentReport, EvidenceBundle } from "../../src/agentpatchcheck/types";
 
-const evidencePath = "D:\\repo\\.agentpatchcheck\\evidence\\run-1.json";
+const repositoryRoot = resolve("test-fixtures", "evidence-show-repo");
+const worktreeRoot = join(repositoryRoot, ".agentpatchcheck", "worktrees");
+const worktreePath = join(worktreeRoot, "run-1");
+const evidencePath = join(repositoryRoot, ".agentpatchcheck", "evidence", "run-1.json");
 
 function createBundle(): EvidenceBundle {
 	return {
 		version: 1,
 		createdAt: "2026-08-08T00:00:00.000Z",
 		policy: {
-			repositoryRoot: "D:\\repo",
+			repositoryRoot,
 			baseRef: "HEAD",
 			baseCommit: "base",
-			worktreeRoot: "D:\\repo\\.agentpatchcheck\\worktrees",
+			worktreeRoot,
 			promptLength: 5,
 			promptSha256: "hash",
 			codexExecutable: null,
@@ -26,11 +30,11 @@ function createBundle(): EvidenceBundle {
 			verificationProfile: null,
 			patchExpectation: "changes-optional",
 		},
-		repository: { root: "D:\\repo", baseRef: "HEAD", baseCommit: "base" },
+		repository: { root: repositoryRoot, baseRef: "HEAD", baseCommit: "base" },
 		workspace: {
 			runId: "run-1",
-			repositoryPath: "D:\\repo",
-			path: "D:\\repo\\.agentpatchcheck\\worktrees\\run-1",
+			repositoryPath: repositoryRoot,
+			path: worktreePath,
 			baseRef: "HEAD",
 			baseCommit: "base",
 		},
@@ -46,7 +50,7 @@ function createBundle(): EvidenceBundle {
 		},
 		commandVerification: {
 			status: "passed",
-			cwd: "D:\\repo",
+			cwd: repositoryRoot,
 			commands: [
 				{
 					command: "verify",
@@ -87,7 +91,7 @@ function createAssessment(): AssessmentReport {
 		gitPatchVerification: {
 			status: "verified",
 			evidencePath,
-			worktreePath: "D:\\repo\\.agentpatchcheck\\worktrees\\run-1",
+			worktreePath,
 			checkedAt: "2026-08-08T00:01:00.000Z",
 			durationMs: 1,
 			checks: {
@@ -117,7 +121,10 @@ describe("showEvidenceBundle", () => {
 			evidence: { path: evidencePath },
 			policy: { model: "gpt-5.4", promptSha256: "hash" },
 			agent: { executable: "codex", stdoutBytes: 4, stderrBytes: 0 },
-			commandVerification: { cwd: "D:\\repo", commands: [{ command: "verify", stdoutBytes: 8, stderrBytes: 0 }] },
+			commandVerification: {
+				cwd: repositoryRoot,
+				commands: [{ command: "verify", stdoutBytes: 8, stderrBytes: 0 }],
+			},
 			patch: {
 				changedFiles: ["README.md", "new.txt"],
 				trackedPatchSha256: "patch-hash",

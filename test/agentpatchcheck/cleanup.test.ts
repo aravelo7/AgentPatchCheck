@@ -1,17 +1,23 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { cleanupEvidenceWorktree } from "../../src/agentpatchcheck/cleanup";
 import type { AssessmentReport, EvidenceBundle } from "../../src/agentpatchcheck/types";
+
+const repositoryRoot = resolve("test-fixtures", "cleanup-repo");
+const worktreeRoot = join(repositoryRoot, ".agentpatchcheck", "worktrees");
+const worktreePath = join(worktreeRoot, "run-1");
+const evidencePath = join(repositoryRoot, ".agentpatchcheck", "evidence", "run-1.json");
 
 function createBundle(): EvidenceBundle {
 	return {
 		version: 1,
 		createdAt: "2026-08-08T00:00:00.000Z",
 		policy: {
-			repositoryRoot: "D:\\repo",
+			repositoryRoot,
 			baseRef: "HEAD",
 			baseCommit: "base",
-			worktreeRoot: "D:\\repo\\.agentpatchcheck\\worktrees",
+			worktreeRoot,
 			promptLength: 1,
 			promptSha256: "hash",
 			codexExecutable: null,
@@ -24,11 +30,11 @@ function createBundle(): EvidenceBundle {
 			verificationProfile: null,
 			patchExpectation: "changes-optional",
 		},
-		repository: { root: "D:\\repo", baseRef: "HEAD", baseCommit: "base" },
+		repository: { root: repositoryRoot, baseRef: "HEAD", baseCommit: "base" },
 		workspace: {
 			runId: "run-1",
-			repositoryPath: "D:\\repo",
-			path: "D:\\repo\\.agentpatchcheck\\worktrees\\run-1",
+			repositoryPath: repositoryRoot,
+			path: worktreePath,
 			baseRef: "HEAD",
 			baseCommit: "base",
 		},
@@ -42,7 +48,7 @@ function createBundle(): EvidenceBundle {
 			durationMs: 1,
 			timedOut: false,
 		},
-		commandVerification: { status: "not-run", cwd: "D:\\repo", commands: [] },
+		commandVerification: { status: "not-run", cwd: repositoryRoot, commands: [] },
 		patch: { changedFiles: [], trackedPatch: "", trackedPatchSha256: "hash" },
 		result: { status: "succeeded", durationMs: 1 },
 	};
@@ -56,7 +62,7 @@ function createAssessment(evidencePath: string): AssessmentReport {
 		gitPatchVerification: {
 			status: "verified",
 			evidencePath,
-			worktreePath: "D:\\repo\\.agentpatchcheck\\worktrees\\run-1",
+			worktreePath,
 			checkedAt: "2026-08-08T00:01:00.000Z",
 			durationMs: 1,
 			checks: {
@@ -73,8 +79,6 @@ function createAssessment(evidencePath: string): AssessmentReport {
 }
 
 describe("cleanupEvidenceWorktree", () => {
-	const evidencePath = "D:\\repo\\.agentpatchcheck\\evidence\\run-1.json";
-
 	it("defaults to a dry-run after validating the managed assessed worktree", async () => {
 		let removed = false;
 		const result = await cleanupEvidenceWorktree(
@@ -83,7 +87,7 @@ describe("cleanupEvidenceWorktree", () => {
 				readBundle: async () => createBundle(),
 				readAssessment: async () => createAssessment(evidencePath),
 				pathExists: async () => true,
-				listWorktreePaths: async () => ["D:\\repo\\.agentpatchcheck\\worktrees\\run-1"],
+				listWorktreePaths: async () => [worktreePath],
 				removeWorktree: async () => {
 					removed = true;
 				},
@@ -102,7 +106,7 @@ describe("cleanupEvidenceWorktree", () => {
 				readBundle: async () => createBundle(),
 				readAssessment: async () => createAssessment(evidencePath),
 				pathExists: async () => true,
-				listWorktreePaths: async () => ["D:\\repo\\.agentpatchcheck\\worktrees\\run-1"],
+				listWorktreePaths: async () => [worktreePath],
 				removeWorktree: async (_repositoryRoot, worktreePath) => {
 					removedPath = worktreePath;
 				},
@@ -110,12 +114,12 @@ describe("cleanupEvidenceWorktree", () => {
 		);
 
 		expect(result.status).toBe("removed");
-		expect(removedPath).toContain("worktrees\\run-1");
+		expect(removedPath).toBe(worktreePath);
 	});
 
 	it("rejects an evidence bundle whose worktree is outside its managed root", async () => {
 		const bundle = createBundle();
-		bundle.workspace.path = "D:\\repo\\other-worktree";
+		bundle.workspace.path = join(repositoryRoot, "other-worktree");
 		await expect(
 			cleanupEvidenceWorktree(
 				{ evidencePath },
@@ -131,7 +135,7 @@ describe("cleanupEvidenceWorktree", () => {
 	});
 
 	it("rejects cleanup without a matching completed assessment", async () => {
-		const assessment = createAssessment("D:\\repo\\.agentpatchcheck\\evidence\\other.json");
+		const assessment = createAssessment(join(repositoryRoot, ".agentpatchcheck", "evidence", "other.json"));
 		await expect(
 			cleanupEvidenceWorktree(
 				{ evidencePath },
