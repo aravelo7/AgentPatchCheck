@@ -1,0 +1,129 @@
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+
+import { createGitProcessEnv } from "../core/git-process-env";
+import { getGitStdout } from "../workspace/git-utils";
+import { createApplyPlan } from "./apply-plan";
+import { readEvidenceBundle } from "./git-patch-verifier";
+import type { ApplyExecutionResult, ApplyPlanResult, EvidenceBundle } from "./types";
+
+interface ApplyDependencies {
+	createPlan: (options: { evidencePath: string }) => Promise<ApplyPlanResult>;
+	resolveRepositoryRoot: (path: string) => Promise<string>;
+	readBundle: (path: string) => Promise<EvidenceBundle>;
+	applyPatch: (repositoryRoot: string, patch: string) => Promise<void>;
+	readHeadCommit: (repositoryRoot: string) => Promise<string>;
+	writeUntrackedFiles?: (repositoryRoot: string, bundle: EvidenceBundle) => Promise<void>;
+}
+
+function pathsEqual(left: string, right: string): boolean {
+	return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+async function resolveRepositoryRoot(path: string): Promise<string> {
+	return resolve(await getGitStdout(["rev-parse", "--show-toplevel"], path));
+}
+
+async function applyPatch(repositoryRoot: string, patch: string): Promise<void> {
+	await new Promise<void>((resolvePromise, reject) => {
+		const child = spawn("git", ["-c", "core.quotepath=false", "apply", "--binary", "--"], {
+			cwd: repositoryRoot,
+			env: createGitProcessEnv(),
+			stdio: ["pipe", "ignore", "pipe"],
+			windowsHide: true,
+		});
+		let stderr = "";
+		child.stderr.on("data", (chunk: Buffer) => {
+			stderr = `${stderr}${chunk.toString("utf8")}`.slice(0, 16_384);
+		});
+		child.once("error", reject);
+		child.once("close", (code) => {
+			if (code === 0) resolvePromise();
+			else reject(new Error(stderr.trim() || "git apply failed."));
+		});
+		child.stdin.end(patch, "utf8");
+	});
+}
+
+export async function writeUntrackedFiles(repositoryRoot: string, bundle: EvidenceBundle): Promise<void> {
+	const snapshots = (bundle.patch.untrackedFiles ?? []).map((file) => {
+		if (!file.path || file.path.includes("\0") || isAbsolute(file.path) || file.path.split(/[\\/]/u).includes(".."))
+			throw new Error("Invalid untracked file snapshot path.");
+		const content = Buffer.from(file.content, "utf8");
+		if (content.length !== file.byteLength || createHash("sha256").update(content).digest("hex") !== file.sha256)
+			throw new Error("Untracked file snapshot integrity check failed.");
+		return { file, content, target: join(repositoryRoot, file.path) };
+	});
+	const targets = new Set<string>();
+	for (const snapshot of snapshots) {
+		if (targets.has(snapshot.target)) throw new Error("Duplicate untracked file snapshot path.");
+		targets.add(snapshot.target);
+		try {
+			await lstat(snapshot.target);
+			throw new Error(`Refusing to overwrite existing path: ${snapshot.file.path}`);
+		} catch (error) {
+			if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") continue;
+			throw error;
+		}
+	}
+	for (const snapshot of snapshots) {
+		const { content, target } = snapshot;
+		await mkdir(dirname(target), { recursive: true });
+		await writeFile(target, content, { flag: "wx" });
+	}
+}
+
+const defaultDependencies: ApplyDependencies = {
+	createPlan: createApplyPlan,
+	resolveRepositoryRoot,
+	readBundle: readEvidenceBundle,
+	applyPatch,
+	readHeadCommit: async (repositoryRoot) => await getGitStdout(["rev-parse", "--verify", "HEAD"], repositoryRoot),
+	writeUntrackedFiles,
+};
+
+export async function applyRecordedPatch(
+	options: { evidencePath: string; repositoryPath: string; apply?: boolean },
+	dependencies: ApplyDependencies = defaultDependencies,
+): Promise<ApplyExecutionResult> {
+	const plan = await dependencies.createPlan({ evidencePath: options.evidencePath });
+	const targetRepositoryRoot = await dependencies.resolveRepositoryRoot(options.repositoryPath);
+	if (plan.repositoryRoot === null || !pathsEqual(targetRepositoryRoot, plan.repositoryRoot)) {
+		return {
+			status: "blocked",
+			plan,
+			targetRepositoryRoot,
+			failures: ["Explicit target repository does not match the repository recorded by the EvidenceBundle."],
+			appliedFiles: [],
+			headCommit: null,
+		};
+	}
+	if (plan.status !== "ready") {
+		return {
+			status: "blocked",
+			plan,
+			targetRepositoryRoot,
+			failures: plan.failures,
+			appliedFiles: [],
+			headCommit: null,
+		};
+	}
+	if (options.apply !== true) {
+		return { status: "dry-run", plan, targetRepositoryRoot, failures: [], appliedFiles: [], headCommit: null };
+	}
+
+	const bundle = await dependencies.readBundle(resolve(options.evidencePath));
+	if (bundle.patch.trackedPatch.length > 0)
+		await dependencies.applyPatch(targetRepositoryRoot, bundle.patch.trackedPatch);
+	await dependencies.writeUntrackedFiles?.(targetRepositoryRoot, bundle);
+	return {
+		status: "applied",
+		plan,
+		targetRepositoryRoot,
+		failures: [],
+		appliedFiles: plan.changedFiles,
+		headCommit: await dependencies.readHeadCommit(targetRepositoryRoot),
+	};
+}

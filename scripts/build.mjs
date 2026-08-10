@@ -49,6 +49,13 @@ await Promise.all([
 		outfile: "dist/cli.js",
 		banner: { js: `#!/usr/bin/env node\n${cjsShimBanner}` },
 	}),
+	// Standalone Headless Core CLI binary
+	esbuild.build({
+		...shared,
+		entryPoints: ["src/agentpatchcheck/cli.ts"],
+		outfile: "dist/agentpatchcheck.js",
+		banner: { js: `#!/usr/bin/env node\n${cjsShimBanner}` },
+	}),
 	// Library export
 	esbuild.build({
 		...shared,
@@ -57,4 +64,4 @@ await Promise.all([
 	}),
 ]);
 
-console.log("esbuild: bundled dist/cli.js and dist/index.js");
+console.log("esbuild: bundled dist/cli.js, dist/agentpatchcheck.js, and dist/index.js");
