@@ -23,6 +23,24 @@ const benchmarkTaskStatusSchema = z.enum([
 
 const profileSchema = z.object({ path: z.string(), name: z.string().nullable(), sha256: z.string() });
 const riskProfileSchema = z.object({ path: z.string(), name: z.string(), sha256: z.string() });
+const agentIdentitySchema = z.object({
+	requestedExecutable: z.string(),
+	launchExecutable: z.string().nullable(),
+	version: z.string().nullable(),
+});
+const taskExecutionIdentitySchema = z.object({
+	baseCommit: z.string(),
+	hiddenOracleSha256: z.string().nullable(),
+	agent: agentIdentitySchema.nullable(),
+});
+const executionIdentitySchema = z.object({
+	cliVersion: z.string(),
+	coreSchemaVersion: z.literal(1),
+	nodeVersion: z.string(),
+	platform: z.string(),
+	arch: z.string(),
+	suite: z.object({ sourceSha256: z.string(), id: z.string().nullable(), fixtureVersion: z.string().nullable() }),
+});
 const benchmarkReportSchema = z.object({
 	version: z.literal(1),
 	createdAt: z.string(),
@@ -39,6 +57,7 @@ const benchmarkReportSchema = z.object({
 		arch: z.string(),
 		coreSchemaVersion: z.literal(1),
 	}),
+	executionIdentity: executionIdentitySchema.optional(),
 	tasks: z.array(
 		z.object({
 			taskId: z.string(),
@@ -52,6 +71,7 @@ const benchmarkReportSchema = z.object({
 				model: z.string().nullable(),
 				agentAdapter: z.enum(["codex", "script"]),
 			}),
+			executionIdentity: taskExecutionIdentitySchema.nullable().optional(),
 		}),
 	),
 });
@@ -82,6 +102,56 @@ function compareStatus(
 	return "changed";
 }
 
+function compareExecutionIdentity(
+	left: BenchmarkReport,
+	right: BenchmarkReport,
+): BenchmarkReportComparison["compatibility"] {
+	if (left.executionIdentity === undefined || right.executionIdentity === undefined)
+		return { status: "incomplete", reasons: ["One or both reports lack BenchmarkExecutionIdentity."] };
+	const reasons: string[] = [];
+	const leftIdentity = left.executionIdentity;
+	const rightIdentity = right.executionIdentity;
+	if (JSON.stringify(leftIdentity.suite) !== JSON.stringify(rightIdentity.suite))
+		reasons.push("Suite manifest or fixture identity changed.");
+	if (
+		leftIdentity.nodeVersion !== rightIdentity.nodeVersion ||
+		leftIdentity.platform !== rightIdentity.platform ||
+		leftIdentity.arch !== rightIdentity.arch ||
+		leftIdentity.cliVersion !== rightIdentity.cliVersion ||
+		leftIdentity.coreSchemaVersion !== rightIdentity.coreSchemaVersion
+	)
+		reasons.push("Harness environment or core identity changed.");
+	const pairs = new Map(left.tasks.map((task) => [task.taskId, task]));
+	for (const rightTask of right.tasks) {
+		const leftTask = pairs.get(rightTask.taskId);
+		if (leftTask === undefined) continue;
+		if (JSON.stringify(leftTask.configuration) !== JSON.stringify(rightTask.configuration))
+			reasons.push(`Task configuration changed: ${rightTask.taskId}.`);
+		if (leftTask.executionIdentity === undefined || rightTask.executionIdentity === undefined) {
+			reasons.push(`Task execution identity is incomplete: ${rightTask.taskId}.`);
+			continue;
+		}
+		if (JSON.stringify(leftTask.executionIdentity?.agent) !== JSON.stringify(rightTask.executionIdentity?.agent))
+			reasons.push(`Agent identity changed: ${rightTask.taskId}.`);
+		if (
+			leftTask.executionIdentity?.baseCommit !== rightTask.executionIdentity?.baseCommit ||
+			leftTask.executionIdentity?.hiddenOracleSha256 !== rightTask.executionIdentity?.hiddenOracleSha256
+		)
+			reasons.push(`Fixture or Hidden Oracle identity changed: ${rightTask.taskId}.`);
+	}
+	if (reasons.length === 0) return { status: "comparable", reasons };
+	if (reasons.some((reason) => reason.startsWith("Task execution identity is incomplete")))
+		return { status: "incomplete", reasons };
+	if (
+		reasons.some(
+			(reason) => reason.includes("Suite") || reason.includes("configuration") || reason.includes("Fixture"),
+		)
+	)
+		return { status: "fixture-or-config-drift", reasons };
+	if (reasons.some((reason) => reason.startsWith("Agent"))) return { status: "agent-drift", reasons };
+	return { status: "environment-drift", reasons };
+}
+
 export async function compareBenchmarkReports(options: {
 	leftReportPath: string;
 	rightReportPath: string;
@@ -105,6 +175,11 @@ export async function compareBenchmarkReports(options: {
 				leftTask === null || rightTask === null
 					? null
 					: JSON.stringify(leftTask.configuration) !== JSON.stringify(rightTask.configuration),
+			executionIdentityChanged:
+				leftTask === null || rightTask === null
+					? null
+					: JSON.stringify(leftTask.executionIdentity ?? null) !==
+						JSON.stringify(rightTask.executionIdentity ?? null),
 			left: leftTask === null ? null : { status: leftTask.status, configuration: leftTask.configuration },
 			right: rightTask === null ? null : { status: rightTask.status, configuration: rightTask.configuration },
 		};
@@ -127,6 +202,7 @@ export async function compareBenchmarkReports(options: {
 		version: 1,
 		left: { path: left.path, createdAt: left.report.createdAt, benchmark: left.report.benchmark },
 		right: { path: right.path, createdAt: right.report.createdAt, benchmark: right.report.benchmark },
+		compatibility: compareExecutionIdentity(left.report, right.report),
 		tasks,
 		summary,
 	};

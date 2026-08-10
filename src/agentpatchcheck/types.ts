@@ -533,10 +533,36 @@ export interface BenchmarkTaskConfiguration {
 	agentAdapter: AgentAdapterId;
 }
 
+export interface BenchmarkAgentIdentity {
+	requestedExecutable: string;
+	launchExecutable: string | null;
+	version: string | null;
+}
+
+export interface BenchmarkTaskExecutionIdentity {
+	baseCommit: string;
+	hiddenOracleSha256: string | null;
+	agent: BenchmarkAgentIdentity | null;
+}
+
+export interface BenchmarkExecutionIdentity {
+	cliVersion: string;
+	coreSchemaVersion: 1;
+	nodeVersion: string;
+	platform: NodeJS.Platform;
+	arch: string;
+	suite: {
+		sourceSha256: string;
+		id: string | null;
+		fixtureVersion: string | null;
+	};
+}
+
 export interface BenchmarkTaskResult {
 	taskId: string;
 	taskSpecPath: string;
 	configuration: BenchmarkTaskConfiguration;
+	executionIdentity: BenchmarkTaskExecutionIdentity | null;
 	status: BenchmarkTaskStatus;
 	durationMs: number;
 	evidence: EvidenceBundleReference | null;
@@ -566,6 +592,7 @@ export interface BenchmarkReport {
 		arch: string;
 		coreSchemaVersion: 1;
 	};
+	executionIdentity?: BenchmarkExecutionIdentity;
 	tasks: BenchmarkTaskResult[];
 	summary: {
 		total: number;
@@ -587,15 +614,23 @@ export interface BenchmarkResult {
 }
 
 export type BenchmarkComparisonChange = "unchanged" | "improved" | "regressed" | "changed" | "added" | "removed";
+export type BenchmarkCompatibility =
+	| "comparable"
+	| "agent-drift"
+	| "fixture-or-config-drift"
+	| "environment-drift"
+	| "incomplete";
 
 export interface BenchmarkReportComparison {
 	version: 1;
 	left: { path: string; createdAt: string; benchmark: BenchmarkReport["benchmark"] };
 	right: { path: string; createdAt: string; benchmark: BenchmarkReport["benchmark"] };
+	compatibility: { status: BenchmarkCompatibility; reasons: string[] };
 	tasks: Array<{
 		taskId: string;
 		change: BenchmarkComparisonChange;
 		configurationChanged: boolean | null;
+		executionIdentityChanged: boolean | null;
 		left: Pick<BenchmarkTaskResult, "status" | "configuration"> | null;
 		right: Pick<BenchmarkTaskResult, "status" | "configuration"> | null;
 	}>;

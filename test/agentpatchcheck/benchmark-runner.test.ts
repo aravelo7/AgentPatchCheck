@@ -125,6 +125,7 @@ describe("Benchmark Runner", () => {
 				return { path, createdAt: report.createdAt };
 			},
 			createRunId: () => "benchmark-test",
+			readAgentVersion: async () => "agent-version",
 		});
 
 		expect(executionOrder).toEqual([
@@ -149,8 +150,22 @@ describe("Benchmark Runner", () => {
 		expect(result.report.tasks[0]).toMatchObject({
 			evidence: { path: "D:\\repo\\.agentpatchcheck\\evidence\\task.json" },
 			configuration: { taskSpecSha256: "passed-sha", expectedStatus: null },
+			executionIdentity: {
+				baseCommit: expect.any(String),
+				hiddenOracleSha256: null,
+				agent: { requestedExecutable: "codex", launchExecutable: "codex", version: "agent-version" },
+			},
 		});
-		expect(result.report.tasks[1]).toMatchObject({ evidence: null, error: { code: "task-failed" } });
+		expect(result.report.tasks[1]).toMatchObject({
+			evidence: null,
+			executionIdentity: null,
+			error: { code: "task-failed" },
+		});
+		expect(result.report.executionIdentity).toMatchObject({
+			cliVersion: expect.any(String),
+			coreSchemaVersion: 1,
+			suite: { sourceSha256: "benchmark-sha", id: "smoke", fixtureVersion: "1" },
+		});
 		expect(result.report.summary).toEqual({
 			total: 8,
 			passed: 1,
