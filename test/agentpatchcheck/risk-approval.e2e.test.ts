@@ -5,17 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-
 import { createApplyPlan } from "../../src/agentpatchcheck/apply-plan";
 import { applyRecordedPatch } from "../../src/agentpatchcheck/apply-recorded-patch";
 import { recordApprovalDecision } from "../../src/agentpatchcheck/approval";
 import { getAssessmentReportPath } from "../../src/agentpatchcheck/assessment-report";
 import type { AssessmentReport, EvidenceBundle } from "../../src/agentpatchcheck/types";
+import { createGitProcessEnv } from "../../src/core/git-process-env";
 
 const execFile = promisify(execFileCallback);
 
 async function git(repository: string, args: string[]): Promise<void> {
-	await execFile("git", args, { cwd: repository, windowsHide: true });
+	await execFile("git", args, { cwd: repository, env: createGitProcessEnv(), windowsHide: true });
 }
 
 function patch(path: string, before: string, after: string): string {
@@ -108,7 +108,11 @@ describe("risk approval apply fixture", () => {
 			await git(repository, ["add", "."]);
 			await git(repository, ["commit", "-m", "base"]);
 			const baseCommit = (
-				await execFile("git", ["rev-parse", "HEAD"], { cwd: repository, windowsHide: true })
+				await execFile("git", ["rev-parse", "HEAD"], {
+					cwd: repository,
+					env: createGitProcessEnv(),
+					windowsHide: true,
+				})
 			).stdout.trim();
 			const evidenceDirectory = join(repository, ".agentpatchcheck", "evidence");
 			await mkdir(evidenceDirectory, { recursive: true });

@@ -6,15 +6,15 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
-
 import { getAssessmentReportPath } from "../../src/agentpatchcheck/assessment-report";
 import { HEADLESS_CLI_CONTRACT_VERSION, type HeadlessCliResponse, runHeadlessCli } from "../../src/agentpatchcheck/cli";
 import type { AssessmentReport, EvidenceBundle } from "../../src/agentpatchcheck/types";
+import { createGitProcessEnv } from "../../src/core/git-process-env";
 
 const execFile = promisify(execFileCallback);
 
 async function git(repository: string, args: string[]): Promise<void> {
-	await execFile("git", args, { cwd: repository, windowsHide: true });
+	await execFile("git", args, { cwd: repository, env: createGitProcessEnv(), windowsHide: true });
 }
 
 function trackedPatch(path: string, before: string, after: string): string {
@@ -137,7 +137,11 @@ describe("CLI approval gate contract", () => {
 			await git(repository, ["add", "."]);
 			await git(repository, ["commit", "-m", "base"]);
 			const baseCommit = (
-				await execFile("git", ["rev-parse", "HEAD"], { cwd: repository, windowsHide: true })
+				await execFile("git", ["rev-parse", "HEAD"], {
+					cwd: repository,
+					env: createGitProcessEnv(),
+					windowsHide: true,
+				})
 			).stdout.trim();
 			const evidenceDirectory = join(repository, ".agentpatchcheck", "evidence");
 			await mkdir(evidenceDirectory, { recursive: true });
