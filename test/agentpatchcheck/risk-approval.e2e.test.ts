@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -98,7 +98,7 @@ async function writePassingAssessment(evidencePath: string, value: EvidenceBundl
 
 describe("risk approval apply fixture", () => {
 	it("applies a low-risk patch, requires approval for a dependency change, and honours rejection", async () => {
-		const repository = await mkdtemp(join(tmpdir(), "agentpatchcheck-risk-"));
+		const repository = await realpath(await mkdtemp(join(tmpdir(), "agentpatchcheck-risk-")));
 		try {
 			await writeFile(join(repository, "README.md"), "before\n");
 			await writeFile(join(repository, "package.json"), "before\n");

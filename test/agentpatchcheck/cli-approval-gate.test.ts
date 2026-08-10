@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -127,7 +127,7 @@ function expectFailure(
 
 describe("CLI approval gate contract", () => {
 	it("requires approval, permits an explicit approval, preserves rejection, and prohibits critical risk", async () => {
-		const repository = await mkdtemp(join(tmpdir(), "agentpatchcheck-cli-approval-"));
+		const repository = await realpath(await mkdtemp(join(tmpdir(), "agentpatchcheck-cli-approval-")));
 		try {
 			await writeFile(join(repository, "package.json"), "before\n");
 			await writeFile(join(repository, ".env.production"), "before\n");
