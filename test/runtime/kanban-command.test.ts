@@ -19,6 +19,14 @@ describe("resolveKanbanCommandParts", () => {
 		expect(parts).toEqual(["/usr/local/bin/node", "/repo/node_modules/tsx/dist/cli.mjs", "/repo/src/cli.ts"]);
 	});
 
+	it("resolves tsx watch launched cli entrypoint", () => {
+		const parts = resolveKanbanCommandParts({
+			execPath: "/usr/local/bin/node",
+			argv: ["/usr/local/bin/node", "/repo/node_modules/tsx/dist/cli.mjs", "watch", "/repo/src/cli.ts", "--no-open"],
+		});
+		expect(parts).toEqual(["/usr/local/bin/node", "/repo/node_modules/tsx/dist/cli.mjs", "/repo/src/cli.ts"]);
+	});
+
 	it("preserves node execArgv for source entrypoints", () => {
 		const parts = resolveKanbanCommandParts({
 			execPath: "/usr/local/bin/node",

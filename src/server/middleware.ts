@@ -19,6 +19,7 @@ export interface CorsGateInput {
 }
 
 const isDev = process.env.NODE_ENV === "development";
+const configuredDevWebUiOrigin = process.env.KANBAN_DEV_WEB_UI_ORIGIN?.trim();
 
 export function evaluateCors(input: CorsGateInput): CorsDecision {
 	const origin = input.originHeader || null;
@@ -28,7 +29,10 @@ export function evaluateCors(input: CorsGateInput): CorsDecision {
 		return { kind: "allow", origin: null };
 	}
 
-	const isDevServer = isDev && (origin === "http://localhost:4173" || origin === "http://127.0.0.1:4173");
+	const isDevServer =
+		isDev &&
+		(configuredDevWebUiOrigin === origin ||
+			(!configuredDevWebUiOrigin && (origin === "http://localhost:4173" || origin === "http://127.0.0.1:4173")));
 
 	if (origin !== input.allowedOrigin && !isDevServer) {
 		return { kind: "reject", origin };

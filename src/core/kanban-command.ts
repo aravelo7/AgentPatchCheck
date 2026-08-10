@@ -50,6 +50,15 @@ export function resolveKanbanCommandParts(
 	if (tsxTarget && isLikelyTsxCliEntrypoint(entrypoint) && looksLikeEntrypointPath(tsxTarget)) {
 		return [...commandPrefix, entrypoint, tsxTarget];
 	}
+	const tsxWatchTarget = context.argv[3];
+	if (
+		tsxTarget === "watch" &&
+		tsxWatchTarget &&
+		isLikelyTsxCliEntrypoint(entrypoint) &&
+		looksLikeEntrypointPath(tsxWatchTarget)
+	) {
+		return [...commandPrefix, entrypoint, tsxWatchTarget];
+	}
 
 	return [...commandPrefix, entrypoint];
 }
