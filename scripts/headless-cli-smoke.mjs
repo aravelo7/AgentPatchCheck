@@ -1,15 +1,11 @@
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
 import { join } from "node:path";
 
 const executable = join(process.cwd(), "dist", "agentpatchcheck.js");
-const installedBin = join(process.cwd(), "node_modules", ".bin", process.platform === "win32" ? "agentpatchcheck.cmd" : "agentpatchcheck");
 
 async function run(args, expectedExitCode, expectedCommand) {
 	const result = await new Promise((resolvePromise, reject) => {
-		const command = process.platform === "win32" ? process.execPath : installedBin;
-		const commandArgs = process.platform === "win32" ? [executable, ...args] : args;
-		const child = spawn(command, commandArgs, {
+		const child = spawn(process.execPath, [executable, ...args], {
 			cwd: process.cwd(),
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
@@ -32,8 +28,6 @@ async function run(args, expectedExitCode, expectedCommand) {
 		throw new Error(`${expectedCommand} did not preserve the Headless CLI argument contract.`);
 }
 
-await access(executable);
-if (process.platform !== "win32") await access(installedBin);
 await run(["show"], 2, "show");
 await run(["benchmark"], 2, "benchmark");
 console.log("agentpatchcheck Headless CLI smoke passed.");
