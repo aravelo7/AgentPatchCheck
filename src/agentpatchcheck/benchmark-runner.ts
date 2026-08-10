@@ -1,8 +1,15 @@
-import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-
+import {
+	buildWindowsCmdArgsCommandLine,
+	resolveWindowsComSpec,
+	shouldUseWindowsCmdLaunch,
+} from "../core/windows-cmd-launch";
 import { lockedFileSystem } from "../fs/locked-file-system";
 import { getApprovalRecordPath, getApprovalState, readApprovalRecord } from "./approval";
+import { HEADLESS_CLI_VERSION } from "./cli-version";
 import { executeAgentPatchCheck } from "./execute";
 import { readEvidenceBundle } from "./git-patch-verifier";
 import { evaluateRiskPolicy } from "./risk-policy";
@@ -26,6 +33,7 @@ interface BenchmarkDependencies {
 	writeReport: typeof writeBenchmarkReport;
 	createRunId: () => string;
 	readEvidence: typeof readEvidenceBundle;
+	readAgentVersion: (executable: string) => Promise<string | null>;
 }
 
 const allStatuses: BenchmarkTaskStatus[] = [
@@ -45,6 +53,60 @@ function createRunId(): string {
 
 function createTaskRunId(benchmarkRunId: string, taskId: string): string {
 	return `${benchmarkRunId}-${taskId}`;
+}
+
+async function readAgentVersion(executable: string): Promise<string | null> {
+	return await new Promise((resolveVersion) => {
+		const windowsCmd = shouldUseWindowsCmdLaunch(executable, process.platform, process.env);
+		const child = spawn(
+			windowsCmd ? resolveWindowsComSpec(process.env) : executable,
+			windowsCmd
+				? ["/d", "/s", "/c", buildWindowsCmdArgsCommandLine(executable, ["--version"]).slice("/d /s /c ".length)]
+				: ["--version"],
+			{ stdio: ["ignore", "pipe", "ignore"], windowsHide: true, windowsVerbatimArguments: windowsCmd },
+		);
+		let output = "";
+		const timeout = setTimeout(() => child.kill(), 5_000);
+		child.stdout?.on("data", (chunk: Buffer | string) => {
+			output = `${output}${chunk.toString()}`.slice(0, 4_096);
+		});
+		child.once("error", () => {
+			clearTimeout(timeout);
+			resolveVersion(null);
+		});
+		child.once("close", (code) => {
+			clearTimeout(timeout);
+			resolveVersion(code === 0 && output.trim() ? (output.trim().split(/\r?\n/u)[0] ?? null) : null);
+		});
+	});
+}
+
+async function createTaskExecutionIdentity(
+	policy: Awaited<ReturnType<typeof validateTaskPolicy>>,
+	result: AgentPatchCheckResult,
+	readVersion: (executable: string) => Promise<string | null>,
+): Promise<BenchmarkTaskResult["executionIdentity"]> {
+	const requestedExecutable =
+		policy.agentAdapter === "script" ? process.execPath : (policy.codexExecutable ?? "codex");
+	let hiddenOracleSha256: string | null = null;
+	if (policy.hiddenOracle !== null) {
+		try {
+			hiddenOracleSha256 = createHash("sha256")
+				.update(await readFile(policy.hiddenOracle.scriptPath))
+				.digest("hex");
+		} catch {
+			hiddenOracleSha256 = null;
+		}
+	}
+	return {
+		baseCommit: policy.baseCommit,
+		hiddenOracleSha256,
+		agent: {
+			requestedExecutable,
+			launchExecutable: result.agent.executable,
+			version: await readVersion(requestedExecutable),
+		},
+	};
 }
 
 function classifyTask(result: AgentPatchCheckResult): BenchmarkTaskStatus {
@@ -95,6 +157,7 @@ const defaultDependencies: BenchmarkDependencies = {
 	writeReport: writeBenchmarkReport,
 	createRunId,
 	readEvidence: readEvidenceBundle,
+	readAgentVersion,
 };
 
 export async function runBenchmark(
@@ -113,6 +176,11 @@ export async function runBenchmark(
 				runId: input.runId ?? createTaskRunId(runId, task.id),
 			});
 			const result = await resolvedDependencies.execute(policy);
+			const executionIdentity = await createTaskExecutionIdentity(
+				policy,
+				result,
+				resolvedDependencies.readAgentVersion,
+			);
 			let riskLevel: BenchmarkTaskResult["riskLevel"] = null;
 			let approvalStatus: BenchmarkTaskResult["approvalStatus"] = null;
 			try {
@@ -139,6 +207,7 @@ export async function runBenchmark(
 					model: policy.model ?? null,
 					agentAdapter: policy.agentAdapter,
 				},
+				executionIdentity,
 				status: classifyTask(result),
 				durationMs: Date.now() - startedAt,
 				evidence: result.evidence,
@@ -171,6 +240,7 @@ export async function runBenchmark(
 					model: null,
 					agentAdapter: "codex",
 				},
+				executionIdentity: null,
 				status: "setup-failed",
 				durationMs: Date.now() - startedAt,
 				evidence: null,
@@ -200,6 +270,18 @@ export async function runBenchmark(
 			platform: process.platform,
 			arch: process.arch,
 			coreSchemaVersion: 1,
+		},
+		executionIdentity: {
+			cliVersion: HEADLESS_CLI_VERSION,
+			coreSchemaVersion: 1,
+			nodeVersion: process.version,
+			platform: process.platform,
+			arch: process.arch,
+			suite: {
+				sourceSha256: definition.sourceSha256,
+				id: definition.suite?.id ?? null,
+				fixtureVersion: definition.suite?.fixtureVersion ?? null,
+			},
 		},
 		tasks,
 		summary: createSummary(tasks),
