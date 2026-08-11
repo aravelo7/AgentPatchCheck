@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "harness-native-suite",
+  "risk": {
+    "maxChangedFiles": 4,
+    "maxTrackedPatchBytes": 4096
+  }
+}

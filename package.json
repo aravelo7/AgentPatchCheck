@@ -67,6 +67,7 @@
     "agentpatchcheck:benchmark": "tsx src/agentpatchcheck/cli.ts benchmark",
 	"agentpatchcheck:benchmark-compare": "tsx src/agentpatchcheck/cli.ts benchmark-compare",
 	"benchmark:deterministic-suite": "node scripts/run-deterministic-benchmark-suite.mjs",
+	"benchmark:harness-native-suite": "node scripts/run-harness-native-benchmark-suite.mjs",
     "web:dev": "npm --prefix web-ui run dev",
     "web:build": "npm --prefix web-ui run build",
     "web:typecheck": "npm --prefix web-ui run typecheck",

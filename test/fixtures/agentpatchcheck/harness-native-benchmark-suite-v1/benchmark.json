@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "name": "harness-native-public-repair-v1",
+  "suite": {
+    "id": "harness-native-public-repair",
+    "fixtureVersion": "v1"
+  },
+  "tasks": [
+    {
+      "id": "public-repair",
+      "taskSpec": "tasks/public-repair.json"
+    }
+  ]
+}

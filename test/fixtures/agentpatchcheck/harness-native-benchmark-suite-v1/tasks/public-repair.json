@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "repositoryRoot": "../fixture-repository",
+  "promptFile": "prompts/public-repair.txt",
+  "agentAdapter": "harness-native",
+  "model": "__AGENTPATCHCHECK_MODEL__",
+  "nativeAgent": {
+    "maxIterations": 6,
+    "maxToolCalls": 6,
+    "maxObservationBytes": 4096
+  },
+  "timeoutMs": 120000,
+  "sandbox": "workspace-write",
+  "allowNetwork": true,
+  "patchExpectation": "changes-required",
+  "verificationProfile": "readme-prefix",
+  "riskPolicyProfile": "policies/suite-risk.json",
+  "hiddenOracle": {
+    "script": "scripts/oracle-exact-after.mjs",
+    "isolation": "none"
+  }
+}
