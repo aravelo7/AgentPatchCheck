@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "baseCommit": "6bea5431946e1b551d904349988167118a34adeb",
+  "suite": {
+    "id": "deterministic-headless-core",
+    "fixtureVersion": "v1"
+  }
+}

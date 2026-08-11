@@ -1,0 +1,1 @@
+Write a public-profile-compatible change that fails the Hidden Oracle.

@@ -37,6 +37,24 @@ function argumentContainsPrompt(value: string, prompt: string): boolean {
 function redactAgentExecution(agent: AgentExecution, prompt: string): AgentExecution {
 	return {
 		...agent,
+		runtime:
+			agent.runtime === undefined
+				? undefined
+				: {
+						...agent.runtime,
+						trajectory: agent.runtime.trajectory.map((step) => ({
+							...step,
+							arguments:
+								step.arguments === null
+									? null
+									: Object.fromEntries(
+											Object.entries(step.arguments).map(([key, value]) => [
+												key,
+												typeof value === "string" ? redactSensitiveText(value, prompt) : value,
+											]),
+										),
+						})),
+					},
 		args: agent.args.map((arg) =>
 			argumentContainsPrompt(arg, prompt) ? REDACTED_PROMPT : redactSensitiveText(arg, prompt),
 		),

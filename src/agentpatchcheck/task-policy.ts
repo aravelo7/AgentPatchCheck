@@ -6,6 +6,7 @@ import { DEFAULT_RISK_POLICY_CONFIGURATION } from "./risk-policy";
 import {
 	type AgentAdapterId,
 	type AgentPatchCheckSandbox,
+	type HarnessNativeAgentPolicy,
 	type HiddenOracleInput,
 	type HiddenOracleIsolationLevel,
 	type HiddenOraclePolicy,
@@ -25,10 +26,13 @@ const SANDBOXES = new Set<AgentPatchCheckSandbox>(["read-only", "workspace-write
 const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const PATCH_EXPECTATIONS = new Set<PatchExpectation>(["changes-required", "changes-optional"]);
-const AGENT_ADAPTERS = new Set<AgentAdapterId>(["codex", "script"]);
+const AGENT_ADAPTERS = new Set<AgentAdapterId>(["codex", "script", "harness-native"]);
 const HIDDEN_ORACLE_ISOLATION_LEVELS = new Set<HiddenOracleIsolationLevel>(["none", "network", "process", "strict"]);
 const DEFAULT_HIDDEN_ORACLE_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024;
 const DEFAULT_HIDDEN_ORACLE_CPU_RATE_PERCENT = 50;
+const DEFAULT_NATIVE_MAX_ITERATIONS = 12;
+const DEFAULT_NATIVE_MAX_TOOL_CALLS = 24;
+const DEFAULT_NATIVE_MAX_OBSERVATION_BYTES = 16 * 1024;
 
 function assertNoNullBytes(value: string, label: string): void {
 	if (value.includes("\0")) {
@@ -169,7 +173,7 @@ async function normalizeAgentScript(
 	script: string | undefined,
 	repositoryRoot: string,
 ): Promise<string | null> {
-	if (adapter === "codex") {
+	if (adapter === "codex" || adapter === "harness-native") {
 		if (script !== undefined) throw new Error("Codex Adapter must not define an agent script.");
 		return null;
 	}
@@ -179,6 +183,28 @@ async function normalizeAgentScript(
 	if (!(await stat(scriptPath)).isFile()) throw new Error(`Agent script is not a file: ${scriptPath}`);
 	assertPathOutsideRoot(repositoryRoot, scriptPath, "Agent script");
 	return scriptPath;
+}
+
+function normalizeNativeAgent(
+	adapter: AgentAdapterId,
+	input: TaskPolicyInput["nativeAgent"],
+	model: string | undefined,
+): HarnessNativeAgentPolicy | null {
+	if (adapter !== "harness-native") {
+		if (input !== undefined) throw new Error("nativeAgent requires the Harness-native Adapter.");
+		return null;
+	}
+	if (model === undefined) throw new Error("Harness-native Adapter requires a model.");
+	const maxIterations = input?.maxIterations ?? DEFAULT_NATIVE_MAX_ITERATIONS;
+	const maxToolCalls = input?.maxToolCalls ?? DEFAULT_NATIVE_MAX_TOOL_CALLS;
+	const maxObservationBytes = input?.maxObservationBytes ?? DEFAULT_NATIVE_MAX_OBSERVATION_BYTES;
+	if (!Number.isSafeInteger(maxIterations) || maxIterations < 1 || maxIterations > 32)
+		throw new Error("Harness-native maxIterations must be an integer between 1 and 32.");
+	if (!Number.isSafeInteger(maxToolCalls) || maxToolCalls < 1 || maxToolCalls > 64)
+		throw new Error("Harness-native maxToolCalls must be an integer between 1 and 64.");
+	if (!Number.isSafeInteger(maxObservationBytes) || maxObservationBytes < 1_024 || maxObservationBytes > 64 * 1024)
+		throw new Error("Harness-native maxObservationBytes must be an integer between 1024 and 65536.");
+	return { provider: "openai-responses", maxIterations, maxToolCalls, maxObservationBytes };
 }
 
 async function normalizeRiskPolicy(
@@ -244,7 +270,9 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		throw new Error('Sandbox must be "read-only" or "workspace-write".');
 	}
 	const agentAdapter = input.agentAdapter ?? "codex";
-	if (!AGENT_ADAPTERS.has(agentAdapter)) throw new Error('Agent Adapter must be "codex" or "script".');
+	if (!AGENT_ADAPTERS.has(agentAdapter))
+		throw new Error('Agent Adapter must be "codex", "script", or "harness-native".');
+	const model = normalizeOptionalModel(input.model);
 
 	return {
 		[TASK_POLICY_BRAND]: true,
@@ -257,7 +285,8 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		codexExecutable: normalizeOptionalExecutable(input.codexExecutable),
 		agentAdapter,
 		agentScript: await normalizeAgentScript(agentAdapter, input.agentScript, repositoryRoot),
-		model: normalizeOptionalModel(input.model),
+		nativeAgent: normalizeNativeAgent(agentAdapter, input.nativeAgent, model),
+		model,
 		timeoutMs: normalizeTimeout(input.timeoutMs),
 		sandbox,
 		allowNetwork: input.allowNetwork === true,

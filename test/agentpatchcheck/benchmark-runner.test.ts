@@ -79,6 +79,41 @@ function createResult(options: {
 }
 
 describe("Benchmark Runner", () => {
+	it("accepts the Harness-native Adapter through the existing Benchmark policy path", async () => {
+		const definition: BenchmarkDefinition = {
+			version: 1,
+			sourcePath: "D:\\benchmarks\\native.json",
+			sourceSha256: "native-benchmark-sha",
+			name: "native",
+			suite: null,
+			tasks: [
+				{ id: "native", taskSpecPath: "native.json", taskSpecSha256: "native-task-sha", expectedStatus: "passed" },
+			],
+		};
+		const result = await runBenchmark(definition, {
+			loadTaskSpec: async () => ({
+				repositoryRoot: process.cwd(),
+				prompt: "Update the fixture.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				patchExpectation: "changes-required",
+			}),
+			validateTaskPolicy,
+			execute: async () => createResult({}),
+			writeReport: async ({ path, report }) => ({ path, createdAt: report.createdAt }),
+			createRunId: () => "native-benchmark",
+			readAgentVersion: async () => null,
+		});
+		expect(result.report.tasks[0]?.configuration).toMatchObject({
+			agentAdapter: "harness-native",
+			model: "test-model",
+		});
+		expect(result.report.tasks[0]?.executionIdentity?.agent).toMatchObject({
+			requestedExecutable: "harness-native",
+			version: "test-model",
+		});
+	});
+
 	it("continues after failed tasks and aggregates classifications from Headless Core results", async () => {
 		const definition: BenchmarkDefinition = {
 			version: 1,

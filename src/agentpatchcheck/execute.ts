@@ -15,7 +15,7 @@ import type {
 	TaskPolicy,
 } from "./types";
 
-interface HeadlessCoreDependencies {
+export interface HeadlessCoreDependencies {
 	createWorkspace: typeof createIsolatedWorkspace;
 	collectPatch: typeof collectPatchSnapshot;
 	runAgent: (policy: TaskPolicy, worktreePath: string) => Promise<AgentExecution>;
@@ -40,9 +40,10 @@ function createRunId(): string {
 
 export async function executeAgentPatchCheck(
 	policy: TaskPolicy,
-	dependencies: HeadlessCoreDependencies = defaultDependencies,
+	dependencies: Partial<HeadlessCoreDependencies> = {},
 ): Promise<AgentPatchCheckResult> {
-	const workspace = await dependencies.createWorkspace({
+	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
+	const workspace = await resolvedDependencies.createWorkspace({
 		repositoryPath: policy.repositoryRoot,
 		runId: policy.runId ?? createRunId(),
 		baseRef: policy.baseRef,
@@ -51,11 +52,16 @@ export async function executeAgentPatchCheck(
 	});
 	let agent: AgentExecution;
 	try {
-		agent = await dependencies.runAgent(policy, workspace.path);
+		agent = await resolvedDependencies.runAgent(policy, workspace.path);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		agent = {
-			executable: policy.agentAdapter === "codex" ? policy.codexExecutable?.trim() || "codex" : process.execPath,
+			executable:
+				policy.agentAdapter === "codex"
+					? policy.codexExecutable?.trim() || "codex"
+					: policy.agentAdapter === "harness-native"
+						? "harness-native"
+						: process.execPath,
 			args: [],
 			exitCode: null,
 			signal: null,
@@ -68,7 +74,7 @@ export async function executeAgentPatchCheck(
 
 	let commandVerification: CommandVerification;
 	try {
-		commandVerification = await dependencies.runVerification(policy.verification, workspace.path);
+		commandVerification = await resolvedDependencies.runVerification(policy.verification, workspace.path);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		commandVerification = {
@@ -88,7 +94,7 @@ export async function executeAgentPatchCheck(
 			],
 		};
 	}
-	const patch = await dependencies.collectPatch(workspace.path);
+	const patch = await resolvedDependencies.collectPatch(workspace.path);
 	const hiddenOracle = await runHiddenOracle(policy.hiddenOracle, workspace.path);
 	const execution: AgentPatchCheckExecutionResult = {
 		status: agent.exitCode === 0 && !agent.timedOut ? "succeeded" : "failed",
@@ -99,11 +105,11 @@ export async function executeAgentPatchCheck(
 		hiddenOracle,
 	};
 	const bundle = createEvidenceBundle({ policy, execution });
-	const evidence = await dependencies.writeEvidence({
+	const evidence = await resolvedDependencies.writeEvidence({
 		path: getEvidenceBundlePath(policy.worktreeRoot, workspace.runId),
 		bundle,
 	});
-	const assessment: AssessmentResult = await dependencies.assessEvidence({
+	const assessment: AssessmentResult = await resolvedDependencies.assessEvidence({
 		evidencePath: evidence.path,
 		expectation: policy.patchExpectation,
 	});
