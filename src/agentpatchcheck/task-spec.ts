@@ -16,8 +16,16 @@ const taskSpecSchema = z
 		worktreeRoot: z.string().optional(),
 		runId: z.string().optional(),
 		codexExecutable: z.string().optional(),
-		agentAdapter: z.enum(["codex", "script"]).optional(),
+		agentAdapter: z.enum(["codex", "script", "harness-native"]).optional(),
 		agentScript: z.string().optional(),
+		nativeAgent: z
+			.object({
+				maxIterations: z.number().int().optional(),
+				maxToolCalls: z.number().int().optional(),
+				maxObservationBytes: z.number().int().optional(),
+			})
+			.strict()
+			.optional(),
 		model: z.string().optional(),
 		timeoutMs: z.number().int().optional(),
 		sandbox: z.enum(["read-only", "workspace-write"]).optional(),
@@ -65,6 +73,13 @@ const taskSpecSchema = z
 				code: z.ZodIssueCode.custom,
 				message: "agentScript requires the Script Adapter.",
 				path: ["agentScript"],
+			});
+		}
+		if (spec.nativeAgent !== undefined && spec.agentAdapter !== "harness-native") {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "nativeAgent requires the Harness-native Adapter.",
+				path: ["nativeAgent"],
 			});
 		}
 	});
@@ -166,6 +181,7 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 		codexExecutable: resolveExecutable(specDirectory, parsed.data.codexExecutable),
 		agentAdapter: parsed.data.agentAdapter,
 		agentScript: resolveAgentScript(specDirectory, parsed.data.agentScript),
+		nativeAgent: parsed.data.nativeAgent,
 		model: parsed.data.model,
 		timeoutMs: parsed.data.timeoutMs,
 		sandbox: parsed.data.sandbox,

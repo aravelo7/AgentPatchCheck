@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "deterministic-headless-core-v1",
+  "suite": {
+    "id": "deterministic-headless-core",
+    "fixtureVersion": "v1"
+  },
+  "tasks": [
+    { "id": "success", "taskSpec": "tasks/success.json", "expectedStatus": "passed" },
+    { "id": "agent-failure", "taskSpec": "tasks/agent-failure.json", "expectedStatus": "agent-failed" },
+    { "id": "verification-failure", "taskSpec": "tasks/verification-failure.json", "expectedStatus": "verification-failed" },
+    { "id": "hidden-oracle-failure", "taskSpec": "tasks/hidden-oracle-failure.json", "expectedStatus": "hidden-oracle-failed" },
+    { "id": "timeout", "taskSpec": "tasks/timeout.json", "expectedStatus": "timed-out" }
+  ]
+}

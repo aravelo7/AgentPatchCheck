@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "repositoryRoot": "../fixture-repository",
+  "promptFile": "prompts/success.txt",
+  "agentAdapter": "script",
+  "agentScript": "scripts/change-readme.mjs",
+  "timeoutMs": 5000,
+  "patchExpectation": "changes-required",
+  "verificationProfile": "readme-prefix",
+  "riskPolicyProfile": "policies/suite-risk.json",
+  "hiddenOracle": {
+    "script": "scripts/oracle-exact-after.mjs",
+    "isolation": "none"
+  }
+}

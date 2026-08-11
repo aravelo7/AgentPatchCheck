@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "repositoryRoot": "../fixture-repository",
+  "promptFile": "prompts/verification-failure.txt",
+  "agentAdapter": "script",
+  "agentScript": "scripts/change-invalid.mjs",
+  "timeoutMs": 5000,
+  "patchExpectation": "changes-required",
+  "verificationProfile": "readme-prefix",
+  "riskPolicyProfile": "policies/suite-risk.json"
+}

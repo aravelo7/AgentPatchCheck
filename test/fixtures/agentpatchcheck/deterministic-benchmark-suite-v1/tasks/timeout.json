@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "repositoryRoot": "../fixture-repository",
+  "promptFile": "prompts/timeout.txt",
+  "agentAdapter": "script",
+  "agentScript": "scripts/timeout.mjs",
+  "timeoutMs": 50,
+  "patchExpectation": "changes-required",
+  "verificationProfile": "readme-prefix",
+  "riskPolicyProfile": "policies/suite-risk.json"
+}
