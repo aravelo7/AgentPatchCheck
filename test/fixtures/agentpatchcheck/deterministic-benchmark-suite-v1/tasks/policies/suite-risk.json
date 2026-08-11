@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "deterministic-suite",
+  "risk": {
+    "maxChangedFiles": 4,
+    "maxTrackedPatchBytes": 4096
+  }
+}

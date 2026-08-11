@@ -177,4 +177,42 @@ describe("Benchmark report comparison", () => {
 			await rm(directory, { recursive: true, force: true });
 		}
 	});
+
+	it("compares profile content identity without treating a materialized profile path as drift", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-benchmark-compare-"));
+		try {
+			const left = createReport({ task: "passed" });
+			const right = createReport({ task: "passed" });
+			left.tasks[0].configuration.verificationProfile = {
+				path: "D:\\suite-a\\fixture\\.agentpatchcheck\\profiles\\readme-prefix.json",
+				name: "readme-prefix",
+				sha256: "profile-sha",
+			};
+			right.tasks[0].configuration.verificationProfile = {
+				path: "D:\\suite-b\\fixture\\.agentpatchcheck\\profiles\\readme-prefix.json",
+				name: "readme-prefix",
+				sha256: "profile-sha",
+			};
+			left.tasks[0].configuration.riskPolicyProfile = {
+				path: "D:\\suite-a\\tasks\\policies\\suite-risk.json",
+				name: "suite-risk",
+				sha256: "risk-profile-sha",
+			};
+			right.tasks[0].configuration.riskPolicyProfile = {
+				path: "D:\\suite-b\\tasks\\policies\\suite-risk.json",
+				name: "suite-risk",
+				sha256: "risk-profile-sha",
+			};
+			const leftPath = join(directory, "left.json");
+			const rightPath = join(directory, "right.json");
+			await writeFile(leftPath, JSON.stringify(left), "utf8");
+			await writeFile(rightPath, JSON.stringify(right), "utf8");
+
+			const comparison = await compareBenchmarkReports({ leftReportPath: leftPath, rightReportPath: rightPath });
+			expect(comparison.compatibility).toEqual({ status: "comparable", reasons: [] });
+			expect(comparison.tasks[0]?.configurationChanged).toBe(false);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
 });

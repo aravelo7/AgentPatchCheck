@@ -69,7 +69,7 @@ const benchmarkReportSchema = z.object({
 				riskPolicyProfile: riskProfileSchema.nullable(),
 				codexExecutable: z.string().nullable(),
 				model: z.string().nullable(),
-				agentAdapter: z.enum(["codex", "script"]),
+				agentAdapter: z.enum(["codex", "script", "harness-native"]),
 			}),
 			executionIdentity: taskExecutionIdentitySchema.nullable().optional(),
 		}),
@@ -102,6 +102,36 @@ function compareStatus(
 	return "changed";
 }
 
+function getTaskConfigurationIdentity(configuration: BenchmarkTaskResult["configuration"]): object {
+	return {
+		taskSpecSha256: configuration.taskSpecSha256,
+		expectedStatus: configuration.expectedStatus,
+		verificationProfile:
+			configuration.verificationProfile === null
+				? null
+				: {
+						name: configuration.verificationProfile.name,
+						sha256: configuration.verificationProfile.sha256,
+					},
+		riskPolicyProfile:
+			configuration.riskPolicyProfile === null
+				? null
+				: {
+						name: configuration.riskPolicyProfile.name,
+						sha256: configuration.riskPolicyProfile.sha256,
+					},
+		model: configuration.model,
+		agentAdapter: configuration.agentAdapter,
+	};
+}
+
+function hasTaskConfigurationChanged(left: BenchmarkTaskResult, right: BenchmarkTaskResult): boolean {
+	return (
+		JSON.stringify(getTaskConfigurationIdentity(left.configuration)) !==
+		JSON.stringify(getTaskConfigurationIdentity(right.configuration))
+	);
+}
+
 function compareExecutionIdentity(
 	left: BenchmarkReport,
 	right: BenchmarkReport,
@@ -125,7 +155,7 @@ function compareExecutionIdentity(
 	for (const rightTask of right.tasks) {
 		const leftTask = pairs.get(rightTask.taskId);
 		if (leftTask === undefined) continue;
-		if (JSON.stringify(leftTask.configuration) !== JSON.stringify(rightTask.configuration))
+		if (hasTaskConfigurationChanged(leftTask, rightTask))
 			reasons.push(`Task configuration changed: ${rightTask.taskId}.`);
 		if (leftTask.executionIdentity === undefined || rightTask.executionIdentity === undefined) {
 			reasons.push(`Task execution identity is incomplete: ${rightTask.taskId}.`);
@@ -172,9 +202,7 @@ export async function compareBenchmarkReports(options: {
 			taskId,
 			change: compareStatus(leftTask?.status ?? null, rightTask?.status ?? null),
 			configurationChanged:
-				leftTask === null || rightTask === null
-					? null
-					: JSON.stringify(leftTask.configuration) !== JSON.stringify(rightTask.configuration),
+				leftTask === null || rightTask === null ? null : hasTaskConfigurationChanged(leftTask, rightTask),
 			executionIdentityChanged:
 				leftTask === null || rightTask === null
 					? null

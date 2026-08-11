@@ -91,6 +91,7 @@ export async function showEvidenceBundle(
 			timedOut: bundle.agent.timedOut,
 			stdoutBytes: Buffer.byteLength(bundle.agent.stdout, "utf8"),
 			stderrBytes: Buffer.byteLength(bundle.agent.stderr, "utf8"),
+			runtime: bundle.agent.runtime ?? null,
 		},
 		commandVerification: {
 			status: bundle.commandVerification.status,

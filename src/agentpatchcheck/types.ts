@@ -1,5 +1,5 @@
 export type AgentPatchCheckSandbox = "read-only" | "workspace-write";
-export type AgentAdapterId = "codex" | "script";
+export type AgentAdapterId = "codex" | "script" | "harness-native";
 export const TASK_POLICY_BRAND: unique symbol = Symbol("TaskPolicy");
 
 export interface TaskPolicyInput {
@@ -11,6 +11,7 @@ export interface TaskPolicyInput {
 	codexExecutable?: string;
 	agentAdapter?: AgentAdapterId;
 	agentScript?: string;
+	nativeAgent?: HarnessNativeAgentInput;
 	model?: string;
 	timeoutMs?: number;
 	sandbox?: AgentPatchCheckSandbox;
@@ -117,6 +118,7 @@ export interface TaskPolicy {
 	codexExecutable?: string;
 	agentAdapter: AgentAdapterId;
 	agentScript: string | null;
+	nativeAgent: HarnessNativeAgentPolicy | null;
 	model?: string;
 	timeoutMs: number;
 	sandbox: AgentPatchCheckSandbox;
@@ -146,6 +148,55 @@ export interface AgentExecution {
 	stderr: string;
 	durationMs: number;
 	timedOut: boolean;
+	runtime?: HarnessNativeRuntimeResult;
+}
+
+export interface HarnessNativeAgentInput {
+	maxIterations?: number;
+	maxToolCalls?: number;
+	maxObservationBytes?: number;
+}
+
+export interface HarnessNativeAgentPolicy {
+	provider: "openai-responses";
+	maxIterations: number;
+	maxToolCalls: number;
+	maxObservationBytes: number;
+}
+
+export type HarnessNativeToolName =
+	| "read-file"
+	| "list-directory"
+	| "search-text"
+	| "git-status"
+	| "git-diff"
+	| "apply-patch";
+export type HarnessNativeTerminationReason =
+	| "finished"
+	| "model-failed"
+	| "iteration-limit"
+	| "tool-limit"
+	| "timeout"
+	| "invalid-decision";
+export interface HarnessNativeTrajectoryStep {
+	iteration: number;
+	decision: "tool" | "finish" | "fail";
+	tool: HarnessNativeToolName | null;
+	arguments: Record<string, string | number> | null;
+	toolStatus: "ok" | "rejected" | "error" | null;
+	observationSummary: string | null;
+}
+export interface HarnessNativeRuntimeResult {
+	version: 1;
+	provider: "openai-responses";
+	model: string;
+	status: "succeeded" | "failed";
+	terminationReason: HarnessNativeTerminationReason;
+	iterations: number;
+	toolCalls: number;
+	budget: HarnessNativeAgentPolicy;
+	usage: { inputTokens: number | null; outputTokens: number | null };
+	trajectory: HarnessNativeTrajectoryStep[];
 }
 
 export interface PatchSnapshot {
@@ -407,6 +458,7 @@ export interface EvidenceShowResult {
 		timedOut: boolean;
 		stdoutBytes: number;
 		stderrBytes: number;
+		runtime: HarnessNativeRuntimeResult | null;
 	};
 	commandVerification: {
 		status: CommandVerificationStatus;
