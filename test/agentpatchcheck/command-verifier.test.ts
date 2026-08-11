@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { runCommandVerification } from "../../src/agentpatchcheck/command-verifier";
+import { createPublicVerificationFeedback, runCommandVerification } from "../../src/agentpatchcheck/command-verifier";
 import { validateVerificationPolicy } from "../../src/agentpatchcheck/verification-policy";
 
 describe("CommandVerifier", () => {
@@ -63,5 +63,28 @@ describe("CommandVerifier", () => {
 		expect(result.commands).toHaveLength(1);
 		expect(result.commands[0]).toMatchObject({ command, exitCode: null, signal: null, timedOut: false });
 		expect(result.commands[0]?.stderr.length).toBeGreaterThan(0);
+	});
+
+	it("creates repair feedback without verifier output or command arguments", () => {
+		const feedback = createPublicVerificationFeedback({
+			status: "failed",
+			cwd: process.cwd(),
+			commands: [
+				{
+					command: process.execPath,
+					args: ["-e", "process.stderr.write('API_KEY=secret')"],
+					exitCode: 1,
+					signal: null,
+					stdout: "password=secret",
+					stderr: "API_KEY=secret",
+					durationMs: 1,
+					timedOut: false,
+				},
+			],
+		});
+
+		expect(feedback).toMatchObject({ status: "failed", commands: [{ exitCode: 1, timedOut: false }] });
+		expect(JSON.stringify(feedback)).not.toContain("secret");
+		expect(JSON.stringify(feedback)).not.toContain("process.stderr.write");
 	});
 });

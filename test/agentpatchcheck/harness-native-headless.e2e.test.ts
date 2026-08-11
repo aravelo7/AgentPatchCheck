@@ -118,4 +118,169 @@ describe("Harness-native Headless Core E2E", () => {
 			await rm(repository, { recursive: true, force: true });
 		}
 	}, 30_000);
+
+	it("repairs a public verification failure once before the Hidden Oracle runs", async () => {
+		const repository = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-repair-"));
+		const oracleDirectory = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-oracle-"));
+		try {
+			await writeFile(join(repository, "README.md"), "before\n", "utf8");
+			await writeFile(
+				join(oracleDirectory, "oracle.mjs"),
+				"import { readFileSync } from 'node:fs'; const path = process.env.AGENTPATCHCHECK_ORACLE_WORKTREE + '/README.md'; process.exit(readFileSync(path, 'utf8').startsWith('after') ? 0 : 1);\n",
+				"utf8",
+			);
+			await git(repository, ["init"]);
+			await git(repository, ["config", "user.email", "fixture@example.invalid"]);
+			await git(repository, ["config", "user.name", "Fixture"]);
+			await git(repository, ["add", "."]);
+			await git(repository, ["commit", "-m", "base"]);
+			const policy = await validateTaskPolicy({
+				repositoryRoot: repository,
+				prompt: "Update the existing README.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: { maxIterations: 3, maxToolCalls: 1 },
+				patchExpectation: "changes-required",
+				verification: {
+					commands: [
+						{
+							command: process.execPath,
+							args: [
+								"-e",
+								"const fs=require('node:fs');process.exit(fs.readFileSync('README.md','utf8').startsWith('after')?0:1)",
+							],
+						},
+					],
+				},
+				hiddenOracle: { scriptPath: join(oracleDirectory, "oracle.mjs") },
+			});
+			let repairDecisions = 0;
+			const repairProvider: HarnessNativeModelProvider = {
+				id: "openai-responses",
+				decide: async ({ observations, publicVerificationFeedback }) => {
+					if (observations.length === 0) {
+						if (publicVerificationFeedback === undefined)
+							return {
+								decision: {
+									kind: "tool",
+									tool: "apply-patch",
+									arguments: {
+										path: "README.md",
+										expectedText: "before",
+										replacementText: "invalid",
+									},
+								},
+							};
+						repairDecisions += 1;
+						return {
+							decision: {
+								kind: "tool",
+								tool: "apply-patch",
+								arguments: {
+									path: "README.md",
+									expectedText: "invalid",
+									replacementText: "after",
+								},
+							},
+						};
+					}
+					return { decision: { kind: "finish" } };
+				},
+			};
+			const result = await executeAgentPatchCheck(policy, {
+				runAgent: async (nativePolicy, worktreePath, publicVerificationFeedback) =>
+					await createHarnessNativeAdapter(repairProvider).execute({
+						policy: nativePolicy,
+						worktreePath,
+						publicVerificationFeedback,
+					}),
+			});
+
+			expect(repairDecisions).toBe(1);
+			expect(result.commandVerification.status).toBe("passed");
+			expect(result.hiddenOracle).toMatchObject({ status: "passed" });
+			expect(result.agent.attempts).toHaveLength(2);
+			expect(result.agent.attempts?.map((attempt) => attempt.phase)).toEqual([
+				"initial",
+				"public-verification-repair",
+			]);
+			expect(result.agent.attempts?.[1]?.feedback).toMatchObject({
+				status: "failed",
+				commands: [{ exitCode: 1 }],
+			});
+			expect((await readFile(join(result.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
+				"after\n",
+			);
+		} finally {
+			await rm(repository, { recursive: true, force: true });
+			await rm(oracleDirectory, { recursive: true, force: true });
+		}
+	}, 30_000);
+
+	it("does not retry a second time when the one public repair still fails verification", async () => {
+		const repository = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-repair-limit-"));
+		try {
+			await writeFile(join(repository, "README.md"), "before\n", "utf8");
+			await git(repository, ["init"]);
+			await git(repository, ["config", "user.email", "fixture@example.invalid"]);
+			await git(repository, ["config", "user.name", "Fixture"]);
+			await git(repository, ["add", "."]);
+			await git(repository, ["commit", "-m", "base"]);
+			const policy = await validateTaskPolicy({
+				repositoryRoot: repository,
+				prompt: "Update the existing README.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: { maxIterations: 3, maxToolCalls: 1 },
+				verification: {
+					commands: [
+						{
+							command: process.execPath,
+							args: [
+								"-e",
+								"const fs=require('node:fs');process.exit(fs.readFileSync('README.md','utf8').startsWith('after')?0:1)",
+							],
+						},
+					],
+				},
+			});
+			let repairDecisions = 0;
+			const provider: HarnessNativeModelProvider = {
+				id: "openai-responses",
+				decide: async ({ observations, publicVerificationFeedback }) => {
+					if (observations.length > 0) return { decision: { kind: "finish" } };
+					if (publicVerificationFeedback === undefined)
+						return {
+							decision: {
+								kind: "tool",
+								tool: "apply-patch",
+								arguments: { path: "README.md", expectedText: "before", replacementText: "invalid" },
+							},
+						};
+					repairDecisions += 1;
+					return {
+						decision: {
+							kind: "tool",
+							tool: "apply-patch",
+							arguments: { path: "README.md", expectedText: "invalid", replacementText: "still-invalid" },
+						},
+					};
+				},
+			};
+			const result = await executeAgentPatchCheck(policy, {
+				runAgent: async (nativePolicy, worktreePath, publicVerificationFeedback) =>
+					await createHarnessNativeAdapter(provider).execute({
+						policy: nativePolicy,
+						worktreePath,
+						publicVerificationFeedback,
+					}),
+			});
+
+			expect(repairDecisions).toBe(1);
+			expect(result.commandVerification.status).toBe("failed");
+			expect(result.agent.attempts).toHaveLength(2);
+		} finally {
+			await rm(repository, { recursive: true, force: true });
+		}
+	}, 30_000);
 });

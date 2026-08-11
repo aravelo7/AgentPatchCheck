@@ -1,24 +1,30 @@
 import { randomUUID } from "node:crypto";
 import { getAgentAdapter } from "./agent-adapter";
 import { assessEvidenceBundle } from "./assessment-report";
-import { runCommandVerification } from "./command-verifier";
+import { createPublicVerificationFeedback, runCommandVerification } from "./command-verifier";
 import { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
 
 import { runHiddenOracle } from "./hidden-oracle";
 import { collectPatchSnapshot, createIsolatedWorkspace } from "./isolated-workspace";
 import type {
 	AgentExecution,
+	AgentExecutionAttempt,
 	AgentPatchCheckExecutionResult,
 	AgentPatchCheckResult,
 	AssessmentResult,
 	CommandVerification,
+	PublicVerificationFeedback,
 	TaskPolicy,
 } from "./types";
 
 export interface HeadlessCoreDependencies {
 	createWorkspace: typeof createIsolatedWorkspace;
 	collectPatch: typeof collectPatchSnapshot;
-	runAgent: (policy: TaskPolicy, worktreePath: string) => Promise<AgentExecution>;
+	runAgent: (
+		policy: TaskPolicy,
+		worktreePath: string,
+		publicVerificationFeedback?: PublicVerificationFeedback,
+	) => Promise<AgentExecution>;
 	runVerification: typeof runCommandVerification;
 	writeEvidence: typeof writeEvidenceBundle;
 	assessEvidence: typeof assessEvidenceBundle;
@@ -27,8 +33,8 @@ export interface HeadlessCoreDependencies {
 const defaultDependencies: HeadlessCoreDependencies = {
 	createWorkspace: createIsolatedWorkspace,
 	collectPatch: collectPatchSnapshot,
-	runAgent: async (policy, worktreePath) =>
-		await getAgentAdapter(policy.agentAdapter).execute({ policy, worktreePath }),
+	runAgent: async (policy, worktreePath, publicVerificationFeedback) =>
+		await getAgentAdapter(policy.agentAdapter).execute({ policy, worktreePath, publicVerificationFeedback }),
 	runVerification: runCommandVerification,
 	writeEvidence: writeEvidenceBundle,
 	assessEvidence: assessEvidenceBundle,
@@ -36,6 +42,65 @@ const defaultDependencies: HeadlessCoreDependencies = {
 
 function createRunId(): string {
 	return `run-${randomUUID().slice(0, 12)}`;
+}
+
+function failedAgentExecution(policy: TaskPolicy, message: string): AgentExecution {
+	return {
+		executable:
+			policy.agentAdapter === "codex"
+				? policy.codexExecutable?.trim() || "codex"
+				: policy.agentAdapter === "harness-native"
+					? "harness-native"
+					: process.execPath,
+		args: [],
+		exitCode: null,
+		signal: null,
+		stdout: "",
+		stderr: message,
+		durationMs: 0,
+		timedOut: false,
+	};
+}
+
+async function runAgentSafely(
+	runAgent: HeadlessCoreDependencies["runAgent"],
+	policy: TaskPolicy,
+	worktreePath: string,
+	publicVerificationFeedback?: PublicVerificationFeedback,
+): Promise<AgentExecution> {
+	try {
+		return await runAgent(policy, worktreePath, publicVerificationFeedback);
+	} catch (error) {
+		return failedAgentExecution(policy, error instanceof Error ? error.message : String(error));
+	}
+}
+
+async function runVerificationSafely(
+	runVerification: HeadlessCoreDependencies["runVerification"],
+	policy: TaskPolicy,
+	worktreePath: string,
+): Promise<CommandVerification> {
+	try {
+		return await runVerification(policy.verification, worktreePath);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			status: "failed",
+			cwd: worktreePath,
+			commands: [
+				{
+					command: "[command-verifier]",
+					args: [],
+					exitCode: null,
+					signal: null,
+					stdout: "",
+					stderr: message,
+					durationMs: 0,
+					timedOut: false,
+				},
+			],
+		};
+	}
 }
 
 export async function executeAgentPatchCheck(
@@ -50,49 +115,33 @@ export async function executeAgentPatchCheck(
 		baseCommit: policy.baseCommit,
 		worktreeRoot: policy.worktreeRoot,
 	});
-	let agent: AgentExecution;
-	try {
-		agent = await resolvedDependencies.runAgent(policy, workspace.path);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		agent = {
-			executable:
-				policy.agentAdapter === "codex"
-					? policy.codexExecutable?.trim() || "codex"
-					: policy.agentAdapter === "harness-native"
-						? "harness-native"
-						: process.execPath,
-			args: [],
-			exitCode: null,
-			signal: null,
-			stdout: "",
-			stderr: message,
-			durationMs: 0,
-			timedOut: false,
-		};
-	}
-
-	let commandVerification: CommandVerification;
-	try {
-		commandVerification = await resolvedDependencies.runVerification(policy.verification, workspace.path);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		commandVerification = {
-			status: "failed",
-			cwd: workspace.path,
-			commands: [
-				{
-					command: "[command-verifier]",
-					args: [],
-					exitCode: null,
-					signal: null,
-					stdout: "",
-					stderr: message,
-					durationMs: 0,
-					timedOut: false,
-				},
-			],
-		};
+	const agentBudgetStartedAt = Date.now();
+	const initialAgent = await runAgentSafely(resolvedDependencies.runAgent, policy, workspace.path);
+	let agent = initialAgent;
+	let commandVerification = await runVerificationSafely(resolvedDependencies.runVerification, policy, workspace.path);
+	const feedback = createPublicVerificationFeedback(commandVerification);
+	if (
+		policy.agentAdapter === "harness-native" &&
+		initialAgent.exitCode === 0 &&
+		!initialAgent.timedOut &&
+		feedback !== null
+	) {
+		const remainingAgentBudgetMs = policy.timeoutMs - (Date.now() - agentBudgetStartedAt);
+		const repairAgent =
+			remainingAgentBudgetMs > 0
+				? await runAgentSafely(
+						resolvedDependencies.runAgent,
+						{ ...policy, timeoutMs: remainingAgentBudgetMs },
+						workspace.path,
+						feedback,
+					)
+				: failedAgentExecution(policy, "Harness-native public verification repair budget was exhausted.");
+		const attempts: AgentExecutionAttempt[] = [
+			{ phase: "initial", feedback: null, execution: initialAgent },
+			{ phase: "public-verification-repair", feedback, execution: repairAgent },
+		];
+		agent = { ...repairAgent, attempts };
+		commandVerification = await runVerificationSafely(resolvedDependencies.runVerification, policy, workspace.path);
 	}
 	const patch = await resolvedDependencies.collectPatch(workspace.path);
 	const hiddenOracle = await runHiddenOracle(policy.hiddenOracle, workspace.path);

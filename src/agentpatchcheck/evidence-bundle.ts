@@ -37,6 +37,10 @@ function argumentContainsPrompt(value: string, prompt: string): boolean {
 function redactAgentExecution(agent: AgentExecution, prompt: string): AgentExecution {
 	return {
 		...agent,
+		attempts: agent.attempts?.map((attempt) => ({
+			...attempt,
+			execution: redactAgentExecution(attempt.execution, prompt),
+		})),
 		runtime:
 			agent.runtime === undefined
 				? undefined

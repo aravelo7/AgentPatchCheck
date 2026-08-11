@@ -15,7 +15,7 @@ export { getBenchmarkReportPath, runBenchmark, writeBenchmarkReport } from "./be
 export { loadBenchmarkSpec } from "./benchmark-spec";
 export { cleanupEvidenceWorktree } from "./cleanup";
 export { buildCodexLaunchPlan, runCodex } from "./codex-runner";
-export { runCommandVerification } from "./command-verifier";
+export { createPublicVerificationFeedback, runCommandVerification } from "./command-verifier";
 export { auditEvidenceBundles } from "./evidence-audit";
 export { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
 export { listEvidenceBundles } from "./evidence-list";
@@ -44,6 +44,7 @@ export { loadTaskSpec } from "./task-spec";
 export type {
 	AgentAdapterId,
 	AgentExecution,
+	AgentExecutionAttempt,
 	AgentPatchCheckExecutionResult,
 	AgentPatchCheckResult,
 	AgentPatchCheckSandbox,
@@ -93,6 +94,7 @@ export type {
 	PatchVerdict,
 	PatchVerdictReasonCode,
 	PatchVerdictStatus,
+	PublicVerificationFeedback,
 	RiskFinding,
 	RiskLevel,
 	RiskPolicy,
