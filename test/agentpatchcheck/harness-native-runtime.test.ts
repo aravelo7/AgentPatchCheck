@@ -9,6 +9,7 @@ import {
 	type HarnessNativeModelProvider,
 	runHarnessNativeRuntime,
 } from "../../src/agentpatchcheck/harness-native-runtime";
+import { createModelProvider } from "../../src/agentpatchcheck/model-provider";
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
 
 describe("Harness-native Agent Runtime", () => {
@@ -21,7 +22,7 @@ describe("Harness-native Agent Runtime", () => {
 				prompt: "Update README.",
 				agentAdapter: "harness-native",
 				model: "test-model",
-				nativeAgent: { maxIterations: 4, maxToolCalls: 3 },
+				nativeAgent: { credentialRef: "openai-primary", maxIterations: 4, maxToolCalls: 3 },
 			});
 			const provider: HarnessNativeModelProvider = {
 				id: "openai-responses",
@@ -73,7 +74,7 @@ describe("Harness-native Agent Runtime", () => {
 						: { decision: { kind: "tool", tool: "shell", arguments: {} } },
 			};
 			const result = await runHarnessNativeRuntime({
-				policy: { provider: "openai-responses", maxIterations: 3, maxToolCalls: 2, maxObservationBytes: 1024 },
+				policy: testNativePolicy({ maxIterations: 3, maxToolCalls: 2 }),
 				prompt: "untrusted",
 				model: "test-model",
 				worktreePath: worktree,
@@ -86,4 +87,106 @@ describe("Harness-native Agent Runtime", () => {
 			await rm(worktree, { recursive: true, force: true });
 		}
 	});
+
+	it("records normalized provider failures without retaining provider error content", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			const transportError = Object.assign(new Error("connection contained secret-value"), {
+				cause: { code: "UND_ERR_CONNECT_TIMEOUT" },
+			});
+			const timeoutProvider = createModelProvider(testProviderConfiguration(), {
+				fetcher: async () => {
+					throw transportError;
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "openai-primary", secret: "test-key" }),
+			});
+			const timeout = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 1, maxToolCalls: 1 }),
+				prompt: "do not retain this prompt",
+				model: "test-model",
+				worktreePath: worktree,
+				provider: timeoutProvider,
+				timeoutMs: 1_000,
+			});
+			expect(timeout).toMatchObject({
+				status: "failed",
+				terminationReason: "model-failed",
+				providerFailure: {
+					kind: "timeout",
+					code: "UND_ERR_CONNECT_TIMEOUT",
+					httpStatus: null,
+					requestId: null,
+				},
+			});
+			expect(JSON.stringify(timeout)).not.toContain("secret-value");
+
+			const httpProvider = createModelProvider(testProviderConfiguration(), {
+				fetcher: async () =>
+					new Response(JSON.stringify({ error: { code: "rate_limit_exceeded", message: "do not retain this" } }), {
+						status: 429,
+						headers: { "content-type": "application/json", "x-request-id": "req_test-123" },
+					}),
+				resolveCredential: () => ({ ok: true, credentialRef: "openai-primary", secret: "test-key" }),
+			});
+			const http = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 1, maxToolCalls: 1 }),
+				prompt: "do not retain this prompt",
+				model: "test-model",
+				worktreePath: worktree,
+				provider: httpProvider,
+				timeoutMs: 1_000,
+			});
+			expect(http.providerFailure).toEqual({
+				kind: "rate-limited",
+				code: "rate_limit_exceeded",
+				httpStatus: 429,
+				requestId: "req_test-123",
+			});
+			expect(JSON.stringify(http)).not.toContain("do not retain this");
+
+			const invalidDecisionProvider = createModelProvider(testProviderConfiguration(), {
+				fetcher: async () =>
+					new Response(
+						JSON.stringify({ output: [{ type: "function_call", name: "read-file", arguments: "not-json" }] }),
+					),
+				resolveCredential: () => ({ ok: true, credentialRef: "openai-primary", secret: "test-key" }),
+			});
+			const invalidDecision = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 1, maxToolCalls: 1 }),
+				prompt: "do not retain this prompt",
+				model: "test-model",
+				worktreePath: worktree,
+				provider: invalidDecisionProvider,
+				timeoutMs: 1_000,
+			});
+			expect(invalidDecision.providerFailure).toEqual({
+				kind: "malformed-response",
+				code: null,
+				httpStatus: null,
+				requestId: null,
+			});
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
 });
+
+function testProviderConfiguration() {
+	return {
+		provider: "openai" as const,
+		protocol: "responses" as const,
+		baseUrl: "https://api.openai.com/v1",
+		endpointSha256: "a".repeat(64),
+		credentialRef: "openai-primary",
+		implementation: "openai-compatible-v1" as const,
+	};
+}
+
+function testNativePolicy(options: { maxIterations: number; maxToolCalls: number }) {
+	return {
+		modelProvider: testProviderConfiguration(),
+		maxIterations: options.maxIterations,
+		maxToolCalls: options.maxToolCalls,
+		maxObservationBytes: 1024,
+	};
+}

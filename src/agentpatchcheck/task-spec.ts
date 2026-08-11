@@ -20,6 +20,10 @@ const taskSpecSchema = z
 		agentScript: z.string().optional(),
 		nativeAgent: z
 			.object({
+				provider: z.enum(["openai", "openai-compatible"]).optional(),
+				protocol: z.enum(["responses", "chat-completions"]).optional(),
+				baseUrl: z.string().optional(),
+				credentialRef: z.string().optional(),
 				maxIterations: z.number().int().optional(),
 				maxToolCalls: z.number().int().optional(),
 				maxObservationBytes: z.number().int().optional(),
@@ -80,6 +84,20 @@ const taskSpecSchema = z
 				code: z.ZodIssueCode.custom,
 				message: "nativeAgent requires the Harness-native Adapter.",
 				path: ["nativeAgent"],
+			});
+		}
+		if (spec.agentAdapter === "harness-native" && spec.nativeAgent?.credentialRef === undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Harness-native TaskSpec requires nativeAgent.credentialRef.",
+				path: ["nativeAgent", "credentialRef"],
+			});
+		}
+		if (spec.nativeAgent?.provider === "openai-compatible" && spec.nativeAgent.baseUrl === undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "OpenAI-compatible Harness-native TaskSpec requires nativeAgent.baseUrl.",
+				path: ["nativeAgent", "baseUrl"],
 			});
 		}
 	});

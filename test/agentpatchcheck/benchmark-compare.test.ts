@@ -160,6 +160,36 @@ describe("Benchmark report comparison", () => {
 			).toBe("fixture-or-config-drift");
 
 			right.tasks[0].configuration.taskSpecSha256 = "task-sha";
+			const providerConfiguration = {
+				provider: "openai-compatible" as const,
+				protocol: "chat-completions" as const,
+				endpointSha256: "provider-endpoint-sha",
+				credentialRef: "provider-a-primary",
+				implementation: "openai-compatible-v1" as const,
+			};
+			left.tasks[0].configuration.modelProvider = providerConfiguration;
+			right.tasks[0].configuration.modelProvider = providerConfiguration;
+			if (left.tasks[0].executionIdentity !== null && left.tasks[0].executionIdentity !== undefined)
+				left.tasks[0].executionIdentity.modelProvider = {
+					...providerConfiguration,
+					configuredModel: "model-v1",
+					actualModel: "model-v1",
+				};
+			if (taskIdentity !== null && taskIdentity !== undefined)
+				taskIdentity.modelProvider = {
+					...providerConfiguration,
+					configuredModel: "model-v1",
+					actualModel: "model-v2",
+				};
+			await writeFile(leftPath, JSON.stringify(left), "utf8");
+			await writeFile(rightPath, JSON.stringify(right), "utf8");
+			expect(
+				(await compareBenchmarkReports({ leftReportPath: leftPath, rightReportPath: rightPath })).compatibility
+					.status,
+			).toBe("agent-drift");
+
+			if (taskIdentity?.modelProvider !== null && taskIdentity?.modelProvider !== undefined)
+				taskIdentity.modelProvider.actualModel = "model-v1";
 			if (right.executionIdentity !== undefined) right.executionIdentity.platform = "linux";
 			await writeFile(rightPath, JSON.stringify(right), "utf8");
 			expect(

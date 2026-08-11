@@ -16,6 +16,7 @@ export { loadBenchmarkSpec } from "./benchmark-spec";
 export { cleanupEvidenceWorktree } from "./cleanup";
 export { buildCodexLaunchPlan, runCodex } from "./codex-runner";
 export { createPublicVerificationFeedback, runCommandVerification } from "./command-verifier";
+export { isCredentialRef, resolveCredential } from "./credential-resolver";
 export { auditEvidenceBundles } from "./evidence-audit";
 export { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
 export { listEvidenceBundles } from "./evidence-list";
@@ -30,6 +31,8 @@ export {
 	runHiddenOracle,
 } from "./hidden-oracle";
 export { collectPatchSnapshot, createIsolatedWorkspace, getIsolatedWorkspacePath } from "./isolated-workspace";
+export type { ModelDecision, ModelProvider, ModelProviderContext, ModelProviderDecision } from "./model-provider";
+export { createModelProvider, ModelProviderFailureError } from "./model-provider";
 export { decidePatchVerdict } from "./patch-verdict";
 export { DEFAULT_RISK_POLICY_CONFIGURATION, evaluateRiskPolicy } from "./risk-policy";
 export { loadRiskPolicyProfile } from "./risk-policy-profile";
@@ -89,6 +92,9 @@ export type {
 	HiddenOracleIsolationLevel,
 	HiddenOraclePolicy,
 	IsolatedWorkspace,
+	ModelProviderConfiguration,
+	ModelProviderKind,
+	ModelProviderProtocol,
 	PatchExpectation,
 	PatchSnapshot,
 	PatchVerdict,

@@ -124,6 +124,56 @@ describe("TaskSpec", () => {
 		}
 	});
 
+	it("requires an explicit credential reference for Harness-native TaskSpecs", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-task-spec-"));
+		try {
+			const missingCredential = join(directory, "missing-credential.json");
+			const compatibleProvider = join(directory, "compatible.json");
+			await writeFile(
+				missingCredential,
+				JSON.stringify({
+					version: 1,
+					repositoryRoot: process.cwd(),
+					prompt: "Inspect.",
+					agentAdapter: "harness-native",
+					model: "test-model",
+					nativeAgent: {},
+					patchExpectation: "changes-required",
+				}),
+				"utf8",
+			);
+			await writeFile(
+				compatibleProvider,
+				JSON.stringify({
+					version: 1,
+					repositoryRoot: process.cwd(),
+					prompt: "Inspect.",
+					agentAdapter: "harness-native",
+					model: "gateway-model",
+					nativeAgent: {
+						provider: "openai-compatible",
+						protocol: "chat-completions",
+						baseUrl: "https://gateway.example/v1",
+						credentialRef: "provider-a-primary",
+					},
+					patchExpectation: "changes-required",
+				}),
+				"utf8",
+			);
+
+			await expect(loadTaskSpec(missingCredential)).rejects.toThrow("requires nativeAgent.credentialRef");
+			await expect(loadTaskSpec(compatibleProvider)).resolves.toMatchObject({
+				nativeAgent: {
+					provider: "openai-compatible",
+					protocol: "chat-completions",
+					credentialRef: "provider-a-primary",
+				},
+			});
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects catalog paths and profile files with a mismatched name", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-task-spec-"));
 		try {

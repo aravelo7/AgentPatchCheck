@@ -96,6 +96,7 @@ describe("Benchmark Runner", () => {
 				prompt: "Update the fixture.",
 				agentAdapter: "harness-native",
 				model: "test-model",
+				nativeAgent: { credentialRef: "openai-secondary" },
 				patchExpectation: "changes-required",
 			}),
 			validateTaskPolicy,
@@ -107,10 +108,18 @@ describe("Benchmark Runner", () => {
 		expect(result.report.tasks[0]?.configuration).toMatchObject({
 			agentAdapter: "harness-native",
 			model: "test-model",
+			modelProvider: { provider: "openai", protocol: "responses", credentialRef: "openai-secondary" },
 		});
 		expect(result.report.tasks[0]?.executionIdentity?.agent).toMatchObject({
 			requestedExecutable: "harness-native",
 			version: "test-model",
+		});
+		expect(result.report.tasks[0]?.executionIdentity?.modelProvider).toMatchObject({
+			provider: "openai",
+			protocol: "responses",
+			credentialRef: "openai-secondary",
+			configuredModel: "test-model",
+			actualModel: null,
 		});
 	});
 
@@ -154,6 +163,7 @@ describe("Benchmark Runner", () => {
 				prompt: "Repair the failed public verification.",
 				agentAdapter: "harness-native",
 				model: "test-model",
+				nativeAgent: { credentialRef: "openai-primary" },
 			}),
 			validateTaskPolicy,
 			execute: async () => repaired,

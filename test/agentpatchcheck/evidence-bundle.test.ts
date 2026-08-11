@@ -45,13 +45,32 @@ describe("EvidenceBundle", () => {
 				timedOut: false,
 				runtime: {
 					version: 1,
-					provider: "openai-responses",
+					provider: "openai:responses",
+					providerIdentity: {
+						provider: "openai",
+						protocol: "responses",
+						endpointSha256: "b".repeat(64),
+						credentialRef: "openai-primary",
+						implementation: "openai-compatible-v1",
+						configuredModel: "test-model",
+						actualModel: "test-model",
+					},
 					model: "test-model",
-					status: "succeeded",
-					terminationReason: "finished",
+					status: "failed",
+					terminationReason: "model-failed",
+					providerFailure: {
+						kind: "rate-limited",
+						code: "rate_limit_exceeded",
+						httpStatus: 429,
+						requestId: "req_test-123",
+					},
 					iterations: 2,
 					toolCalls: 1,
-					budget: { provider: "openai-responses", maxIterations: 2, maxToolCalls: 2, maxObservationBytes: 1024 },
+					budget: {
+						maxIterations: 2,
+						maxToolCalls: 2,
+						maxObservationBytes: 1024,
+					},
 					usage: { inputTokens: null, outputTokens: null },
 					trajectory: [
 						{
@@ -97,7 +116,14 @@ describe("EvidenceBundle", () => {
 		expect(bundle.result).toEqual({ status: "failed", durationMs: 42 });
 		expect(serialized).not.toContain("super-secret-value");
 		expect(serialized).not.toContain("abcdefghijklmnop");
+		expect(serialized).not.toContain("https://api.openai.com/v1");
 		expect(serialized).toContain("[REDACTED_PROMPT]");
+		expect(bundle.agent.runtime?.providerFailure).toEqual({
+			kind: "rate-limited",
+			code: "rate_limit_exceeded",
+			httpStatus: 429,
+			requestId: "req_test-123",
+		});
 		expect(serialized).toContain("[REDACTED_SECRET]");
 		expect(bundle.agent.runtime?.trajectory[0]?.arguments?.path).toBe("[REDACTED_PROMPT]");
 	});

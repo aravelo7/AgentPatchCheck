@@ -171,13 +171,33 @@ export interface AgentExecutionAttempt {
 }
 
 export interface HarnessNativeAgentInput {
+	provider?: ModelProviderKind;
+	protocol?: ModelProviderProtocol;
+	baseUrl?: string;
+	credentialRef?: string;
 	maxIterations?: number;
 	maxToolCalls?: number;
 	maxObservationBytes?: number;
 }
 
+export type ModelProviderKind = "openai" | "openai-compatible";
+export type ModelProviderProtocol = "responses" | "chat-completions";
+
+/**
+ * Safe, validated model transport configuration. The credential value itself is
+ * resolved only at execution time and is never part of this contract.
+ */
+export interface ModelProviderConfiguration {
+	provider: ModelProviderKind;
+	protocol: ModelProviderProtocol;
+	baseUrl: string;
+	endpointSha256: string;
+	credentialRef: string;
+	implementation: "openai-compatible-v1";
+}
+
 export interface HarnessNativeAgentPolicy {
-	provider: "openai-responses";
+	modelProvider: ModelProviderConfiguration;
 	maxIterations: number;
 	maxToolCalls: number;
 	maxObservationBytes: number;
@@ -197,6 +217,31 @@ export type HarnessNativeTerminationReason =
 	| "tool-limit"
 	| "timeout"
 	| "invalid-decision";
+export type HarnessNativeProviderFailureKind =
+	| "missing-credential"
+	| "invalid-credential-reference"
+	| "authentication-failure"
+	| "rate-limited"
+	| "timeout"
+	| "provider-unavailable"
+	| "malformed-response"
+	| "unsupported-tool-calling"
+	| "provider-error";
+export interface HarnessNativeProviderFailure {
+	kind: HarnessNativeProviderFailureKind;
+	code: string | null;
+	httpStatus: number | null;
+	requestId: string | null;
+}
+export interface ModelProviderIdentity {
+	provider: ModelProviderKind;
+	protocol: ModelProviderProtocol;
+	endpointSha256: string;
+	credentialRef: string;
+	implementation: "openai-compatible-v1";
+	configuredModel: string;
+	actualModel: string | null;
+}
 export interface HarnessNativeTrajectoryStep {
 	iteration: number;
 	decision: "tool" | "finish" | "fail";
@@ -207,13 +252,16 @@ export interface HarnessNativeTrajectoryStep {
 }
 export interface HarnessNativeRuntimeResult {
 	version: 1;
-	provider: "openai-responses";
+	provider: string;
+	providerIdentity: ModelProviderIdentity;
 	model: string;
 	status: "succeeded" | "failed";
 	terminationReason: HarnessNativeTerminationReason;
+	/** Safe, normalized provider failure metadata; never raw provider error content. */
+	providerFailure: HarnessNativeProviderFailure | null;
 	iterations: number;
 	toolCalls: number;
-	budget: HarnessNativeAgentPolicy;
+	budget: Pick<HarnessNativeAgentPolicy, "maxIterations" | "maxToolCalls" | "maxObservationBytes">;
 	usage: { inputTokens: number | null; outputTokens: number | null };
 	trajectory: HarnessNativeTrajectoryStep[];
 }
@@ -601,6 +649,11 @@ export interface BenchmarkTaskConfiguration {
 	riskPolicyProfile: RiskPolicyProfileReference | null;
 	codexExecutable: string | null;
 	model: string | null;
+	/** Absent only in reports produced before Provider identity was introduced. */
+	modelProvider?: Pick<
+		ModelProviderConfiguration,
+		"provider" | "protocol" | "endpointSha256" | "credentialRef" | "implementation"
+	> | null;
 	agentAdapter: AgentAdapterId;
 }
 
@@ -614,6 +667,8 @@ export interface BenchmarkTaskExecutionIdentity {
 	baseCommit: string;
 	hiddenOracleSha256: string | null;
 	agent: BenchmarkAgentIdentity | null;
+	/** Absent only in reports produced before Provider identity was introduced. */
+	modelProvider?: ModelProviderIdentity | null;
 }
 
 /**

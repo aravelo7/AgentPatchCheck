@@ -107,7 +107,7 @@ The validated adapter id is persisted in Evidence and Benchmark configuration. T
 
 ### Harness-native Agent Adapter MVP
 
-`"agentAdapter": "harness-native"` runs the first Harness-controlled Agent loop. It requires an explicit `model` and uses the fixed `openai-responses` provider with `OPENAI_API_KEY` only for model transport; the key is never placed in TaskSpec, trajectory, Evidence, or tool input. This is not a general network capability: the model receives only the prompt, prior bounded observations, and the registered tool names.
+`"agentAdapter": "harness-native"` runs the first Harness-controlled Agent loop. It requires an explicit `model` and an explicit logical `nativeAgent.credentialRef`; the credential value is resolved only at execution time and is never placed in TaskSpec, trajectory, Evidence, or tool input. This is not a general network capability: the model receives only the prompt, prior bounded observations, and the registered tool names.
 
 ```json
 {
@@ -116,14 +116,22 @@ The validated adapter id is persisted in Evidence and Benchmark configuration. T
   "prompt": "Update the existing README heading.",
   "agentAdapter": "harness-native",
   "model": "gpt-5.4",
-  "nativeAgent": { "maxIterations": 12, "maxToolCalls": 24 },
+  "nativeAgent": {
+    "provider": "openai",
+    "protocol": "responses",
+    "credentialRef": "openai-primary",
+    "maxIterations": 12,
+    "maxToolCalls": 24
+  },
   "patchExpectation": "changes-required"
 }
 ```
 
 On each iteration the model may request one structured `read-file`, `list-directory`, `search-text`, `git-status`, `git-diff`, or exact-text `apply-patch` operation, or finish/fail. The Tool Broker validates every request before execution and only permits regular, non-symlink files beneath the managed worktree; absolute paths, `..`, `.git`, `.agentpatchcheck`, and unregistered tools are rejected. The Harness—not the model—collects the patch, runs verification and Hidden Oracle, writes Evidence, evaluates risk, and controls apply.
 
-Evidence records a redacted, structured action trajectory with tool status, bounded budget usage, provider/model identity, and termination reason. It does not record model chain-of-thought, Hidden Oracle configuration/content, or credentials. Public-verifier repair feedback remains a future bounded extension; Hidden Oracle never feeds back into the Agent loop.
+The Provider Registry supports the official OpenAI endpoint and explicitly configured OpenAI-compatible endpoints through either `responses` or `chat-completions` protocol. An OpenAI-compatible TaskSpec must use `provider: "openai-compatible"`, an HTTPS `baseUrl` (local HTTP only for tests), a supported protocol, and one of the fixed credential references. The current resolver maps `openai-primary`, `openai-secondary`, `deepseek-primary`, `provider-a-primary`, and `provider-b-primary` to dedicated environment variables; it never accepts an environment variable name from a TaskSpec. There is no credential rotation, fallback, or arbitrary provider routing.
+
+Evidence records a redacted, structured action trajectory with tool status, bounded budget usage, provider/protocol identity, endpoint SHA-256, configured and returned model identity, credential reference, and termination reason. It does not record endpoint credentials, model chain-of-thought, Hidden Oracle configuration/content, or credential values. Public-verifier repair feedback remains a future bounded extension; Hidden Oracle never feeds back into the Agent loop.
 
 ## Approval history
 

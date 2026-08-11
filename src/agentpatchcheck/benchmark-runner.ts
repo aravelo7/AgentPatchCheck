@@ -106,6 +106,18 @@ async function createTaskExecutionIdentity(
 	return {
 		baseCommit: policy.baseCommit,
 		hiddenOracleSha256,
+		modelProvider:
+			policy.nativeAgent === null || policy.model === undefined
+				? null
+				: {
+						provider: policy.nativeAgent.modelProvider.provider,
+						protocol: policy.nativeAgent.modelProvider.protocol,
+						endpointSha256: policy.nativeAgent.modelProvider.endpointSha256,
+						credentialRef: policy.nativeAgent.modelProvider.credentialRef,
+						implementation: policy.nativeAgent.modelProvider.implementation,
+						configuredModel: policy.model,
+						actualModel: result.agent.runtime?.providerIdentity.actualModel ?? null,
+					},
 		agent: {
 			requestedExecutable,
 			launchExecutable: result.agent.executable,
@@ -273,6 +285,16 @@ export async function runBenchmark(
 					riskPolicyProfile: policy.riskPolicy.profile,
 					codexExecutable: policy.codexExecutable ?? null,
 					model: policy.model ?? null,
+					modelProvider:
+						policy.nativeAgent === null
+							? null
+							: {
+									provider: policy.nativeAgent.modelProvider.provider,
+									protocol: policy.nativeAgent.modelProvider.protocol,
+									endpointSha256: policy.nativeAgent.modelProvider.endpointSha256,
+									credentialRef: policy.nativeAgent.modelProvider.credentialRef,
+									implementation: policy.nativeAgent.modelProvider.implementation,
+								},
 					agentAdapter: policy.agentAdapter,
 				},
 				executionIdentity,
@@ -307,6 +329,7 @@ export async function runBenchmark(
 					riskPolicyProfile: null,
 					codexExecutable: null,
 					model: null,
+					modelProvider: null,
 					agentAdapter: "codex",
 				},
 				executionIdentity: null,

@@ -5,6 +5,9 @@
   "agentAdapter": "harness-native",
   "model": "__AGENTPATCHCHECK_MODEL__",
   "nativeAgent": {
+	"provider": "openai",
+	"protocol": "responses",
+	"credentialRef": "openai-primary",
     "maxIterations": 6,
     "maxToolCalls": 6,
     "maxObservationBytes": 4096

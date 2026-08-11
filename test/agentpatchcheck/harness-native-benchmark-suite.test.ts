@@ -52,7 +52,12 @@ describe("Harness-native Benchmark Suite v1", () => {
 				agentAdapter: "harness-native",
 				model: "test-model",
 				timeoutMs: 120000,
-				nativeAgent: { maxIterations: 6, maxToolCalls: 6, maxObservationBytes: 4096 },
+				nativeAgent: {
+					modelProvider: { credentialRef: "openai-primary", provider: "openai", protocol: "responses" },
+					maxIterations: 6,
+					maxToolCalls: 6,
+					maxObservationBytes: 4096,
+				},
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });

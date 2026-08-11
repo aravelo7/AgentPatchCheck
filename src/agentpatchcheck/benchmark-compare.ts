@@ -28,10 +28,27 @@ const agentIdentitySchema = z.object({
 	launchExecutable: z.string().nullable(),
 	version: z.string().nullable(),
 });
+const modelProviderIdentitySchema = z.object({
+	provider: z.enum(["openai", "openai-compatible"]),
+	protocol: z.enum(["responses", "chat-completions"]),
+	endpointSha256: z.string(),
+	credentialRef: z.string(),
+	implementation: z.literal("openai-compatible-v1"),
+	configuredModel: z.string(),
+	actualModel: z.string().nullable(),
+});
+const modelProviderConfigurationSchema = modelProviderIdentitySchema.pick({
+	provider: true,
+	protocol: true,
+	endpointSha256: true,
+	credentialRef: true,
+	implementation: true,
+});
 const taskExecutionIdentitySchema = z.object({
 	baseCommit: z.string(),
 	hiddenOracleSha256: z.string().nullable(),
 	agent: agentIdentitySchema.nullable(),
+	modelProvider: modelProviderIdentitySchema.nullable().optional(),
 });
 const repairCycleSchema = z.object({
 	attempted: z.boolean(),
@@ -83,6 +100,7 @@ const benchmarkReportSchema = z.object({
 				riskPolicyProfile: riskProfileSchema.nullable(),
 				codexExecutable: z.string().nullable(),
 				model: z.string().nullable(),
+				modelProvider: modelProviderConfigurationSchema.nullable().optional(),
 				agentAdapter: z.enum(["codex", "script", "harness-native"]),
 			}),
 			executionIdentity: taskExecutionIdentitySchema.nullable().optional(),
@@ -136,6 +154,7 @@ function getTaskConfigurationIdentity(configuration: BenchmarkTaskResult["config
 						sha256: configuration.riskPolicyProfile.sha256,
 					},
 		model: configuration.model,
+		modelProvider: configuration.modelProvider ?? null,
 		agentAdapter: configuration.agentAdapter,
 	};
 }
@@ -179,6 +198,11 @@ function compareExecutionIdentity(
 		if (JSON.stringify(leftTask.executionIdentity?.agent) !== JSON.stringify(rightTask.executionIdentity?.agent))
 			reasons.push(`Agent identity changed: ${rightTask.taskId}.`);
 		if (
+			JSON.stringify(leftTask.executionIdentity?.modelProvider ?? null) !==
+			JSON.stringify(rightTask.executionIdentity?.modelProvider ?? null)
+		)
+			reasons.push(`Model provider identity changed: ${rightTask.taskId}.`);
+		if (
 			leftTask.executionIdentity?.baseCommit !== rightTask.executionIdentity?.baseCommit ||
 			leftTask.executionIdentity?.hiddenOracleSha256 !== rightTask.executionIdentity?.hiddenOracleSha256
 		)
@@ -193,7 +217,8 @@ function compareExecutionIdentity(
 		)
 	)
 		return { status: "fixture-or-config-drift", reasons };
-	if (reasons.some((reason) => reason.startsWith("Agent"))) return { status: "agent-drift", reasons };
+	if (reasons.some((reason) => reason.startsWith("Agent") || reason.startsWith("Model provider")))
+		return { status: "agent-drift", reasons };
 	return { status: "environment-drift", reasons };
 }
 

@@ -55,7 +55,7 @@ describe("Harness-native Headless Core E2E", () => {
 				prompt: "Update the existing README.",
 				agentAdapter: "harness-native",
 				model: "test-model",
-				nativeAgent: { maxIterations: 5, maxToolCalls: 4 },
+				nativeAgent: { credentialRef: "openai-primary", maxIterations: 5, maxToolCalls: 4 },
 				patchExpectation: "changes-required",
 				verification: {
 					commands: [
@@ -139,7 +139,7 @@ describe("Harness-native Headless Core E2E", () => {
 				prompt: "Update the existing README.",
 				agentAdapter: "harness-native",
 				model: "test-model",
-				nativeAgent: { maxIterations: 3, maxToolCalls: 1 },
+				nativeAgent: { credentialRef: "openai-primary", maxIterations: 3, maxToolCalls: 1 },
 				patchExpectation: "changes-required",
 				verification: {
 					commands: [
@@ -233,7 +233,7 @@ describe("Harness-native Headless Core E2E", () => {
 						prompt: "Update the existing README.",
 						agentAdapter: "harness-native",
 						model: "test-model",
-						nativeAgent: { maxIterations: 3, maxToolCalls: 1 },
+						nativeAgent: { credentialRef: "openai-primary", maxIterations: 3, maxToolCalls: 1 },
 					}),
 					validateTaskPolicy,
 					execute: async () => result,
@@ -271,7 +271,7 @@ describe("Harness-native Headless Core E2E", () => {
 				prompt: "Update the existing README.",
 				agentAdapter: "harness-native",
 				model: "test-model",
-				nativeAgent: { maxIterations: 3, maxToolCalls: 1 },
+				nativeAgent: { credentialRef: "openai-primary", maxIterations: 3, maxToolCalls: 1 },
 				verification: {
 					commands: [
 						{

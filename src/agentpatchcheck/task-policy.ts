@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { getGitStdout } from "../workspace/git-utils";
+import { isCredentialRef } from "./credential-resolver";
 import { DEFAULT_RISK_POLICY_CONFIGURATION } from "./risk-policy";
 import {
 	type AgentAdapterId,
@@ -10,6 +12,9 @@ import {
 	type HiddenOracleInput,
 	type HiddenOracleIsolationLevel,
 	type HiddenOraclePolicy,
+	type ModelProviderConfiguration,
+	type ModelProviderKind,
+	type ModelProviderProtocol,
 	type PatchExpectation,
 	type RiskPolicy,
 	TASK_POLICY_BRAND,
@@ -33,6 +38,9 @@ const DEFAULT_HIDDEN_ORACLE_CPU_RATE_PERCENT = 50;
 const DEFAULT_NATIVE_MAX_ITERATIONS = 12;
 const DEFAULT_NATIVE_MAX_TOOL_CALLS = 24;
 const DEFAULT_NATIVE_MAX_OBSERVATION_BYTES = 16 * 1024;
+const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+const MODEL_PROVIDERS = new Set<ModelProviderKind>(["openai", "openai-compatible"]);
+const MODEL_PROVIDER_PROTOCOLS = new Set<ModelProviderProtocol>(["responses", "chat-completions"]);
 
 function assertNoNullBytes(value: string, label: string): void {
 	if (value.includes("\0")) {
@@ -195,6 +203,8 @@ function normalizeNativeAgent(
 		return null;
 	}
 	if (model === undefined) throw new Error("Harness-native Adapter requires a model.");
+	if (input?.credentialRef === undefined)
+		throw new Error("Harness-native Adapter requires an explicit credentialRef.");
 	const maxIterations = input?.maxIterations ?? DEFAULT_NATIVE_MAX_ITERATIONS;
 	const maxToolCalls = input?.maxToolCalls ?? DEFAULT_NATIVE_MAX_TOOL_CALLS;
 	const maxObservationBytes = input?.maxObservationBytes ?? DEFAULT_NATIVE_MAX_OBSERVATION_BYTES;
@@ -204,7 +214,53 @@ function normalizeNativeAgent(
 		throw new Error("Harness-native maxToolCalls must be an integer between 1 and 64.");
 	if (!Number.isSafeInteger(maxObservationBytes) || maxObservationBytes < 1_024 || maxObservationBytes > 64 * 1024)
 		throw new Error("Harness-native maxObservationBytes must be an integer between 1024 and 65536.");
-	return { provider: "openai-responses", maxIterations, maxToolCalls, maxObservationBytes };
+	return {
+		modelProvider: normalizeModelProvider(input),
+		maxIterations,
+		maxToolCalls,
+		maxObservationBytes,
+	};
+}
+
+function normalizeModelProvider(input: TaskPolicyInput["nativeAgent"]): ModelProviderConfiguration {
+	const provider = input?.provider ?? "openai";
+	if (!MODEL_PROVIDERS.has(provider)) throw new Error("Harness-native model provider is invalid.");
+	const protocol = input?.protocol ?? "responses";
+	if (!MODEL_PROVIDER_PROTOCOLS.has(protocol)) throw new Error("Harness-native model provider protocol is invalid.");
+	const credentialRef = input?.credentialRef;
+	if (credentialRef === undefined) throw new Error("Harness-native Adapter requires an explicit credentialRef.");
+	if (!isCredentialRef(credentialRef)) throw new Error("Harness-native credentialRef is invalid.");
+	const requestedBaseUrl = input?.baseUrl?.trim();
+	if (provider === "openai" && requestedBaseUrl !== undefined && requestedBaseUrl !== DEFAULT_OPENAI_BASE_URL)
+		throw new Error("The official OpenAI provider must use its fixed API endpoint.");
+	if (provider === "openai-compatible" && requestedBaseUrl === undefined)
+		throw new Error("The OpenAI-compatible provider requires baseUrl.");
+	const baseUrl = normalizeProviderBaseUrl(requestedBaseUrl ?? DEFAULT_OPENAI_BASE_URL);
+	return {
+		provider,
+		protocol,
+		baseUrl,
+		endpointSha256: createHash("sha256").update(baseUrl, "utf8").digest("hex"),
+		credentialRef,
+		implementation: "openai-compatible-v1",
+	};
+}
+
+function normalizeProviderBaseUrl(value: string): string {
+	assertNoNullBytes(value, "Model provider baseUrl");
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error("Model provider baseUrl must be an absolute URL.");
+	}
+	const localHttp = url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost");
+	if (url.protocol !== "https:" && !localHttp)
+		throw new Error("Model provider baseUrl must use HTTPS, except for local test endpoints.");
+	if (url.username || url.password || url.search || url.hash)
+		throw new Error("Model provider baseUrl must not contain credentials, a query, or a fragment.");
+	url.pathname = url.pathname.replace(/\/+$/u, "") || "/";
+	return url.toString().replace(/\/$/u, "");
 }
 
 async function normalizeRiskPolicy(
