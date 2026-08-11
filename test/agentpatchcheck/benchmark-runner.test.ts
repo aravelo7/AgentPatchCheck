@@ -114,6 +114,70 @@ describe("Benchmark Runner", () => {
 		});
 	});
 
+	it("records the bounded Harness-native public-verification repair cycle in task and aggregate results", async () => {
+		const definition: BenchmarkDefinition = {
+			version: 1,
+			sourcePath: "D:\\benchmarks\\native-repair.json",
+			sourceSha256: "native-repair-benchmark-sha",
+			name: "native-repair",
+			suite: { id: "native-repair", fixtureVersion: "v1" },
+			tasks: [
+				{
+					id: "repair",
+					taskSpecPath: "repair.json",
+					taskSpecSha256: "native-repair-task-sha",
+					expectedStatus: "passed",
+				},
+			],
+		};
+		const repaired = createResult({ verificationStatus: "passed" });
+		repaired.agent = {
+			...repaired.agent,
+			attempts: [
+				{ phase: "initial", feedback: null, execution: { ...repaired.agent } },
+				{
+					phase: "public-verification-repair",
+					feedback: {
+						version: 1,
+						status: "failed",
+						summary: "Public verification failed.",
+						commands: [{ command: "verify", exitCode: 1, signal: null, timedOut: false }],
+					},
+					execution: { ...repaired.agent },
+				},
+			],
+		};
+
+		const result = await runBenchmark(definition, {
+			loadTaskSpec: async () => ({
+				repositoryRoot: process.cwd(),
+				prompt: "Repair the failed public verification.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+			}),
+			validateTaskPolicy,
+			execute: async () => repaired,
+			writeReport: async ({ path, report }) => ({ path, createdAt: report.createdAt }),
+			createRunId: () => "native-repair-benchmark",
+			readAgentVersion: async () => null,
+		});
+
+		expect(result.report.tasks[0]?.repairCycle).toEqual({
+			attempted: true,
+			initialVerificationStatus: "failed",
+			finalVerificationStatus: "passed",
+			outcome: "repaired",
+		});
+		expect(result.report.summary.repairCycles).toEqual({
+			nativeTasks: 1,
+			initialPasses: 0,
+			attempted: 1,
+			repaired: 1,
+			failed: 0,
+			timedOut: 0,
+		});
+	});
+
 	it("continues after failed tasks and aggregates classifications from Headless Core results", async () => {
 		const definition: BenchmarkDefinition = {
 			version: 1,

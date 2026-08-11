@@ -211,6 +211,46 @@ describe("Harness-native Headless Core E2E", () => {
 			expect((await readFile(join(result.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
 				"after\n",
 			);
+			const benchmark = await runBenchmark(
+				{
+					version: 1,
+					sourcePath: join(repository, "native-repair-benchmark.json"),
+					sourceSha256: "native-repair-e2e-benchmark",
+					name: "native-repair-e2e",
+					suite: { id: "native-repair-e2e", fixtureVersion: "v1" },
+					tasks: [
+						{
+							id: "repair",
+							taskSpecPath: "native-repair.json",
+							taskSpecSha256: "native-repair-e2e-task",
+							expectedStatus: "passed",
+						},
+					],
+				},
+				{
+					loadTaskSpec: async () => ({
+						repositoryRoot: repository,
+						prompt: "Update the existing README.",
+						agentAdapter: "harness-native",
+						model: "test-model",
+						nativeAgent: { maxIterations: 3, maxToolCalls: 1 },
+					}),
+					validateTaskPolicy,
+					execute: async () => result,
+					readAgentVersion: async () => null,
+				},
+			);
+			expect(benchmark.report.tasks[0]?.repairCycle).toMatchObject({
+				attempted: true,
+				initialVerificationStatus: "failed",
+				finalVerificationStatus: "passed",
+				outcome: "repaired",
+			});
+			expect(benchmark.report.summary.repairCycles).toMatchObject({
+				nativeTasks: 1,
+				attempted: 1,
+				repaired: 1,
+			});
 		} finally {
 			await rm(repository, { recursive: true, force: true });
 			await rm(oracleDirectory, { recursive: true, force: true });

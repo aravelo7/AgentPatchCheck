@@ -18,6 +18,7 @@ import { loadTaskSpec } from "./task-spec";
 import type {
 	AgentPatchCheckResult,
 	BenchmarkDefinition,
+	BenchmarkRepairCycleResult,
 	BenchmarkReport,
 	BenchmarkReportReference,
 	BenchmarkResult,
@@ -125,12 +126,73 @@ function classifyTask(result: AgentPatchCheckResult): BenchmarkTaskStatus {
 	return "passed";
 }
 
+function createRepairCycle(
+	policy: Awaited<ReturnType<typeof validateTaskPolicy>>,
+	result: AgentPatchCheckResult,
+): BenchmarkRepairCycleResult | null {
+	if (policy.agentAdapter !== "harness-native") return null;
+	const repairAttempt = result.agent.attempts?.find((attempt) => attempt.phase === "public-verification-repair");
+	const initialAgent =
+		result.agent.attempts?.find((attempt) => attempt.phase === "initial")?.execution ?? result.agent;
+	const initialVerificationStatus = repairAttempt?.feedback?.status ?? result.commandVerification.status;
+	if (initialAgent.timedOut)
+		return {
+			attempted: false,
+			initialVerificationStatus,
+			finalVerificationStatus: result.commandVerification.status,
+			outcome: "initial-agent-timed-out",
+		};
+	if (initialAgent.exitCode !== 0)
+		return {
+			attempted: false,
+			initialVerificationStatus,
+			finalVerificationStatus: result.commandVerification.status,
+			outcome: "initial-agent-failed",
+		};
+	if (repairAttempt === undefined)
+		return {
+			attempted: false,
+			initialVerificationStatus,
+			finalVerificationStatus: result.commandVerification.status,
+			outcome: result.commandVerification.status === "passed" ? "initial-pass" : "initial-verification-not-run",
+		};
+	if (repairAttempt.execution.timedOut)
+		return {
+			attempted: true,
+			initialVerificationStatus,
+			finalVerificationStatus: result.commandVerification.status,
+			outcome: "repair-timed-out",
+		};
+	return {
+		attempted: true,
+		initialVerificationStatus,
+		finalVerificationStatus: result.commandVerification.status,
+		outcome: result.commandVerification.status === "passed" ? "repaired" : "repair-failed",
+	};
+}
+
 function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"] {
 	const byStatus = Object.fromEntries(allStatuses.map((status) => [status, 0])) as Record<BenchmarkTaskStatus, number>;
 	for (const task of tasks) byStatus[task.status] += 1;
 	const failures = allStatuses
 		.filter((status) => status !== "passed" && byStatus[status] > 0)
 		.map((status) => `${status}=${byStatus[status]}`);
+	const repairCycles = tasks.flatMap((task) =>
+		task.repairCycle === null || task.repairCycle === undefined ? [] : [task.repairCycle],
+	);
+	const repairCycleSummary =
+		repairCycles.length === 0
+			? null
+			: {
+					nativeTasks: repairCycles.length,
+					initialPasses: repairCycles.filter((cycle) => cycle.outcome === "initial-pass").length,
+					attempted: repairCycles.filter((cycle) => cycle.attempted).length,
+					repaired: repairCycles.filter((cycle) => cycle.outcome === "repaired").length,
+					failed: repairCycles.filter((cycle) => cycle.outcome === "repair-failed").length,
+					timedOut: repairCycles.filter(
+						(cycle) => cycle.outcome === "initial-agent-timed-out" || cycle.outcome === "repair-timed-out",
+					).length,
+				};
 	return {
 		total: tasks.length,
 		passed: byStatus.passed,
@@ -140,6 +202,7 @@ function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"]
 			failures.length === 0
 				? `${byStatus.passed}/${tasks.length} tasks passed.`
 				: `${byStatus.passed}/${tasks.length} tasks passed; ${tasks.length - byStatus.passed} failed (${failures.join(", ")}).`,
+		...(repairCycleSummary === null ? {} : { repairCycles: repairCycleSummary }),
 	};
 }
 
@@ -226,6 +289,7 @@ export async function runBenchmark(
 					timedOut: result.agent.timedOut,
 				},
 				verificationStatus: result.commandVerification.status,
+				repairCycle: createRepairCycle(policy, result),
 				hiddenOracleStatus: result.hiddenOracle?.status ?? null,
 				riskLevel,
 				approvalStatus,
@@ -252,6 +316,7 @@ export async function runBenchmark(
 				assessment: null,
 				agent: null,
 				verificationStatus: null,
+				repairCycle: null,
 				hiddenOracleStatus: null,
 				riskLevel: null,
 				approvalStatus: null,

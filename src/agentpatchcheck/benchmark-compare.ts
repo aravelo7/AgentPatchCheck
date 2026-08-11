@@ -33,6 +33,20 @@ const taskExecutionIdentitySchema = z.object({
 	hiddenOracleSha256: z.string().nullable(),
 	agent: agentIdentitySchema.nullable(),
 });
+const repairCycleSchema = z.object({
+	attempted: z.boolean(),
+	initialVerificationStatus: z.enum(["passed", "failed", "not-run"]),
+	finalVerificationStatus: z.enum(["passed", "failed", "not-run"]),
+	outcome: z.enum([
+		"initial-pass",
+		"initial-verification-not-run",
+		"repaired",
+		"repair-failed",
+		"repair-timed-out",
+		"initial-agent-failed",
+		"initial-agent-timed-out",
+	]),
+});
 const executionIdentitySchema = z.object({
 	cliVersion: z.string(),
 	coreSchemaVersion: z.literal(1),
@@ -72,6 +86,7 @@ const benchmarkReportSchema = z.object({
 				agentAdapter: z.enum(["codex", "script", "harness-native"]),
 			}),
 			executionIdentity: taskExecutionIdentitySchema.nullable().optional(),
+			repairCycle: repairCycleSchema.nullable().optional(),
 		}),
 	),
 });

@@ -616,6 +616,26 @@ export interface BenchmarkTaskExecutionIdentity {
 	agent: BenchmarkAgentIdentity | null;
 }
 
+/**
+ * Harness-native public-verification repair is intentionally bounded to one
+ * attempt. This records the observable outcome without exposing verifier output.
+ */
+export type BenchmarkRepairCycleOutcome =
+	| "initial-pass"
+	| "initial-verification-not-run"
+	| "repaired"
+	| "repair-failed"
+	| "repair-timed-out"
+	| "initial-agent-failed"
+	| "initial-agent-timed-out";
+
+export interface BenchmarkRepairCycleResult {
+	attempted: boolean;
+	initialVerificationStatus: CommandVerificationStatus;
+	finalVerificationStatus: CommandVerificationStatus;
+	outcome: BenchmarkRepairCycleOutcome;
+}
+
 export interface BenchmarkExecutionIdentity {
 	cliVersion: string;
 	coreSchemaVersion: 1;
@@ -640,6 +660,8 @@ export interface BenchmarkTaskResult {
 	assessment: AssessmentReportReference | null;
 	agent: Pick<AgentExecution, "executable" | "args" | "exitCode" | "signal" | "durationMs" | "timedOut"> | null;
 	verificationStatus: CommandVerificationStatus | null;
+	/** Present for Harness-native tasks that reached Headless Core execution. */
+	repairCycle?: BenchmarkRepairCycleResult | null;
 	hiddenOracleStatus: VerifierPluginStatus | null;
 	riskLevel: RiskLevel | null;
 	approvalStatus: ApprovalState["status"] | null;
@@ -671,6 +693,14 @@ export interface BenchmarkReport {
 		failed: number;
 		byStatus: Record<BenchmarkTaskStatus, number>;
 		summaryText: string;
+		repairCycles?: {
+			nativeTasks: number;
+			initialPasses: number;
+			attempted: number;
+			repaired: number;
+			failed: number;
+			timedOut: number;
+		};
 	};
 }
 
