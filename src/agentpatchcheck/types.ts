@@ -149,6 +149,25 @@ export interface AgentExecution {
 	durationMs: number;
 	timedOut: boolean;
 	runtime?: HarnessNativeRuntimeResult;
+	attempts?: AgentExecutionAttempt[];
+}
+
+export interface PublicVerificationFeedback {
+	version: 1;
+	status: "failed";
+	summary: string;
+	commands: Array<{
+		command: string;
+		exitCode: number | null;
+		signal: NodeJS.Signals | null;
+		timedOut: boolean;
+	}>;
+}
+
+export interface AgentExecutionAttempt {
+	phase: "initial" | "public-verification-repair";
+	feedback: PublicVerificationFeedback | null;
+	execution: Omit<AgentExecution, "attempts">;
 }
 
 export interface HarnessNativeAgentInput {

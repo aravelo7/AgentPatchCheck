@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 
 import { appendBoundedOutput } from "./bounded-output";
-import type { CommandVerification, CommandVerificationResult, VerificationCommand, VerificationPolicy } from "./types";
+import type {
+	CommandVerification,
+	CommandVerificationResult,
+	PublicVerificationFeedback,
+	VerificationCommand,
+	VerificationPolicy,
+} from "./types";
 
 async function runVerificationCommand(options: {
 	command: VerificationCommand;
@@ -87,4 +93,28 @@ export async function runCommandVerification(policy: VerificationPolicy, cwd: st
 		}
 	}
 	return { status: "passed", cwd, commands };
+}
+
+/**
+ * Deliberately excludes command output and arguments: public-verifier feedback
+ * may be shown to a model, while raw verifier output can contain credentials.
+ */
+export function createPublicVerificationFeedback(verification: CommandVerification): PublicVerificationFeedback | null {
+	if (verification.status !== "failed") return null;
+	const failed = verification.commands.at(-1);
+	if (failed === undefined) return null;
+	return {
+		version: 1,
+		status: "failed",
+		summary:
+			"Harness-owned public verification failed. Inspect the managed workspace and make one targeted repair. Hidden Oracle results are unavailable.",
+		commands: [
+			{
+				command: failed.command,
+				exitCode: failed.exitCode,
+				signal: failed.signal,
+				timedOut: failed.timedOut,
+			},
+		],
+	};
 }
