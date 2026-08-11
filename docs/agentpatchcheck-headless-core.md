@@ -105,6 +105,26 @@ This separates agent execution, read-only assessment, explicit patch application
 
 The validated adapter id is persisted in Evidence and Benchmark configuration. The Script Adapter is intentionally limited to local Harness-owned scripts; arbitrary command adapters, network adapters, parallel scheduling, and retry are outside this phase.
 
+### Harness-native Agent Adapter MVP
+
+`"agentAdapter": "harness-native"` runs the first Harness-controlled Agent loop. It requires an explicit `model` and uses the fixed `openai-responses` provider with `OPENAI_API_KEY` only for model transport; the key is never placed in TaskSpec, trajectory, Evidence, or tool input. This is not a general network capability: the model receives only the prompt, prior bounded observations, and the registered tool names.
+
+```json
+{
+  "version": 1,
+  "repositoryRoot": "D:\\Projects\\target-repo",
+  "prompt": "Update the existing README heading.",
+  "agentAdapter": "harness-native",
+  "model": "gpt-5.4",
+  "nativeAgent": { "maxIterations": 12, "maxToolCalls": 24 },
+  "patchExpectation": "changes-required"
+}
+```
+
+On each iteration the model may request one structured `read-file`, `list-directory`, `search-text`, `git-status`, `git-diff`, or exact-text `apply-patch` operation, or finish/fail. The Tool Broker validates every request before execution and only permits regular, non-symlink files beneath the managed worktree; absolute paths, `..`, `.git`, `.agentpatchcheck`, and unregistered tools are rejected. The Harness—not the model—collects the patch, runs verification and Hidden Oracle, writes Evidence, evaluates risk, and controls apply.
+
+Evidence records a redacted, structured action trajectory with tool status, bounded budget usage, provider/model identity, and termination reason. It does not record model chain-of-thought, Hidden Oracle configuration/content, or credentials. Public-verifier repair feedback remains a future bounded extension; Hidden Oracle never feeds back into the Agent loop.
+
 ## Approval history
 
 Approval remains a local, single-operator safety gate; it is not an identity or RBAC system. Every `approve` and `reject` appends an immutable decision record beside the Evidence. Each record contains the Evidence reference, risk fingerprint, decision, optional reason, timestamp, and the Headless CLI version that made the decision. `show --evidence <path>` returns both the current approval state and the full `approvalHistory`.
@@ -137,11 +157,19 @@ Each task runs sequentially through `validateTaskPolicy` and `executeAgentPatchC
 
 Classifications are `passed`, `timed-out`, `agent-failed`, `verification-failed`, `hidden-oracle-failed`, `hidden-oracle-error`, `assessment-failed`, and `setup-failed`. A failed task is recorded and does not stop later independent tasks. The aggregate CLI response is `ok: false` with `benchmark-failed` when any task is not `passed`; the report and completed task evidence remain available for inspection. Non-Codex adapters, parallel scheduling, retries, and CI-specific policy selection are intentionally outside this minimal runner.
 
-### Harness Benchmark Suite v1
+### Deterministic Benchmark Suite v1
 
-The Headless CI suite includes a Harness-owned, real orchestration fixture named `headless-core` / `v1`. It creates a temporary Git target and runs versioned TaskSpecs through the Script Adapter, existing worktree execution, Evidence, Assessment, verifier, Oracle, and Benchmark report paths. Its expected classifications cover success, agent failure, public verification failure, Hidden Oracle rejection, Oracle isolation fail-closed, and timeout. It does not call Codex or require a UI runtime, so it is a deterministic CI regression gate rather than an agent-quality score.
+`test/fixtures/agentpatchcheck/deterministic-benchmark-suite-v1` is the Harness-owned, version-controlled corpus for deterministic Benchmark regression checks. Its manifest fixes the suite id/version, TaskSpecs, public Verification Profile, Harness-side Risk Policy Profile, fixture tree, deterministic Git base commit, and Hidden Oracle source. It runs through the Script Adapter, existing worktree execution, Evidence, Assessment, verifier, Oracle, and Benchmark report paths; it does not call Codex or require a UI runtime.
 
-The suite asserts its expected classifications directly and retains each task's TaskSpec hash, adapter id, Evidence and Assessment references in the generated benchmark report. Real Codex benchmarks remain an explicit local/operator workflow; they are not run automatically in CI.
+Materialize it only into a new explicit directory, then retain the resulting report for comparison:
+
+```powershell
+npm.cmd run benchmark:deterministic-suite -- --output-root D:\Temp\agentpatchcheck-benchmark-v1
+```
+
+The helper initializes the copied fixture with fixed Git identity and timestamp, rejects a base-commit mismatch, runs the existing `benchmark` CLI, and verifies the expected classifications: success, agent failure, public verification failure, Hidden Oracle rejection, and timeout. It prints the materialized root, fixed base commit, report path, and task statuses. The output directory is intentionally preserved for inspection or `benchmark-compare`; it must not already exist.
+
+The suite is a deterministic CI regression gate, not an agent-quality score. Real Codex benchmarks remain an explicit local/operator workflow; they are not run automatically in CI.
 
 Compare two persisted reports without launching an agent, reading a worktree, or mutating either report:
 
@@ -149,7 +177,7 @@ Compare two persisted reports without launching an agent, reading a worktree, or
 agentpatchcheck benchmark-compare --left <path-to-baseline-report.json> --right <path-to-candidate-report.json>
 ```
 
-The result is a versioned JSON comparison keyed by task id. Each task is `unchanged`, `improved`, `regressed`, `changed`, `added`, or `removed`, and includes `configurationChanged` plus the compared reproducibility configuration so automation can distinguish a behavioral result change from a changed task/profile input.
+The result is a versioned JSON comparison keyed by task id. Each task is `unchanged`, `improved`, `regressed`, `changed`, `added`, or `removed`, and includes `configurationChanged` plus `executionIdentityChanged`. Report-level `compatibility` distinguishes comparable results from Agent, fixture/configuration, environment, or incomplete-identity drift before automation treats a task-status change as a regression.
 
 Assess an existing EvidenceBundle without launching Codex or creating a worktree:
 

@@ -1,0 +1,1 @@
+Exit with the fixture agent failure.

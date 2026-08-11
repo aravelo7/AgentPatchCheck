@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "readme-prefix",
+  "verification": {
+    "commands": [
+      {
+        "command": "node",
+        "args": [
+          "-e",
+          "const fs = require('node:fs'); process.exit(fs.readFileSync('README.md', 'utf8').startsWith('after') ? 0 : 1);"
+        ]
+      }
+    ]
+  }
+}

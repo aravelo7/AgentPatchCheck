@@ -87,7 +87,11 @@ async function createTaskExecutionIdentity(
 	readVersion: (executable: string) => Promise<string | null>,
 ): Promise<BenchmarkTaskResult["executionIdentity"]> {
 	const requestedExecutable =
-		policy.agentAdapter === "script" ? process.execPath : (policy.codexExecutable ?? "codex");
+		policy.agentAdapter === "script"
+			? process.execPath
+			: policy.agentAdapter === "harness-native"
+				? "harness-native"
+				: (policy.codexExecutable ?? "codex");
 	let hiddenOracleSha256: string | null = null;
 	if (policy.hiddenOracle !== null) {
 		try {
@@ -104,7 +108,8 @@ async function createTaskExecutionIdentity(
 		agent: {
 			requestedExecutable,
 			launchExecutable: result.agent.executable,
-			version: await readVersion(requestedExecutable),
+			version:
+				policy.agentAdapter === "harness-native" ? (policy.model ?? null) : await readVersion(requestedExecutable),
 		},
 	};
 }

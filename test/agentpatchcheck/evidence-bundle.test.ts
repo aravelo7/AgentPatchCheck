@@ -43,6 +43,27 @@ describe("EvidenceBundle", () => {
 				stderr: "password=super-secret-value",
 				durationMs: 42,
 				timedOut: false,
+				runtime: {
+					version: 1,
+					provider: "openai-responses",
+					model: "test-model",
+					status: "succeeded",
+					terminationReason: "finished",
+					iterations: 2,
+					toolCalls: 1,
+					budget: { provider: "openai-responses", maxIterations: 2, maxToolCalls: 2, maxObservationBytes: 1024 },
+					usage: { inputTokens: null, outputTokens: null },
+					trajectory: [
+						{
+							iteration: 1,
+							decision: "tool",
+							tool: "read-file",
+							arguments: { path: prompt },
+							toolStatus: "ok",
+							observationSummary: "Read a regular workspace file.",
+						},
+					],
+				},
 			},
 			patch: {
 				changedFiles: ["README.md"],
@@ -78,6 +99,7 @@ describe("EvidenceBundle", () => {
 		expect(serialized).not.toContain("abcdefghijklmnop");
 		expect(serialized).toContain("[REDACTED_PROMPT]");
 		expect(serialized).toContain("[REDACTED_SECRET]");
+		expect(bundle.agent.runtime?.trajectory[0]?.arguments?.path).toBe("[REDACTED_PROMPT]");
 	});
 
 	it("writes the bundle atomically outside the worktree", async () => {

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 
 import { appendBoundedOutput } from "./bounded-output";
 import { runCodex, terminateCodexProcess } from "./codex-runner";
+import { createHarnessNativeRuntime, type HarnessNativeModelProvider } from "./harness-native-runtime";
 import type { AgentAdapterId, AgentExecution, TaskPolicy } from "./types";
 
 const OUTPUT_LIMIT_BYTES = 1_024 * 1_024;
@@ -78,9 +79,16 @@ const scriptAdapter: AgentAdapter = {
 	},
 };
 
+export function createHarnessNativeAdapter(provider?: HarnessNativeModelProvider): AgentAdapter {
+	return provider === undefined ? createHarnessNativeRuntime() : createHarnessNativeRuntime(provider);
+}
+
+const harnessNativeAdapter = createHarnessNativeAdapter();
+
 const adapters = new Map<AgentAdapterId, AgentAdapter>([
 	[codexAdapter.id, codexAdapter],
 	[scriptAdapter.id, scriptAdapter],
+	[harnessNativeAdapter.id, harnessNativeAdapter],
 ]);
 
 export function getAgentAdapter(id: AgentAdapterId): AgentAdapter {
