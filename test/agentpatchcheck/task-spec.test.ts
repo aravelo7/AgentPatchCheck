@@ -153,6 +153,7 @@ describe("TaskSpec", () => {
 					nativeAgent: {
 						provider: "openai-compatible",
 						protocol: "chat-completions",
+						thinkingMode: "disabled",
 						baseUrl: "https://gateway.example/v1",
 						credentialRef: "provider-a-primary",
 					},
@@ -166,6 +167,7 @@ describe("TaskSpec", () => {
 				nativeAgent: {
 					provider: "openai-compatible",
 					protocol: "chat-completions",
+					thinkingMode: "disabled",
 					credentialRef: "provider-a-primary",
 				},
 			});

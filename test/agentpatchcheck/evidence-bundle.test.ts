@@ -49,6 +49,7 @@ describe("EvidenceBundle", () => {
 					providerIdentity: {
 						provider: "openai",
 						protocol: "responses",
+						thinkingMode: "default",
 						endpointSha256: "b".repeat(64),
 						credentialRef: "openai-primary",
 						implementation: "openai-compatible-v1",
@@ -60,6 +61,7 @@ describe("EvidenceBundle", () => {
 					terminationReason: "model-failed",
 					providerFailure: {
 						kind: "rate-limited",
+						detail: null,
 						code: "rate_limit_exceeded",
 						httpStatus: 429,
 						requestId: "req_test-123",
@@ -120,6 +122,7 @@ describe("EvidenceBundle", () => {
 		expect(serialized).toContain("[REDACTED_PROMPT]");
 		expect(bundle.agent.runtime?.providerFailure).toEqual({
 			kind: "rate-limited",
+			detail: null,
 			code: "rate_limit_exceeded",
 			httpStatus: 429,
 			requestId: "req_test-123",

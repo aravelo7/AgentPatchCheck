@@ -15,6 +15,7 @@ import {
 	type ModelProviderConfiguration,
 	type ModelProviderKind,
 	type ModelProviderProtocol,
+	type ModelProviderThinkingMode,
 	type PatchExpectation,
 	type RiskPolicy,
 	TASK_POLICY_BRAND,
@@ -41,6 +42,7 @@ const DEFAULT_NATIVE_MAX_OBSERVATION_BYTES = 16 * 1024;
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const MODEL_PROVIDERS = new Set<ModelProviderKind>(["openai", "openai-compatible"]);
 const MODEL_PROVIDER_PROTOCOLS = new Set<ModelProviderProtocol>(["responses", "chat-completions"]);
+const MODEL_PROVIDER_THINKING_MODES = new Set<ModelProviderThinkingMode>(["default", "disabled"]);
 
 function assertNoNullBytes(value: string, label: string): void {
 	if (value.includes("\0")) {
@@ -227,6 +229,11 @@ function normalizeModelProvider(input: TaskPolicyInput["nativeAgent"]): ModelPro
 	if (!MODEL_PROVIDERS.has(provider)) throw new Error("Harness-native model provider is invalid.");
 	const protocol = input?.protocol ?? "responses";
 	if (!MODEL_PROVIDER_PROTOCOLS.has(protocol)) throw new Error("Harness-native model provider protocol is invalid.");
+	const thinkingMode = input?.thinkingMode ?? "default";
+	if (!MODEL_PROVIDER_THINKING_MODES.has(thinkingMode))
+		throw new Error("Harness-native model provider thinkingMode is invalid.");
+	if (thinkingMode !== "default" && (provider !== "openai-compatible" || protocol !== "chat-completions"))
+		throw new Error("Harness-native model provider thinkingMode requires OpenAI-compatible Chat Completions.");
 	const credentialRef = input?.credentialRef;
 	if (credentialRef === undefined) throw new Error("Harness-native Adapter requires an explicit credentialRef.");
 	if (!isCredentialRef(credentialRef)) throw new Error("Harness-native credentialRef is invalid.");
@@ -239,6 +246,7 @@ function normalizeModelProvider(input: TaskPolicyInput["nativeAgent"]): ModelPro
 	return {
 		provider,
 		protocol,
+		thinkingMode,
 		baseUrl,
 		endpointSha256: createHash("sha256").update(baseUrl, "utf8").digest("hex"),
 		credentialRef,

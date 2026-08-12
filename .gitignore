@@ -9,6 +9,7 @@ playwright-report
 .env
 .env.*
 !.env.example
+.agentpatchcheck/local/
 web-ui/.env
 web-ui/.env.*
 !web-ui/.env.example

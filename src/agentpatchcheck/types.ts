@@ -173,6 +173,7 @@ export interface AgentExecutionAttempt {
 export interface HarnessNativeAgentInput {
 	provider?: ModelProviderKind;
 	protocol?: ModelProviderProtocol;
+	thinkingMode?: ModelProviderThinkingMode;
 	baseUrl?: string;
 	credentialRef?: string;
 	maxIterations?: number;
@@ -182,6 +183,7 @@ export interface HarnessNativeAgentInput {
 
 export type ModelProviderKind = "openai" | "openai-compatible";
 export type ModelProviderProtocol = "responses" | "chat-completions";
+export type ModelProviderThinkingMode = "default" | "disabled";
 
 /**
  * Safe, validated model transport configuration. The credential value itself is
@@ -190,6 +192,7 @@ export type ModelProviderProtocol = "responses" | "chat-completions";
 export interface ModelProviderConfiguration {
 	provider: ModelProviderKind;
 	protocol: ModelProviderProtocol;
+	thinkingMode: ModelProviderThinkingMode;
 	baseUrl: string;
 	endpointSha256: string;
 	credentialRef: string;
@@ -227,8 +230,19 @@ export type HarnessNativeProviderFailureKind =
 	| "malformed-response"
 	| "unsupported-tool-calling"
 	| "provider-error";
+export type HarnessNativeProviderFailureDetail =
+	| "no-tool-calls"
+	| "multiple-tool-calls"
+	| "mixed-control-tool-calls"
+	| "invalid-tool-call-shape"
+	| "missing-tool-function"
+	| "unsupported-tool-name"
+	| "invalid-tool-arguments"
+	| null;
 export interface HarnessNativeProviderFailure {
 	kind: HarnessNativeProviderFailureKind;
+	/** Fixed structural diagnostic only; never raw provider content. */
+	detail: HarnessNativeProviderFailureDetail;
 	code: string | null;
 	httpStatus: number | null;
 	requestId: string | null;
@@ -236,6 +250,7 @@ export interface HarnessNativeProviderFailure {
 export interface ModelProviderIdentity {
 	provider: ModelProviderKind;
 	protocol: ModelProviderProtocol;
+	thinkingMode: ModelProviderThinkingMode;
 	endpointSha256: string;
 	credentialRef: string;
 	implementation: "openai-compatible-v1";
@@ -259,6 +274,7 @@ export interface HarnessNativeRuntimeResult {
 	terminationReason: HarnessNativeTerminationReason;
 	/** Safe, normalized provider failure metadata; never raw provider error content. */
 	providerFailure: HarnessNativeProviderFailure | null;
+	/** Number of model decision requests attempted during this Runtime execution. */
 	iterations: number;
 	toolCalls: number;
 	budget: Pick<HarnessNativeAgentPolicy, "maxIterations" | "maxToolCalls" | "maxObservationBytes">;
@@ -652,7 +668,7 @@ export interface BenchmarkTaskConfiguration {
 	/** Absent only in reports produced before Provider identity was introduced. */
 	modelProvider?: Pick<
 		ModelProviderConfiguration,
-		"provider" | "protocol" | "endpointSha256" | "credentialRef" | "implementation"
+		"provider" | "protocol" | "thinkingMode" | "endpointSha256" | "credentialRef" | "implementation"
 	> | null;
 	agentAdapter: AgentAdapterId;
 }

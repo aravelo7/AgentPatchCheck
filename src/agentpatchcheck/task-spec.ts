@@ -22,6 +22,7 @@ const taskSpecSchema = z
 			.object({
 				provider: z.enum(["openai", "openai-compatible"]).optional(),
 				protocol: z.enum(["responses", "chat-completions"]).optional(),
+				thinkingMode: z.enum(["default", "disabled"]).optional(),
 				baseUrl: z.string().optional(),
 				credentialRef: z.string().optional(),
 				maxIterations: z.number().int().optional(),

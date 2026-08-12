@@ -19,7 +19,8 @@ import type {
 	PublicVerificationFeedback,
 } from "./types";
 
-export type HarnessNativeModelProvider = ModelProvider;
+export type HarnessNativeModelProvider = Pick<ModelProvider, "id" | "decide"> &
+	Partial<Pick<ModelProvider, "createSession">>;
 
 export function createHarnessNativeRuntime(providerOverride?: HarnessNativeModelProvider): AgentRuntime {
 	return {
@@ -192,7 +193,12 @@ export async function runHarnessNativeRuntime(options: {
 	const startedAt = Date.now();
 	const trajectory: HarnessNativeTrajectoryStep[] = [];
 	const observations: string[] = [];
+	const session = options.provider.createSession?.() ?? {
+		decide: options.provider.decide,
+		recordToolResults: () => undefined,
+	};
 	let toolCalls = 0;
+	let iterations = 0;
 	let inputTokens = 0;
 	let outputTokens = 0;
 	let actualModel: string | null = null;
@@ -205,6 +211,7 @@ export async function runHarnessNativeRuntime(options: {
 		providerIdentity: {
 			provider: options.policy.modelProvider.provider,
 			protocol: options.policy.modelProvider.protocol,
+			thinkingMode: options.policy.modelProvider.thinkingMode,
 			endpointSha256: options.policy.modelProvider.endpointSha256,
 			credentialRef: options.policy.modelProvider.credentialRef,
 			implementation: options.policy.modelProvider.implementation,
@@ -215,7 +222,7 @@ export async function runHarnessNativeRuntime(options: {
 		status: "failed",
 		terminationReason,
 		providerFailure: failure,
-		iterations: trajectory.length,
+		iterations,
 		toolCalls,
 		budget: {
 			maxIterations: options.policy.maxIterations,
@@ -229,7 +236,8 @@ export async function runHarnessNativeRuntime(options: {
 		if (Date.now() - startedAt >= options.timeoutMs) return fail("timeout");
 		let answer: Awaited<ReturnType<HarnessNativeModelProvider["decide"]>>;
 		try {
-			answer = await options.provider.decide({
+			iterations += 1;
+			answer = await session.decide({
 				prompt: options.prompt,
 				observations,
 				tools: ["read-file", "list-directory", "search-text", "git-status", "git-diff", "apply-patch"],
@@ -264,23 +272,40 @@ export async function runHarnessNativeRuntime(options: {
 			});
 			return fail("model-failed");
 		}
-		if (answer.decision.kind !== "tool") return fail("invalid-decision");
-		if (toolCalls >= options.policy.maxToolCalls) return fail("tool-limit");
-		toolCalls += 1;
-		const tool = await executeTool(options.worktreePath, answer.decision, options.policy.maxObservationBytes);
-		trajectory.push({
-			iteration,
-			decision: "tool",
-			tool: ["read-file", "list-directory", "search-text", "git-status", "git-diff", "apply-patch"].includes(
-				answer.decision.tool,
-			)
-				? (answer.decision.tool as HarnessNativeToolName)
-				: null,
-			arguments: safeArguments(answer.decision.arguments),
-			toolStatus: tool.status,
-			observationSummary: tool.evidence,
-		});
-		observations.push(tool.observation);
+		const requests =
+			answer.decision.kind === "tool"
+				? [answer.decision]
+				: answer.decision.kind === "tool-batch"
+					? answer.decision.calls
+					: [];
+		if (requests.length === 0) return fail("invalid-decision");
+		if (toolCalls + requests.length > options.policy.maxToolCalls) return fail("tool-limit");
+		for (const request of requests) {
+			toolCalls += 1;
+			const tool = await executeTool(options.worktreePath, request, options.policy.maxObservationBytes);
+			trajectory.push({
+				iteration,
+				decision: "tool",
+				tool: ["read-file", "list-directory", "search-text", "git-status", "git-diff", "apply-patch"].includes(
+					request.tool,
+				)
+					? (request.tool as HarnessNativeToolName)
+					: null,
+				arguments: safeArguments(request.arguments),
+				toolStatus: tool.status,
+				observationSummary: tool.evidence,
+			});
+			observations.push(tool.observation);
+			if (request.callId === undefined) continue;
+			session.recordToolResults([
+				{
+					callId: request.callId,
+					tool: request.tool as HarnessNativeToolName,
+					status: tool.status === "ok" ? "ok" : "error",
+					observation: tool.observation,
+				},
+			]);
+		}
 	}
 	return fail("iteration-limit");
 }

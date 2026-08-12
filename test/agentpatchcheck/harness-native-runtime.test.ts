@@ -88,6 +88,98 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
+	it("preflights a tool batch, then executes and replays each call sequentially", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const observedResults: string[] = [];
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool-batch",
+									calls: [
+										{
+											kind: "tool",
+											callId: "call-read",
+											tool: "read-file",
+											arguments: { path: "README.md" },
+										},
+										{ kind: "tool", callId: "call-status", tool: "git-status", arguments: {} },
+									],
+								},
+							}
+						: { decision: { kind: "finish" } },
+				createSession: () => ({
+					decide: async (context) => provider.decide(context),
+					recordToolResults: (results) => observedResults.push(...results.map((result) => result.callId)),
+				}),
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 2 }),
+				prompt: "Inspect.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({
+				status: "succeeded",
+				iterations: 2,
+				toolCalls: 2,
+				terminationReason: "finished",
+			});
+			expect(result.trajectory.map((step) => [step.iteration, step.tool])).toEqual([
+				[1, "read-file"],
+				[1, "git-status"],
+				[2, null],
+			]);
+			expect(observedResults).toEqual(["call-read", "call-status"]);
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an over-budget batch before executing any call", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async () => ({
+					decision: {
+						kind: "tool-batch",
+						calls: [
+							{ kind: "tool", tool: "read-file", arguments: { path: "README.md" } },
+							{ kind: "tool", tool: "git-status", arguments: {} },
+						],
+					},
+				}),
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Inspect.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({
+				status: "failed",
+				iterations: 1,
+				terminationReason: "tool-limit",
+				toolCalls: 0,
+			});
+			expect(result.trajectory).toEqual([]);
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
 	it("records normalized provider failures without retaining provider error content", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {
@@ -138,6 +230,7 @@ describe("Harness-native Agent Runtime", () => {
 			});
 			expect(http.providerFailure).toEqual({
 				kind: "rate-limited",
+				detail: null,
 				code: "rate_limit_exceeded",
 				httpStatus: 429,
 				requestId: "req_test-123",
@@ -161,6 +254,7 @@ describe("Harness-native Agent Runtime", () => {
 			});
 			expect(invalidDecision.providerFailure).toEqual({
 				kind: "malformed-response",
+				detail: "invalid-tool-arguments",
 				code: null,
 				httpStatus: null,
 				requestId: null,
@@ -175,6 +269,7 @@ function testProviderConfiguration() {
 	return {
 		provider: "openai" as const,
 		protocol: "responses" as const,
+		thinkingMode: "default" as const,
 		baseUrl: "https://api.openai.com/v1",
 		endpointSha256: "a".repeat(64),
 		credentialRef: "openai-primary",

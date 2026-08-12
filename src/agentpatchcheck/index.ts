@@ -31,7 +31,15 @@ export {
 	runHiddenOracle,
 } from "./hidden-oracle";
 export { collectPatchSnapshot, createIsolatedWorkspace, getIsolatedWorkspacePath } from "./isolated-workspace";
-export type { ModelDecision, ModelProvider, ModelProviderContext, ModelProviderDecision } from "./model-provider";
+export type {
+	ModelDecision,
+	ModelProvider,
+	ModelProviderContext,
+	ModelProviderDecision,
+	ModelProviderSession,
+	ModelProviderToolCall,
+	ModelProviderToolResult,
+} from "./model-provider";
 export { createModelProvider, ModelProviderFailureError } from "./model-provider";
 export { decidePatchVerdict } from "./patch-verdict";
 export { DEFAULT_RISK_POLICY_CONFIGURATION, evaluateRiskPolicy } from "./risk-policy";
@@ -87,6 +95,7 @@ export type {
 	EvidenceShowResult,
 	GitPatchVerification,
 	GitPatchVerificationStatus,
+	HarnessNativeProviderFailureDetail,
 	HiddenOracleInput,
 	HiddenOracleIsolationCapability,
 	HiddenOracleIsolationLevel,
@@ -95,6 +104,7 @@ export type {
 	ModelProviderConfiguration,
 	ModelProviderKind,
 	ModelProviderProtocol,
+	ModelProviderThinkingMode,
 	PatchExpectation,
 	PatchSnapshot,
 	PatchVerdict,

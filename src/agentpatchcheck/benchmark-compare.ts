@@ -31,6 +31,7 @@ const agentIdentitySchema = z.object({
 const modelProviderIdentitySchema = z.object({
 	provider: z.enum(["openai", "openai-compatible"]),
 	protocol: z.enum(["responses", "chat-completions"]),
+	thinkingMode: z.enum(["default", "disabled"]),
 	endpointSha256: z.string(),
 	credentialRef: z.string(),
 	implementation: z.literal("openai-compatible-v1"),
@@ -40,6 +41,7 @@ const modelProviderIdentitySchema = z.object({
 const modelProviderConfigurationSchema = modelProviderIdentitySchema.pick({
 	provider: true,
 	protocol: true,
+	thinkingMode: true,
 	endpointSha256: true,
 	credentialRef: true,
 	implementation: true,

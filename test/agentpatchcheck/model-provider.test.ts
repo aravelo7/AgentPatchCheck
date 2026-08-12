@@ -15,6 +15,7 @@ function configuration(protocol: ModelProviderConfiguration["protocol"]): ModelP
 	return {
 		provider: "openai-compatible",
 		protocol,
+		thinkingMode: "default",
 		baseUrl: "http://127.0.0.1:4010/v1",
 		endpointSha256: "a".repeat(64),
 		credentialRef: "provider-a-primary",
@@ -23,6 +24,26 @@ function configuration(protocol: ModelProviderConfiguration["protocol"]): ModelP
 }
 
 describe("Model Provider Registry", () => {
+	it("creates isolated Provider-neutral sessions that accept bounded tool result state", async () => {
+		const provider = createModelProvider(configuration("chat-completions"), {
+			fetcher: async () =>
+				new Response(
+					JSON.stringify({
+						choices: [{ message: { tool_calls: [{ function: { name: "finish", arguments: "{}" } }] } }],
+					}),
+				),
+			resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+		});
+		const firstSession = provider.createSession();
+		const secondSession = provider.createSession();
+
+		expect(firstSession).not.toBe(secondSession);
+		firstSession.recordToolResults([
+			{ callId: "call-1", tool: "git-status", status: "ok", observation: "Git status clean." },
+		]);
+		await expect(firstSession.decide(context)).resolves.toMatchObject({ decision: { kind: "finish" } });
+	});
+
 	it("normalizes an OpenAI-compatible Responses tool call without retaining the credential", async () => {
 		let requestUrl = "";
 		let requestBody = "";
@@ -52,31 +73,150 @@ describe("Model Provider Registry", () => {
 	});
 
 	it("normalizes an OpenAI-compatible Chat Completions finish function", async () => {
-		const provider = createModelProvider(configuration("chat-completions"), {
-			fetcher: async (input) => {
-				expect(input.toString()).toBe("http://127.0.0.1:4010/v1/chat/completions");
-				return new Response(
-					JSON.stringify({
-						model: "gateway-chat-v1",
-						usage: { prompt_tokens: 8, completion_tokens: 2 },
-						choices: [
-							{
-								message: {
-									tool_calls: [{ function: { name: "finish", arguments: "{}" } }],
+		let requestBody = "";
+		const provider = createModelProvider(
+			{ ...configuration("chat-completions"), thinkingMode: "disabled" },
+			{
+				fetcher: async (input, init) => {
+					expect(input.toString()).toBe("http://127.0.0.1:4010/v1/chat/completions");
+					requestBody = typeof init?.body === "string" ? init.body : "";
+					return new Response(
+						JSON.stringify({
+							model: "gateway-chat-v1",
+							usage: { prompt_tokens: 8, completion_tokens: 2 },
+							choices: [
+								{
+									message: {
+										tool_calls: [{ function: { name: "finish", arguments: "{}" } }],
+									},
 								},
-							},
-						],
-					}),
-				);
+							],
+						}),
+					);
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
 			},
-			resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
-		});
+		);
 
-		await expect(provider.decide(context)).resolves.toEqual({
+		await expect(provider.decide(context)).resolves.toMatchObject({
 			decision: { kind: "finish" },
 			usage: { inputTokens: 8, outputTokens: 2 },
 			actualModel: "gateway-chat-v1",
 		});
+		expect(JSON.parse(requestBody)).toMatchObject({
+			tool_choice: "required",
+			tools: expect.arrayContaining([
+				expect.objectContaining({ function: expect.objectContaining({ name: "finish" }) }),
+			]),
+		});
+	});
+
+	it("requires a function call in every DeepSeek-compatible Chat Completions round", async () => {
+		const requestBodies: string[] = [];
+		const payloads = [
+			{
+				choices: [
+					{ message: { tool_calls: [{ function: { name: "list-directory", arguments: '{"path":"."}' } }] } },
+				],
+			},
+			{ choices: [{ message: { tool_calls: [{ function: { name: "finish", arguments: "{}" } }] } }] },
+		];
+		const provider = createModelProvider(
+			{ ...configuration("chat-completions"), thinkingMode: "disabled" },
+			{
+				fetcher: async (_input, init) => {
+					requestBodies.push(typeof init?.body === "string" ? init.body : "");
+					return new Response(JSON.stringify(payloads.shift()));
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+		);
+
+		await expect(provider.decide(context)).resolves.toMatchObject({
+			decision: { kind: "tool", tool: "list-directory", arguments: { path: "." } },
+		});
+		await expect(
+			provider.decide({ ...context, observations: ["Listed a workspace directory."] }),
+		).resolves.toMatchObject({
+			decision: { kind: "finish" },
+		});
+		expect(requestBodies).toHaveLength(2);
+		for (const requestBody of requestBodies) {
+			expect(JSON.parse(requestBody)).toMatchObject({ tool_choice: "required", thinking: { type: "disabled" } });
+		}
+	});
+
+	it("replays every assistant batch tool call and result in order in a Chat session", async () => {
+		const requestBodies: Array<Record<string, unknown>> = [];
+		const payloads = [
+			{
+				choices: [
+					{
+						message: {
+							content: "",
+							tool_calls: [
+								{ id: "call-read", function: { name: "read-file", arguments: '{"path":"README.md"}' } },
+								{ id: "call-status", function: { name: "git-status", arguments: "{}" } },
+							],
+						},
+					},
+				],
+			},
+			{
+				choices: [
+					{
+						message: {
+							content: "",
+							tool_calls: [{ id: "call-finish", function: { name: "finish", arguments: "{}" } }],
+						},
+					},
+				],
+			},
+		];
+		const provider = createModelProvider(
+			{ ...configuration("chat-completions"), thinkingMode: "disabled" },
+			{
+				fetcher: async (_input, init) => {
+					requestBodies.push(
+						JSON.parse(typeof init?.body === "string" ? init.body : "{}") as Record<string, unknown>,
+					);
+					return new Response(JSON.stringify(payloads.shift()));
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+		);
+		const session = provider.createSession();
+
+		await expect(session.decide(context)).resolves.toMatchObject({
+			decision: {
+				kind: "tool-batch",
+				calls: [
+					{ kind: "tool", callId: "call-read", tool: "read-file" },
+					{ kind: "tool", callId: "call-status", tool: "git-status" },
+				],
+			},
+		});
+		session.recordToolResults([
+			{ callId: "call-read", tool: "read-file", status: "ok", observation: "README contents" },
+			{ callId: "call-status", tool: "git-status", status: "ok", observation: "Git status clean." },
+		]);
+		await expect(
+			session.decide({ ...context, observations: ["ignored after session initialization"] }),
+		).resolves.toMatchObject({
+			decision: { kind: "finish" },
+		});
+
+		const secondMessages = requestBodies[1]?.messages as Array<Record<string, unknown>>;
+		expect(secondMessages).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: "assistant",
+					tool_calls: expect.arrayContaining([expect.objectContaining({ id: "call-read" })]),
+				}),
+				expect.objectContaining({ role: "tool", tool_call_id: "call-read", content: "README contents" }),
+				expect.objectContaining({ role: "tool", tool_call_id: "call-status", content: "Git status clean." }),
+			]),
+		);
 	});
 
 	it("normalizes finish and tool calls for both supported wire protocols", async () => {
@@ -114,7 +254,63 @@ describe("Model Provider Registry", () => {
 		});
 
 		await expect(provider.decide(context)).rejects.toMatchObject({
-			failure: { kind: "unsupported-tool-calling", httpStatus: null, requestId: null },
+			failure: { kind: "unsupported-tool-calling", detail: "no-tool-calls", httpStatus: null, requestId: null },
+		});
+	});
+
+	it("normalizes multiple ordinary tool calls into one provider-neutral batch", async () => {
+		const provider = createModelProvider(configuration("chat-completions"), {
+			fetcher: async () =>
+				new Response(
+					JSON.stringify({
+						choices: [
+							{
+								message: {
+									tool_calls: [
+										{ function: { name: "git-status", arguments: "{}" } },
+										{ function: { name: "git-diff", arguments: "{}" } },
+									],
+								},
+							},
+						],
+					}),
+				),
+			resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+		});
+
+		await expect(provider.decide(context)).resolves.toMatchObject({
+			decision: {
+				kind: "tool-batch",
+				calls: [
+					{ kind: "tool", tool: "git-status", arguments: {} },
+					{ kind: "tool", tool: "git-diff", arguments: {} },
+				],
+			},
+		});
+	});
+
+	it("rejects a provider response that mixes control and ordinary tool calls", async () => {
+		const provider = createModelProvider(configuration("chat-completions"), {
+			fetcher: async () =>
+				new Response(
+					JSON.stringify({
+						choices: [
+							{
+								message: {
+									tool_calls: [
+										{ function: { name: "git-status", arguments: "{}" } },
+										{ function: { name: "finish", arguments: "{}" } },
+									],
+								},
+							},
+						],
+					}),
+				),
+			resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+		});
+
+		await expect(provider.decide(context)).rejects.toMatchObject({
+			failure: { kind: "unsupported-tool-calling", detail: "mixed-control-tool-calls" },
 		});
 	});
 

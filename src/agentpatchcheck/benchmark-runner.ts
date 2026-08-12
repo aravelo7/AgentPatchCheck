@@ -112,6 +112,7 @@ async function createTaskExecutionIdentity(
 				: {
 						provider: policy.nativeAgent.modelProvider.provider,
 						protocol: policy.nativeAgent.modelProvider.protocol,
+						thinkingMode: policy.nativeAgent.modelProvider.thinkingMode,
 						endpointSha256: policy.nativeAgent.modelProvider.endpointSha256,
 						credentialRef: policy.nativeAgent.modelProvider.credentialRef,
 						implementation: policy.nativeAgent.modelProvider.implementation,
@@ -291,6 +292,7 @@ export async function runBenchmark(
 							: {
 									provider: policy.nativeAgent.modelProvider.provider,
 									protocol: policy.nativeAgent.modelProvider.protocol,
+									thinkingMode: policy.nativeAgent.modelProvider.thinkingMode,
 									endpointSha256: policy.nativeAgent.modelProvider.endpointSha256,
 									credentialRef: policy.nativeAgent.modelProvider.credentialRef,
 									implementation: policy.nativeAgent.modelProvider.implementation,

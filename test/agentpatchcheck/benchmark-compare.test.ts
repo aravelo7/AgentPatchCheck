@@ -163,6 +163,7 @@ describe("Benchmark report comparison", () => {
 			const providerConfiguration = {
 				provider: "openai-compatible" as const,
 				protocol: "chat-completions" as const,
+				thinkingMode: "default" as const,
 				endpointSha256: "provider-endpoint-sha",
 				credentialRef: "provider-a-primary",
 				implementation: "openai-compatible-v1" as const,
