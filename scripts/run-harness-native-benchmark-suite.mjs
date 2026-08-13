@@ -222,6 +222,7 @@ async function main() {
 				taskResults: report.tasks.map((task) => ({
 					id: task.taskId,
 					status: task.status,
+					verificationStatus: task.verificationStatus,
 					repairCycle: task.repairCycle ?? null,
 					hiddenOracleStatus: task.hiddenOracleStatus,
 				})),

@@ -46,7 +46,9 @@ the task is evaluated but does not pass; in both cases the printed `benchmarkRep
 
 Use an explicit repetition count to evaluate the same pinned corpus more than once. Each repetition gets a separate
 fixture, Evidence set, and BenchmarkReport; the parent output adds `repetitions-report.json` with per-task pass counts
-and summed Native Agent quality counters. It does not retry a failed task or hide provider failures.
+and summed Native Agent quality counters. It also records `publicVerificationFalsePositives`: executions where public
+verification passed but the Hidden Oracle explicitly rejected the patch. Oracle infrastructure errors are not included.
+It does not retry a failed task or hide provider failures.
 
 ```powershell
 npm.cmd run benchmark:harness-native-repetitions -- `
@@ -58,6 +60,16 @@ npm.cmd run benchmark:harness-native-repetitions -- `
 
 This is an explicitly model-backed experiment and consumes one complete suite execution per run. Compare individual
 `benchmarkReportPath` values with `agentpatchcheck benchmark-compare`; use the aggregate only for repeated-run rates.
+
+## Recorded baseline: Hidden Oracle discrimination
+
+On 2026-08-13, three explicit DeepSeek `deepseek-v4-pro` runs of the pinned v1 corpus produced 15 task executions:
+all 15 passed final public verification, while 14 passed the Hidden Oracle. The remaining `public-repair` execution
+changed `README.md` to `after\n\n`; it passed the public prefix check but failed the exact-content Hidden Oracle.
+There were no Provider or Agent execution failures in that sample. This is evidence that the Oracle detects a
+public-verification false positive, not evidence of a stable 100% task-success rate. The retained result is
+`D:\Benchmarks\agentpatchcheck-native-v1-deepseek-repetitions-20260813\repetitions-report.json`; it is local
+experiment evidence, not a versioned repository fixture.
 
 ## Setup-only validation
 

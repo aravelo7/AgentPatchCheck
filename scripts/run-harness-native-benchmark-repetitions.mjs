@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { createTaskAggregate, sumNativeQuality } from "./harness-native-repetition-report.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const suiteScript = join(scriptDirectory, "run-harness-native-benchmark-suite.mjs");
@@ -80,38 +81,6 @@ function parseSuiteOutput(result, runNumber) {
 	return output;
 }
 
-function createTaskAggregate(outputs) {
-	const aggregate = new Map();
-	for (const output of outputs) {
-		for (const task of output.taskResults) {
-			const current = aggregate.get(task.id) ?? { id: task.id, passedRuns: 0, statusCounts: {} };
-			current.passedRuns += task.status === "passed" ? 1 : 0;
-			current.statusCounts[task.status] = (current.statusCounts[task.status] ?? 0) + 1;
-			aggregate.set(task.id, current);
-		}
-	}
-	return [...aggregate.values()].sort((left, right) => left.id.localeCompare(right.id));
-}
-
-function sumNativeQuality(outputs) {
-	const keys = [
-		"nativeTasks",
-		"initialPublicVerificationPassed",
-		"publicRepairAttempted",
-		"publicRepairRecovered",
-		"finalPublicVerificationPassed",
-		"hiddenOraclePassed",
-		"providerFailureTasks",
-		"agentExecutionFailureTasks",
-	];
-	const totals = Object.fromEntries(keys.map((key) => [key, 0]));
-	for (const output of outputs) {
-		if (output.nativeQuality === null || output.nativeQuality === undefined) continue;
-		for (const key of keys) totals[key] += output.nativeQuality[key] ?? 0;
-	}
-	return totals;
-}
-
 async function main() {
 	const options = parseArguments(process.argv.slice(2));
 	await assertPathDoesNotExist(options.outputRoot);
@@ -129,6 +98,7 @@ async function main() {
 		]);
 		outputs.push(parseSuiteOutput(result, runNumber));
 	}
+	const tasks = createTaskAggregate(outputs);
 	const report = {
 		version: 1,
 		mode: "executed",
@@ -144,7 +114,11 @@ async function main() {
 			totalRuns: outputs.length,
 			passedRuns: outputs.filter((output) => output.benchmarkOk).length,
 			failedRuns: outputs.filter((output) => !output.benchmarkOk).length,
-			tasks: createTaskAggregate(outputs),
+			tasks,
+			publicVerificationFalsePositives: tasks.reduce(
+				(total, task) => total + task.publicVerificationFalsePositives,
+				0,
+			),
 			nativeQuality: sumNativeQuality(outputs),
 		},
 	};
