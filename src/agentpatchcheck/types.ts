@@ -210,6 +210,7 @@ export type HarnessNativeToolName =
 	| "read-file"
 	| "list-directory"
 	| "search-text"
+	| "search-text-recursive"
 	| "git-status"
 	| "git-diff"
 	| "apply-patch"

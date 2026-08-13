@@ -26,12 +26,43 @@ const registeredTools: HarnessNativeToolName[] = [
 	"read-file",
 	"list-directory",
 	"search-text",
+	"search-text-recursive",
 	"git-status",
 	"git-diff",
 	"apply-patch",
 	"apply-patch-batch",
 	"create-file",
 ];
+
+const RECURSIVE_SEARCH_MAX_DEPTH = 4;
+const RECURSIVE_SEARCH_MAX_DIRECTORIES = 64;
+const RECURSIVE_SEARCH_MAX_FILES = 256;
+const RECURSIVE_SEARCH_MAX_FILE_BYTES = 64 * 1024;
+const RECURSIVE_SEARCH_MAX_TOTAL_BYTES = 1024 * 1024;
+const RECURSIVE_SEARCH_MAX_MATCHES = 64;
+const excludedRecursiveSearchDirectories = new Set([
+	".agentpatchcheck",
+	".cache",
+	".git",
+	".next",
+	"build",
+	"coverage",
+	"dist",
+	"node_modules",
+	"out",
+]);
+
+function isExcludedRecursiveSearchFile(name: string): boolean {
+	const lowerName = name.toLowerCase();
+	return (
+		lowerName === ".env" ||
+		lowerName.startsWith(".env.") ||
+		lowerName.endsWith(".key") ||
+		lowerName.endsWith(".pem") ||
+		lowerName.endsWith(".p12") ||
+		lowerName.endsWith(".pfx")
+	);
+}
 
 export function createHarnessNativeRuntime(providerOverride?: HarnessNativeModelProvider): AgentRuntime {
 	return {
@@ -168,6 +199,62 @@ function summary(value: string, limit: number): string {
 	return value.length <= limit ? value : `${value.slice(0, limit)}\n[truncated]`;
 }
 
+async function searchTextRecursively(root: string, value: unknown, query: string, limit: number) {
+	const searchRoot = await safePath(root, value);
+	const searchRootMetadata = await lstat(searchRoot);
+	if (!searchRootMetadata.isDirectory() || searchRootMetadata.isSymbolicLink())
+		throw new Error("Recursive search path is not a regular directory.");
+	const matches: string[] = [];
+	const pendingDirectories: Array<{ path: string; depth: number }> = [{ path: searchRoot, depth: 0 }];
+	let visitedDirectories = 0;
+	let visitedFiles = 0;
+	let readBytes = 0;
+	while (pendingDirectories.length > 0 && matches.length < RECURSIVE_SEARCH_MAX_MATCHES) {
+		const directory = pendingDirectories.pop();
+		if (directory === undefined || visitedDirectories >= RECURSIVE_SEARCH_MAX_DIRECTORIES) break;
+		const directoryMetadata = await lstat(directory.path);
+		if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) continue;
+		visitedDirectories += 1;
+		const entries = await readdir(directory.path, { withFileTypes: true });
+		for (const entry of entries) {
+			if (matches.length >= RECURSIVE_SEARCH_MAX_MATCHES || visitedFiles >= RECURSIVE_SEARCH_MAX_FILES) break;
+			const path = join(directory.path, entry.name);
+			if (entry.isSymbolicLink()) continue;
+			if (entry.isDirectory()) {
+				if (
+					directory.depth < RECURSIVE_SEARCH_MAX_DEPTH &&
+					!excludedRecursiveSearchDirectories.has(entry.name.toLowerCase()) &&
+					visitedDirectories + pendingDirectories.length < RECURSIVE_SEARCH_MAX_DIRECTORIES
+				)
+					pendingDirectories.push({ path, depth: directory.depth + 1 });
+				continue;
+			}
+			if (!entry.isFile() || isExcludedRecursiveSearchFile(entry.name)) continue;
+			const metadata = await lstat(path);
+			if (
+				!metadata.isFile() ||
+				metadata.isSymbolicLink() ||
+				metadata.size > RECURSIVE_SEARCH_MAX_FILE_BYTES ||
+				readBytes + metadata.size > RECURSIVE_SEARCH_MAX_TOTAL_BYTES
+			)
+				continue;
+			visitedFiles += 1;
+			readBytes += metadata.size;
+			const content = await readFile(path, "utf8");
+			if (content.includes("\0")) continue;
+			const displayPath = relative(searchRoot, path).replaceAll("\\", "/");
+			for (const [index, line] of content.split(/\r?\n/u).entries()) {
+				if (line.includes(query)) matches.push(`${displayPath}:${index + 1}:${line}`);
+				if (matches.length >= RECURSIVE_SEARCH_MAX_MATCHES) break;
+			}
+		}
+	}
+	return {
+		observation: summary(matches.join("\n"), limit),
+		evidence: `Searched ${visitedFiles} bounded recursive workspace files.`,
+	};
+}
+
 async function executeTool(root: string, request: ModelDecision & { kind: "tool" }, limit: number) {
 	const name = request.tool;
 	try {
@@ -194,7 +281,8 @@ async function executeTool(root: string, request: ModelDecision & { kind: "tool"
 		}
 		if (name === "search-text") {
 			const query = request.arguments.query;
-			if (typeof query !== "string" || !query || query.length > 256) throw new Error("Search query is invalid.");
+			if (typeof query !== "string" || !query || query.length > 256 || query.includes("\0"))
+				throw new Error("Search query is invalid.");
 			const path = await safePath(root, request.arguments.path);
 			const entries = await readdir(path, { withFileTypes: true });
 			const matches: string[] = [];
@@ -208,6 +296,13 @@ async function executeTool(root: string, request: ModelDecision & { kind: "tool"
 				observation: summary(matches.slice(0, 64).join("\n"), limit),
 				evidence: "Searched direct workspace files.",
 			};
+		}
+		if (name === "search-text-recursive") {
+			const query = request.arguments.query;
+			if (typeof query !== "string" || !query || query.length > 256 || query.includes("\0"))
+				throw new Error("Search query is invalid.");
+			const result = await searchTextRecursively(root, request.arguments.path, query, limit);
+			return { status: "ok" as const, ...result };
 		}
 		if (name === "git-status" || name === "git-diff") {
 			const result = await runGit(root, name === "git-status" ? ["status", "--short"] : ["diff", "--"], {

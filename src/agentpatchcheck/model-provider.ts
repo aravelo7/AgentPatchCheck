@@ -87,6 +87,12 @@ const toolParameters: Record<HarnessNativeToolName, Record<string, unknown>> = {
 		required: ["path", "query"],
 		additionalProperties: false,
 	},
+	"search-text-recursive": {
+		type: "object",
+		properties: { path: { type: "string" }, query: { type: "string" } },
+		required: ["path", "query"],
+		additionalProperties: false,
+	},
 	"git-status": { type: "object", properties: {}, additionalProperties: false },
 	"git-diff": { type: "object", properties: {}, additionalProperties: false },
 	"apply-patch": {

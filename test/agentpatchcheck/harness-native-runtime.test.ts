@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -83,6 +83,67 @@ describe("Harness-native Agent Runtime", () => {
 			});
 			expect(result).toMatchObject({ status: "failed", terminationReason: "tool-limit", toolCalls: 2 });
 			expect(result.trajectory.map((step) => step.toolStatus)).toEqual(["rejected", "rejected"]);
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("searches bounded recursive regular workspace files while excluding state and dependency paths", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await mkdir(join(worktree, "src", "feature"), { recursive: true });
+			await mkdir(join(worktree, "node_modules", "package"), { recursive: true });
+			await mkdir(join(worktree, ".agentpatchcheck", "state"), { recursive: true });
+			await mkdir(join(worktree, "depth-1", "depth-2", "depth-3", "depth-4", "depth-5"), {
+				recursive: true,
+			});
+			await writeFile(join(worktree, "src", "feature", "target.ts"), "const needle = true;\n", "utf8");
+			await writeFile(join(worktree, "node_modules", "package", "ignored.js"), "needle\n", "utf8");
+			await writeFile(join(worktree, ".agentpatchcheck", "state", "ignored.txt"), "needle\n", "utf8");
+			await writeFile(join(worktree, ".env"), "SECRET=needle\n", "utf8");
+			await writeFile(
+				join(worktree, "depth-1", "depth-2", "depth-3", "depth-4", "included.txt"),
+				"needle\n",
+				"utf8",
+			);
+			await writeFile(
+				join(worktree, "depth-1", "depth-2", "depth-3", "depth-4", "depth-5", "excluded.txt"),
+				"needle\n",
+				"utf8",
+			);
+			let observation = "";
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) => {
+					if (observations.length === 0)
+						return {
+							decision: {
+								kind: "tool",
+								tool: "search-text-recursive",
+								arguments: { path: ".", query: "needle" },
+							},
+						};
+					observation = observations[0] ?? "";
+					return { decision: { kind: "finish" } };
+				},
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Find source occurrences.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(result.trajectory[0]).toMatchObject({ tool: "search-text-recursive", toolStatus: "ok" });
+			expect(observation).toContain("src/feature/target.ts:1:const needle = true;");
+			expect(observation).toContain("depth-1/depth-2/depth-3/depth-4/included.txt:1:needle");
+			expect(observation).not.toContain("node_modules");
+			expect(observation).not.toContain(".agentpatchcheck");
+			expect(observation).not.toContain("SECRET");
+			expect(observation).not.toContain("depth-5");
 		} finally {
 			await rm(worktree, { recursive: true, force: true });
 		}

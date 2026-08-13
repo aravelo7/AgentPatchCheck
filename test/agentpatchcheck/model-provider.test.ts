@@ -7,7 +7,15 @@ import type { ModelProviderConfiguration } from "../../src/agentpatchcheck/types
 const context = {
 	prompt: "Update README.",
 	observations: [],
-	tools: ["read-file", "list-directory", "search-text", "git-status", "git-diff", "apply-patch"] as const,
+	tools: [
+		"read-file",
+		"list-directory",
+		"search-text",
+		"search-text-recursive",
+		"git-status",
+		"git-diff",
+		"apply-patch",
+	] as const,
 	model: "test-model",
 };
 
