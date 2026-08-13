@@ -70,7 +70,13 @@ export function createHarnessNativeRuntime(providerOverride?: HarnessNativeModel
 		execute: async ({ policy, worktreePath, repairContext }) => {
 			if (policy.nativeAgent === null || policy.model === undefined)
 				throw new Error("Harness-native Runtime requires validated native policy and model.");
-			const provider = providerOverride ?? createModelProvider(policy.nativeAgent.modelProvider);
+			const provider =
+				providerOverride ??
+				createModelProvider(
+					policy.nativeAgent.modelProvider,
+					{},
+					{ maxTransportRetries: policy.nativeAgent.maxTransportRetries },
+				);
 			const startedAt = Date.now();
 			const runtime = await runHarnessNativeRuntime({
 				policy: policy.nativeAgent,
@@ -396,6 +402,7 @@ export async function runHarnessNativeRuntime(options: {
 	let iterations = 0;
 	let inputTokens = 0;
 	let outputTokens = 0;
+	let transportRetries = 0;
 	let actualModel: string | null = null;
 	const fail = (
 		terminationReason: HarnessNativeRuntimeResult["terminationReason"],
@@ -419,10 +426,12 @@ export async function runHarnessNativeRuntime(options: {
 		providerFailure: failure,
 		iterations,
 		toolCalls,
+		transportRetries,
 		budget: {
 			maxIterations: options.policy.maxIterations,
 			maxToolCalls: options.policy.maxToolCalls,
 			maxObservationBytes: options.policy.maxObservationBytes,
+			maxTransportRetries: options.policy.maxTransportRetries,
 		},
 		usage: { inputTokens: inputTokens || null, outputTokens: outputTokens || null },
 		trajectory,
@@ -445,6 +454,7 @@ export async function runHarnessNativeRuntime(options: {
 		actualModel = answer.actualModel ?? actualModel;
 		inputTokens += answer.usage?.inputTokens ?? 0;
 		outputTokens += answer.usage?.outputTokens ?? 0;
+		transportRetries += answer.transportRetries ?? 0;
 		if (answer.decision.kind === "finish") {
 			trajectory.push({
 				iteration,

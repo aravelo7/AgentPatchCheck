@@ -184,6 +184,7 @@ export interface HarnessNativeAgentInput {
 	maxIterations?: number;
 	maxToolCalls?: number;
 	maxObservationBytes?: number;
+	maxTransportRetries?: number;
 }
 
 export type ModelProviderKind = "openai" | "openai-compatible";
@@ -209,6 +210,7 @@ export interface HarnessNativeAgentPolicy {
 	maxIterations: number;
 	maxToolCalls: number;
 	maxObservationBytes: number;
+	maxTransportRetries: number;
 }
 
 export type HarnessNativeToolName =
@@ -285,7 +287,12 @@ export interface HarnessNativeRuntimeResult {
 	/** Number of model decision requests attempted during this Runtime execution. */
 	iterations: number;
 	toolCalls: number;
-	budget: Pick<HarnessNativeAgentPolicy, "maxIterations" | "maxToolCalls" | "maxObservationBytes">;
+	/** Retried transient transport requests that later succeeded; never semantic or tool retries. */
+	transportRetries: number;
+	budget: Pick<
+		HarnessNativeAgentPolicy,
+		"maxIterations" | "maxToolCalls" | "maxObservationBytes" | "maxTransportRetries"
+	>;
 	usage: { inputTokens: number | null; outputTokens: number | null };
 	trajectory: HarnessNativeTrajectoryStep[];
 }
@@ -743,6 +750,7 @@ export interface BenchmarkTaskResult {
 		attempts: number;
 		iterations: number;
 		toolCalls: number;
+		transportRetries: number;
 		providerFailureKinds: HarnessNativeProviderFailureKind[];
 	} | null;
 	verificationStatus: CommandVerificationStatus | null;

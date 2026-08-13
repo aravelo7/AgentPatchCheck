@@ -109,6 +109,7 @@ describe("Harness-native Benchmark Suite v1", () => {
 							protocol: "chat-completions",
 							thinkingMode: "disabled",
 						},
+						maxTransportRetries: 1,
 					},
 				});
 			}

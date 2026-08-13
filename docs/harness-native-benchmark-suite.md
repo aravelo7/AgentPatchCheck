@@ -71,6 +71,20 @@ public-verification false positive, not evidence of a stable 100% task-success r
 `D:\Benchmarks\agentpatchcheck-native-v1-deepseek-repetitions-20260813\repetitions-report.json`; it is local
 experiment evidence, not a versioned repository fixture.
 
+On a second three-run experiment on the same date, 12 of 15 tasks reached final public verification and the Hidden
+Oracle; `publicVerificationFalsePositives` was zero. The three remaining tasks failed before any tool call: two had
+Provider transport failures (`ECONNRESET`) and one had a malformed Provider response. These are recorded as Provider
+failures, not Agent execution failures or semantic patch failures. The result is
+`D:\Benchmarks\agentpatchcheck-native-v1-deepseek-repetitions-false-positive-20260813\repetitions-report.json`.
+That historical run predates the bounded transport retry below, so it remains useful as an unmasked reliability
+observation.
+
+The `deepseek-chat` suite profile explicitly permits one retry only when its first model request fails with
+`ECONNRESET`, before any tool call or tool result exists. The default remains zero retries. Malformed responses,
+HTTP failures, authentication failures, rate limits, and requests after the session has begun are never retried.
+Recovered retries are recorded as `runtime.transportRetries` in Evidence and aggregated as
+`summary.nativeQuality.transportRetries`; they are not counted as Agent repair attempts.
+
 ## Setup-only validation
 
 Use `--dry-run` to validate the versioned fixture/base identity, materialize the selected model into the disposable
@@ -110,6 +124,7 @@ precomputed percentages so a consumer cannot accidentally mix model transport fa
 - `publicRepairRecovered / publicRepairAttempted` is the bounded one-repair recovery rate.
 - `finalPublicVerificationPassed / nativeTasks` is the final public verification rate.
 - `hiddenOraclePassed / nativeTasks` is the final Hidden Oracle pass rate.
+- `transportRetries` is the number of successful, bounded pre-tool `ECONNRESET` transport recoveries.
 - `providerFailureTasks` is separate from `agentExecutionFailureTasks`; neither should be silently counted as a semantic
   patch failure.
 

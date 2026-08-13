@@ -192,6 +192,7 @@ function createNativeRuntimeSummary(result: AgentPatchCheckResult): BenchmarkTas
 		attempts: executions.length,
 		iterations: runtimes.reduce((total, runtime) => total + runtime.iterations, 0),
 		toolCalls: runtimes.reduce((total, runtime) => total + runtime.toolCalls, 0),
+		transportRetries: runtimes.reduce((total, runtime) => total + runtime.transportRetries, 0),
 		providerFailureKinds: runtimes.flatMap((runtime) =>
 			runtime.providerFailure === null ? [] : [runtime.providerFailure.kind],
 		),
@@ -233,6 +234,10 @@ function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"]
 					publicRepairRecovered: nativeTasks.filter((task) => task.repairCycle?.outcome === "repaired").length,
 					finalPublicVerificationPassed: nativeTasks.filter((task) => task.verificationStatus === "passed").length,
 					hiddenOraclePassed: nativeTasks.filter((task) => task.hiddenOracleStatus === "passed").length,
+					transportRetries: nativeTasks.reduce(
+						(total, task) => total + (task.nativeRuntime?.transportRetries ?? 0),
+						0,
+					),
 					providerFailureTasks: nativeTasks.filter(
 						(task) => (task.nativeRuntime?.providerFailureKinds.length ?? 0) > 0,
 					).length,

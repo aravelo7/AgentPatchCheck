@@ -24,6 +24,7 @@ const providerProfiles = {
 			thinkingMode: "disabled",
 			baseUrl: "https://api.deepseek.com",
 			credentialRef: "deepseek-primary",
+			maxTransportRetries: 1,
 		},
 		requiredEnvironment: "DEEPSEEK_API_KEY",
 	},

@@ -32,6 +32,10 @@ function configuration(protocol: ModelProviderConfiguration["protocol"]): ModelP
 	};
 }
 
+function connectionResetError(): Error & { code: string } {
+	return Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+}
+
 describe("Model Provider Registry", () => {
 	it("creates isolated Provider-neutral sessions that accept bounded tool result state", async () => {
 		const provider = createModelProvider(configuration("chat-completions"), {
@@ -118,6 +122,81 @@ describe("Model Provider Registry", () => {
 				expect.objectContaining({ function: expect.objectContaining({ name: "finish" }) }),
 			]),
 		});
+	});
+
+	it("retries one ECONNRESET only before a Chat session has received tool state", async () => {
+		let requests = 0;
+		const provider = createModelProvider(
+			configuration("chat-completions"),
+			{
+				fetcher: async () => {
+					requests += 1;
+					if (requests === 1) throw connectionResetError();
+					return new Response(
+						JSON.stringify({
+							choices: [{ message: { tool_calls: [{ function: { name: "finish", arguments: "{}" } }] } }],
+						}),
+					);
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+			{ maxTransportRetries: 1 },
+		);
+
+		const decision = await provider.createSession().decide(context);
+		expect(decision).toMatchObject({ decision: { kind: "finish" }, transportRetries: 1 });
+		expect(requests).toBe(2);
+	});
+
+	it("does not retry ECONNRESET after a Chat session has begun", async () => {
+		let requests = 0;
+		const provider = createModelProvider(
+			configuration("chat-completions"),
+			{
+				fetcher: async () => {
+					requests += 1;
+					if (requests === 2) throw connectionResetError();
+					return new Response(
+						JSON.stringify({
+							choices: [
+								{
+									message: {
+										tool_calls: [{ id: "call-1", function: { name: "git-status", arguments: "{}" } }],
+									},
+								},
+							],
+						}),
+					);
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+			{ maxTransportRetries: 1 },
+		);
+		const session = provider.createSession();
+		await session.decide(context);
+
+		await expect(session.decide({ ...context, observations: ["Git status clean."] })).rejects.toMatchObject({
+			failure: { kind: "provider-unavailable", code: "ECONNRESET" },
+		});
+		expect(requests).toBe(2);
+	});
+
+	it("does not retry malformed model output", async () => {
+		let requests = 0;
+		const provider = createModelProvider(
+			configuration("chat-completions"),
+			{
+				fetcher: async () => {
+					requests += 1;
+					return new Response("{");
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+			{ maxTransportRetries: 1 },
+		);
+
+		await expect(provider.decide(context)).rejects.toMatchObject({ failure: { kind: "malformed-response" } });
+		expect(requests).toBe(1);
 	});
 
 	it("serializes a distinct bounded repair context for both supported protocols", async () => {

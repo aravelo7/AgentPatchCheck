@@ -28,6 +28,7 @@ const taskSpecSchema = z
 				maxIterations: z.number().int().optional(),
 				maxToolCalls: z.number().int().optional(),
 				maxObservationBytes: z.number().int().optional(),
+				maxTransportRetries: z.number().int().optional(),
 			})
 			.strict()
 			.optional(),

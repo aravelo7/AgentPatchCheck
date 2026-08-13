@@ -25,6 +25,7 @@ export interface ModelProviderDecision {
 	decision: ModelDecision;
 	usage?: { inputTokens?: number; outputTokens?: number };
 	actualModel?: string;
+	transportRetries?: number;
 }
 
 /** Provider-neutral tool-call state; retained only for the active Runtime session. */
@@ -63,6 +64,11 @@ export class ModelProviderFailureError extends Error {
 export interface ModelProviderDependencies {
 	fetcher: typeof fetch;
 	resolveCredential: (credentialRef: string) => CredentialResolution;
+}
+
+/** Runtime-only transport budget; intentionally excluded from Provider identity/configuration. */
+export interface ModelProviderOptions {
+	maxTransportRetries?: number;
 }
 
 const defaultDependencies: ModelProviderDependencies = { fetcher: fetch, resolveCredential };
@@ -220,23 +226,33 @@ async function requestJson(
 	path: string,
 	body: Record<string, unknown>,
 	dependencies: ModelProviderDependencies,
-): Promise<{ payload: unknown; requestId: string | null }> {
-	let response: Response;
-	try {
-		response = await dependencies.fetcher(endpoint(configuration.baseUrl, path), {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${resolveSecret(configuration, dependencies)}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify(body),
-		});
-	} catch (error) {
-		if (error instanceof ModelProviderFailureError) throw error;
-		const cause = typeof error === "object" && error !== null && "cause" in error ? error.cause : undefined;
-		const code = errorCode(cause) ?? errorCode(error);
-		throw providerFailure(code === "UND_ERR_CONNECT_TIMEOUT" ? "timeout" : "provider-unavailable", { code });
+	maxTransportRetries: number,
+): Promise<{ payload: unknown; requestId: string | null; transportRetries: number }> {
+	let response: Response | null = null;
+	let transportRetries = 0;
+	for (;;) {
+		try {
+			response = await dependencies.fetcher(endpoint(configuration.baseUrl, path), {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${resolveSecret(configuration, dependencies)}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(body),
+			});
+			break;
+		} catch (error) {
+			if (error instanceof ModelProviderFailureError) throw error;
+			const cause = typeof error === "object" && error !== null && "cause" in error ? error.cause : undefined;
+			const code = errorCode(cause) ?? errorCode(error);
+			if (code === "ECONNRESET" && transportRetries < maxTransportRetries) {
+				transportRetries += 1;
+				continue;
+			}
+			throw providerFailure(code === "UND_ERR_CONNECT_TIMEOUT" ? "timeout" : "provider-unavailable", { code });
+		}
 	}
+	if (response === null) throw new Error("Model provider did not return a response.");
 	const requestId = safeValue(response.headers.get("x-request-id"));
 	let payload: unknown;
 	try {
@@ -247,7 +263,7 @@ async function requestJson(
 			requestId,
 		});
 	}
-	if (response.ok) return { payload, requestId };
+	if (response.ok) return { payload, requestId, transportRetries };
 	const code = responseErrorCode(payload);
 	const kind =
 		response.status === 401 || response.status === 403
@@ -417,8 +433,10 @@ function usage(
 function createOpenAICompatibleProvider(
 	configuration: ModelProviderConfiguration,
 	dependencies: ModelProviderDependencies,
+	options: Required<ModelProviderOptions>,
 ): ModelProvider {
 	const decide = async (context: ModelProviderContext): Promise<ModelProviderDecision> => {
+		const maxTransportRetries = context.observations.length === 0 ? options.maxTransportRetries : 0;
 		if (configuration.protocol === "responses") {
 			const result = await requestJson(
 				configuration,
@@ -431,8 +449,12 @@ function createOpenAICompatibleProvider(
 					tools: selectedTools(context.tools),
 				},
 				dependencies,
+				maxTransportRetries,
 			);
-			return parseResponsesDecision(result.payload, result.requestId);
+			return {
+				...parseResponsesDecision(result.payload, result.requestId),
+				...(result.transportRetries === 0 ? {} : { transportRetries: result.transportRetries }),
+			};
 		}
 		const result = await requestJson(
 			configuration,
@@ -452,9 +474,13 @@ function createOpenAICompatibleProvider(
 				...(configuration.thinkingMode === "disabled" ? { thinking: { type: "disabled" } } : {}),
 			},
 			dependencies,
+			maxTransportRetries,
 		);
 		const { assistantMessage: _assistantMessage, ...decision } = parseChatDecision(result.payload, result.requestId);
-		return decision;
+		return {
+			...decision,
+			...(result.transportRetries === 0 ? {} : { transportRetries: result.transportRetries }),
+		};
 	};
 	return {
 		id: `${configuration.provider}:${configuration.protocol}`,
@@ -465,6 +491,7 @@ function createOpenAICompatibleProvider(
 			let pendingCallIds = new Set<string>();
 			return {
 				decide: async (context) => {
+					const maxTransportRetries = messages === null ? options.maxTransportRetries : 0;
 					messages ??= [
 						{
 							role: "system",
@@ -484,11 +511,15 @@ function createOpenAICompatibleProvider(
 							...(configuration.thinkingMode === "disabled" ? { thinking: { type: "disabled" } } : {}),
 						},
 						dependencies,
+						maxTransportRetries,
 					);
 					const parsed = parseChatDecision(result.payload, result.requestId);
 					messages.push(parsed.assistantMessage);
 					pendingCallIds = new Set(parsed.assistantMessage.tool_calls.map((toolCall) => toolCall.id));
-					return parsed;
+					return {
+						...parsed,
+						...(result.transportRetries === 0 ? {} : { transportRetries: result.transportRetries }),
+					};
 				},
 				recordToolResults: (results) => {
 					for (const result of results) {
@@ -505,7 +536,11 @@ function createOpenAICompatibleProvider(
 export function createModelProvider(
 	configuration: ModelProviderConfiguration,
 	overrides: Partial<ModelProviderDependencies> = {},
+	options: ModelProviderOptions = {},
 ): ModelProvider {
 	const dependencies = { ...defaultDependencies, ...overrides };
-	return createOpenAICompatibleProvider(configuration, dependencies);
+	const maxTransportRetries = options.maxTransportRetries ?? 0;
+	if (!Number.isSafeInteger(maxTransportRetries) || maxTransportRetries < 0 || maxTransportRetries > 1)
+		throw new Error("Model provider maxTransportRetries must be an integer between 0 and 1.");
+	return createOpenAICompatibleProvider(configuration, dependencies, { maxTransportRetries });
 }

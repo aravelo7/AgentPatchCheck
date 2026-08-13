@@ -58,6 +58,34 @@ describe("validateTaskPolicy", () => {
 		).rejects.toThrow("Base ref must not begin with a dash");
 	});
 
+	it("defaults transport retry to zero and permits only one explicit retry", async () => {
+		const defaultPolicy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Inspect the change.",
+			agentAdapter: "harness-native",
+			model: "test-model",
+			nativeAgent: { credentialRef: "openai-primary" },
+		});
+		expect(defaultPolicy.nativeAgent?.maxTransportRetries).toBe(0);
+		const retriedPolicy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Inspect the change.",
+			agentAdapter: "harness-native",
+			model: "test-model",
+			nativeAgent: { credentialRef: "openai-primary", maxTransportRetries: 1 },
+		});
+		expect(retriedPolicy.nativeAgent?.maxTransportRetries).toBe(1);
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: { credentialRef: "openai-primary", maxTransportRetries: 2 },
+			}),
+		).rejects.toThrow("maxTransportRetries must be an integer between 0 and 1");
+	});
+
 	it("validates direct verification commands and rejects shell launchers", async () => {
 		const policy = await validateTaskPolicy({
 			repositoryRoot: process.cwd(),

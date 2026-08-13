@@ -210,17 +210,21 @@ function normalizeNativeAgent(
 	const maxIterations = input?.maxIterations ?? DEFAULT_NATIVE_MAX_ITERATIONS;
 	const maxToolCalls = input?.maxToolCalls ?? DEFAULT_NATIVE_MAX_TOOL_CALLS;
 	const maxObservationBytes = input?.maxObservationBytes ?? DEFAULT_NATIVE_MAX_OBSERVATION_BYTES;
+	const maxTransportRetries = input?.maxTransportRetries ?? 0;
 	if (!Number.isSafeInteger(maxIterations) || maxIterations < 1 || maxIterations > 32)
 		throw new Error("Harness-native maxIterations must be an integer between 1 and 32.");
 	if (!Number.isSafeInteger(maxToolCalls) || maxToolCalls < 1 || maxToolCalls > 64)
 		throw new Error("Harness-native maxToolCalls must be an integer between 1 and 64.");
 	if (!Number.isSafeInteger(maxObservationBytes) || maxObservationBytes < 1_024 || maxObservationBytes > 64 * 1024)
 		throw new Error("Harness-native maxObservationBytes must be an integer between 1024 and 65536.");
+	if (!Number.isSafeInteger(maxTransportRetries) || maxTransportRetries < 0 || maxTransportRetries > 1)
+		throw new Error("Harness-native maxTransportRetries must be an integer between 0 and 1.");
 	return {
 		modelProvider: normalizeModelProvider(input),
 		maxIterations,
 		maxToolCalls,
 		maxObservationBytes,
+		maxTransportRetries,
 	};
 }
 

@@ -502,5 +502,6 @@ function testNativePolicy(options: { maxIterations: number; maxToolCalls: number
 		maxIterations: options.maxIterations,
 		maxToolCalls: options.maxToolCalls,
 		maxObservationBytes: 1024,
+		maxTransportRetries: 0,
 	};
 }
