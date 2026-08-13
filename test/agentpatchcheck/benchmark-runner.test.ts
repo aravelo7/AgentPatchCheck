@@ -163,8 +163,15 @@ describe("Benchmark Runner", () => {
 			providerFailure: null,
 			iterations: 2,
 			toolCalls: 1,
+			rejectedToolCalls: 0,
 			transportRetries: 0,
-			budget: { maxIterations: 3, maxToolCalls: 2, maxObservationBytes: 1024, maxTransportRetries: 0 },
+			budget: {
+				maxIterations: 3,
+				maxToolCalls: 2,
+				maxRejectedToolCalls: 4,
+				maxObservationBytes: 1024,
+				maxTransportRetries: 0,
+			},
 			usage: { inputTokens: 1, outputTokens: 1 },
 			trajectory: [],
 		};
@@ -224,6 +231,7 @@ describe("Benchmark Runner", () => {
 			attempts: 2,
 			iterations: 3,
 			toolCalls: 2,
+			rejectedToolCalls: 0,
 			transportRetries: 0,
 			providerFailureKinds: [],
 		});
@@ -235,6 +243,7 @@ describe("Benchmark Runner", () => {
 			finalPublicVerificationPassed: 1,
 			hiddenOraclePassed: 0,
 			transportRetries: 0,
+			rejectedToolCalls: 0,
 			providerFailureTasks: 0,
 			agentExecutionFailureTasks: 0,
 		});

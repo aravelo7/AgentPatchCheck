@@ -68,10 +68,12 @@ describe("EvidenceBundle", () => {
 					},
 					iterations: 2,
 					toolCalls: 1,
+					rejectedToolCalls: 0,
 					transportRetries: 0,
 					budget: {
 						maxIterations: 2,
 						maxToolCalls: 2,
+						maxRejectedToolCalls: 4,
 						maxObservationBytes: 1024,
 						maxTransportRetries: 0,
 					},

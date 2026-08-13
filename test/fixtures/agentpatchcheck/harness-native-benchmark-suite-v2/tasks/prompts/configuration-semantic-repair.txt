@@ -1,0 +1,1 @@
+Use only the managed workspace tools. Update `settings.json` so `featureEnabled` is true and `retryLimit` is 3. Preserve the file as exactly the intended two-property JSON document; do not modify any other file. Then finish. Do not assume any hidden checks exist.

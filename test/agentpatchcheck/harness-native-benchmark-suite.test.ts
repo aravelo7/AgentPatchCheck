@@ -118,6 +118,34 @@ describe("Harness-native Benchmark Suite v1", () => {
 		}
 	});
 
+	it("materializes the separately versioned v2 corpus without changing v1", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			const { stdout } = await execFile(
+				process.execPath,
+				[suiteScript, "--output-root", outputRoot, "--model", "test-model", "--suite-version", "v2", "--dry-run"],
+				{ cwd: projectRoot, windowsHide: true },
+			);
+			const output = JSON.parse(stdout) as NativeSuiteDryRunOutput;
+			expect(output).toMatchObject({
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v2" },
+				baseCommit: "41bfa2e34e2d76d755cb5a11fc932b6fed4c32b8",
+			});
+			expect(output.taskSpecPaths).toHaveLength(6);
+			const semanticTaskPath = output.taskSpecPaths.find((path) =>
+				path.endsWith("configuration-semantic-repair.json"),
+			);
+			const semanticPolicy = await validateTaskPolicy(await loadTaskSpec(semanticTaskPath ?? ""));
+			expect(semanticPolicy).toMatchObject({
+				verificationProfile: { name: "settings-semantic" },
+				hiddenOracle: { scriptPath: expect.stringContaining("oracle-settings-exact.mjs") },
+			});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("fails before materializing a suite when model selection is omitted", async () => {
 		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
 		const outputRoot = join(root, "suite");

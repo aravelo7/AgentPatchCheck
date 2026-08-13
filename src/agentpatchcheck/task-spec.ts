@@ -27,6 +27,7 @@ const taskSpecSchema = z
 				credentialRef: z.string().optional(),
 				maxIterations: z.number().int().optional(),
 				maxToolCalls: z.number().int().optional(),
+				maxRejectedToolCalls: z.number().int().optional(),
 				maxObservationBytes: z.number().int().optional(),
 				maxTransportRetries: z.number().int().optional(),
 			})

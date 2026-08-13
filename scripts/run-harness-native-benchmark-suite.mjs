@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
-const fixtureSource = join(projectRoot, "test", "fixtures", "agentpatchcheck", "harness-native-benchmark-suite-v1");
+const fixtureRoot = join(projectRoot, "test", "fixtures", "agentpatchcheck");
 const cliPath = join(projectRoot, "src", "agentpatchcheck", "cli.ts");
 const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/u;
 const providerProfiles = {
@@ -29,6 +29,7 @@ const providerProfiles = {
 		requiredEnvironment: "DEEPSEEK_API_KEY",
 	},
 };
+const suiteVersions = new Set(["v1", "v2"]);
 
 function getProviderProfile(profileId) {
 	const profile = providerProfiles[profileId];
@@ -42,18 +43,20 @@ function parseArguments(argv) {
 	let model;
 	let dryRun = false;
 	let providerProfile = "openai-responses";
+	let suiteVersion = "v1";
 	for (let index = 0; index < argv.length; index += 1) {
 		const argument = argv[index];
 		if (argument === "--dry-run") {
 			dryRun = true;
 			continue;
 		}
-		if (argument === "--output-root" || argument === "--model" || argument === "--provider-profile") {
+		if (argument === "--output-root" || argument === "--model" || argument === "--provider-profile" || argument === "--suite-version") {
 			const value = argv[index + 1];
 			if (value === undefined || !value.trim()) throw new Error(`Missing value for ${argument}.`);
 			if (argument === "--output-root") outputRoot = resolve(value);
 			else if (argument === "--model") model = value.trim();
-			else providerProfile = value.trim();
+			else if (argument === "--provider-profile") providerProfile = value.trim();
+			else suiteVersion = value.trim();
 			index += 1;
 			continue;
 		}
@@ -61,11 +64,12 @@ function parseArguments(argv) {
 	}
 	if (outputRoot === undefined || model === undefined)
 		throw new Error(
-			"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--dry-run]",
+			"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2>] [--dry-run]",
 		);
 	if (!modelPattern.test(model)) throw new Error("model must be a valid 1-128 character model identifier.");
 	getProviderProfile(providerProfile);
-	return { outputRoot, model, providerProfile, dryRun };
+	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2.");
+	return { outputRoot, model, providerProfile, suiteVersion, dryRun };
 }
 
 async function assertPathDoesNotExist(path) {
@@ -135,6 +139,7 @@ function parseBenchmarkResponse(stdout) {
 async function main() {
 	const options = parseArguments(process.argv.slice(2));
 	const providerProfile = getProviderProfile(options.providerProfile ?? "openai-responses");
+	const fixtureSource = join(fixtureRoot, `harness-native-benchmark-suite-${options.suiteVersion}`);
 	if (!options.dryRun && !process.env[providerProfile.requiredEnvironment]?.trim())
 		throw new Error(
 			`${providerProfile.requiredEnvironment} is required for provider profile ${options.providerProfile ?? "openai-responses"}. Use --dry-run to validate setup.`,
@@ -173,6 +178,7 @@ async function main() {
 					baseCommit,
 					model: options.model,
 					providerProfile: options.providerProfile,
+					suiteVersion: options.suiteVersion,
 					taskSpecPaths: taskPaths,
 					budgets: fixtureManifest.budgets,
 				},
@@ -218,6 +224,7 @@ async function main() {
 				baseCommit,
 				model: options.model,
 				providerProfile: options.providerProfile,
+				suiteVersion: options.suiteVersion,
 				benchmarkReportPath: benchmarkResult.reference.path,
 				benchmarkOk: response.ok,
 				taskResults: report.tasks.map((task) => ({

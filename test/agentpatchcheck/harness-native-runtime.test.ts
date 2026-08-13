@@ -66,7 +66,7 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
-	it("rejects workspace escapes and unregistered tools while enforcing tool budgets", async () => {
+	it("charges rejected workspace escapes to their own strict budget", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {
 			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
@@ -78,15 +78,72 @@ describe("Harness-native Agent Runtime", () => {
 						: { decision: { kind: "tool", tool: "shell", arguments: {} } },
 			};
 			const result = await runHarnessNativeRuntime({
-				policy: testNativePolicy({ maxIterations: 3, maxToolCalls: 2 }),
+				policy: testNativePolicy({ maxIterations: 3, maxToolCalls: 2, maxRejectedToolCalls: 2 }),
 				prompt: "untrusted",
 				model: "test-model",
 				worktreePath: worktree,
 				provider,
 				timeoutMs: 1_000,
 			});
-			expect(result).toMatchObject({ status: "failed", terminationReason: "tool-limit", toolCalls: 2 });
+			expect(result).toMatchObject({
+				status: "failed",
+				terminationReason: "rejected-tool-limit",
+				toolCalls: 0,
+				rejectedToolCalls: 2,
+			});
 			expect(result.trajectory.map((step) => step.toolStatus)).toEqual(["rejected", "rejected"]);
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves the effective tool budget after bounded rejected calls", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) => {
+					if (observations.length === 0)
+						return {
+							decision: { kind: "tool", tool: "create-file", arguments: { path: "README.md", content: "x" } },
+						};
+					if (observations.length === 1)
+						return {
+							decision: {
+								kind: "tool",
+								tool: "apply-patch",
+								arguments: { path: "README.md", expectedText: "", replacementText: "x" },
+							},
+						};
+					if (observations.length === 2)
+						return { decision: { kind: "tool", tool: "read-file", arguments: { path: "README.md" } } };
+					if (observations.length === 3)
+						return {
+							decision: {
+								kind: "tool",
+								tool: "apply-patch",
+								arguments: { path: "README.md", expectedText: "before", replacementText: "after" },
+							},
+						};
+					return { decision: { kind: "finish" } };
+				},
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 5, maxToolCalls: 2, maxRejectedToolCalls: 3 }),
+				prompt: "Repair README.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+			expect(result).toMatchObject({
+				status: "succeeded",
+				terminationReason: "finished",
+				toolCalls: 2,
+				rejectedToolCalls: 2,
+			});
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("after\n");
 		} finally {
 			await rm(worktree, { recursive: true, force: true });
 		}
@@ -298,7 +355,7 @@ describe("Harness-native Agent Runtime", () => {
 				timeoutMs: 1_000,
 			});
 
-			expect(result).toMatchObject({ status: "succeeded", toolCalls: 3 });
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 0, rejectedToolCalls: 3 });
 			expect(result.trajectory.map((step) => step.toolStatus)).toEqual(["rejected", "rejected", "rejected", null]);
 			expect(await readFile(join(worktree, "existing.txt"), "utf8")).toBe("original\\n");
 			await expect(readFile(join(worktree, "missing", "new.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
@@ -496,11 +553,12 @@ function testProviderConfiguration() {
 	};
 }
 
-function testNativePolicy(options: { maxIterations: number; maxToolCalls: number }) {
+function testNativePolicy(options: { maxIterations: number; maxToolCalls: number; maxRejectedToolCalls?: number }) {
 	return {
 		modelProvider: testProviderConfiguration(),
 		maxIterations: options.maxIterations,
 		maxToolCalls: options.maxToolCalls,
+		maxRejectedToolCalls: options.maxRejectedToolCalls ?? 4,
 		maxObservationBytes: 1024,
 		maxTransportRetries: 0,
 	};

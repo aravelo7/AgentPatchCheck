@@ -1,0 +1,1 @@
+Use only the managed workspace tools. First update README.md so its entire content is `invalid\n`, then finish. If the Harness later supplies public verification feedback, inspect the workspace and make exactly one targeted repair so README.md instead contains `after\n`; then finish. Do not assume any hidden checks exist.

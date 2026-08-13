@@ -183,6 +183,8 @@ export interface HarnessNativeAgentInput {
 	credentialRef?: string;
 	maxIterations?: number;
 	maxToolCalls?: number;
+	/** Bounded invalid or policy-rejected calls; these never consume maxToolCalls. */
+	maxRejectedToolCalls?: number;
 	maxObservationBytes?: number;
 	maxTransportRetries?: number;
 }
@@ -209,6 +211,7 @@ export interface HarnessNativeAgentPolicy {
 	modelProvider: ModelProviderConfiguration;
 	maxIterations: number;
 	maxToolCalls: number;
+	maxRejectedToolCalls: number;
 	maxObservationBytes: number;
 	maxTransportRetries: number;
 }
@@ -228,6 +231,7 @@ export type HarnessNativeTerminationReason =
 	| "model-failed"
 	| "iteration-limit"
 	| "tool-limit"
+	| "rejected-tool-limit"
 	| "timeout"
 	| "invalid-decision";
 export type HarnessNativeProviderFailureKind =
@@ -286,12 +290,15 @@ export interface HarnessNativeRuntimeResult {
 	providerFailure: HarnessNativeProviderFailure | null;
 	/** Number of model decision requests attempted during this Runtime execution. */
 	iterations: number;
+	/** Calls accepted by the Harness and therefore charged to the regular tool budget. */
 	toolCalls: number;
+	/** Calls rejected before workspace mutation, tracked under their own strict budget. */
+	rejectedToolCalls: number;
 	/** Retried transient transport requests that later succeeded; never semantic or tool retries. */
 	transportRetries: number;
 	budget: Pick<
 		HarnessNativeAgentPolicy,
-		"maxIterations" | "maxToolCalls" | "maxObservationBytes" | "maxTransportRetries"
+		"maxIterations" | "maxToolCalls" | "maxRejectedToolCalls" | "maxObservationBytes" | "maxTransportRetries"
 	>;
 	usage: { inputTokens: number | null; outputTokens: number | null };
 	trajectory: HarnessNativeTrajectoryStep[];
@@ -750,6 +757,7 @@ export interface BenchmarkTaskResult {
 		attempts: number;
 		iterations: number;
 		toolCalls: number;
+		rejectedToolCalls: number;
 		transportRetries: number;
 		providerFailureKinds: HarnessNativeProviderFailureKind[];
 	} | null;
@@ -803,6 +811,8 @@ export interface BenchmarkReport {
 			publicRepairRecovered: number;
 			finalPublicVerificationPassed: number;
 			hiddenOraclePassed: number;
+			transportRetries: number;
+			rejectedToolCalls: number;
 			providerFailureTasks: number;
 			agentExecutionFailureTasks: number;
 		};

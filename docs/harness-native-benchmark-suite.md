@@ -4,10 +4,14 @@
 Headless Core corpus and is not part of ordinary CI.
 
 The suite materializes a disposable Git fixture, pins its fixture/base, TaskSpec, verification profile, risk profile,
-and Hidden Oracle source in the resulting Evidence and BenchmarkReport. Its fixed corpus contains a public-repair
+and Hidden Oracle source in the resulting Evidence and BenchmarkReport. Its fixed v1 corpus contains a public-repair
 task, a new-file task, a multi-file local-repair task, a recursive cross-directory repair task, and a recursive
 feedback-repair task. The public-repair and recursive feedback-repair tasks deliberately produce a public verification
 failure first, then measure the bounded single repair attempt before the Hidden Oracle runs.
+
+The separately versioned v2 corpus preserves all five v1 tasks and adds `configuration-semantic-repair`: public
+verification checks the requested settings values, while the Hidden Oracle checks the exact intended JSON document.
+The corpus is selected explicitly; no existing suite identity is mutated.
 
 ## Run
 
@@ -19,7 +23,8 @@ credential names, or Provider configuration.
 $env:OPENAI_API_KEY = "..."
 npm.cmd run benchmark:harness-native-suite -- `
   --output-root D:\Benchmarks\agentpatchcheck-native-v1 `
-  --model <model-id>
+  --model <model-id> `
+  --suite-version v1
 ```
 
 The default `openai-responses` profile requires `OPENAI_API_KEY`. The verified DeepSeek profile uses Chat
@@ -27,9 +32,10 @@ Completions and requires `DEEPSEEK_API_KEY` in the same PowerShell session:
 
 ```powershell
 npm.cmd run benchmark:harness-native-suite -- `
-  --output-root D:\Benchmarks\agentpatchcheck-native-v1-deepseek `
+  --output-root D:\Benchmarks\agentpatchcheck-native-v2-deepseek `
   --model deepseek-v4-pro `
-  --provider-profile deepseek-chat
+  --provider-profile deepseek-chat `
+  --suite-version v2
 ```
 
 The current profiles are intentionally fixed:
@@ -52,10 +58,11 @@ It does not retry a failed task or hide provider failures.
 
 ```powershell
 npm.cmd run benchmark:harness-native-repetitions -- `
-  --output-root D:\Benchmarks\agentpatchcheck-native-v1-deepseek-repetitions `
+  --output-root D:\Benchmarks\agentpatchcheck-native-v2-deepseek-repetitions `
   --runs 3 `
   --model deepseek-v4-pro `
-  --provider-profile deepseek-chat
+  --provider-profile deepseek-chat `
+  --suite-version v2
 ```
 
 This is an explicitly model-backed experiment and consumes one complete suite execution per run. Compare individual
@@ -95,12 +102,13 @@ npm.cmd run benchmark:harness-native-suite -- `
   --output-root D:\Benchmarks\agentpatchcheck-native-v1-dry-run `
   --model <model-id> `
   --provider-profile <openai-responses|deepseek-chat> `
+  --suite-version <v1|v2> `
   --dry-run
 ```
 
 ## Limits and boundaries
 
-- The v1 corpus uses five independent managed workspaces and requires a patch from each task.
+- The v1 corpus uses five independent managed workspaces and requires a patch from each task; v2 uses six.
 - The multi-file task allows only exact replacements in two existing files; it verifies both public prefixes and exact
   final content through a Hidden Oracle.
 - The recursive task requires bounded cross-directory discovery before two nested source-file replacements; its Hidden
@@ -125,11 +133,13 @@ precomputed percentages so a consumer cannot accidentally mix model transport fa
 - `finalPublicVerificationPassed / nativeTasks` is the final public verification rate.
 - `hiddenOraclePassed / nativeTasks` is the final Hidden Oracle pass rate.
 - `transportRetries` is the number of successful, bounded pre-tool `ECONNRESET` transport recoveries.
+- `rejectedToolCalls` is the number of policy-rejected, non-mutating calls; it is capped separately and does not reduce
+  the accepted-tool budget.
 - `providerFailureTasks` is separate from `agentExecutionFailureTasks`; neither should be silently counted as a semantic
   patch failure.
 
-The v1 suite contains five tasks and is an integration fixture, not a statistically meaningful quality score. Future
-versioned corpora must grow the task denominator before publishing rates.
+The v1/v2 suites contain five/six tasks respectively and are integration fixtures, not statistically meaningful quality
+scores. Future versioned corpora must grow the task denominator before publishing rates.
 
 OpenAI documents the Responses API as the API for multi-turn and tool-calling workflows; choose and compare models on
 representative tasks rather than treating a single result as a general capability claim.

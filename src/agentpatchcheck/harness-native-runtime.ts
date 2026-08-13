@@ -399,6 +399,7 @@ export async function runHarnessNativeRuntime(options: {
 		recordToolResults: () => undefined,
 	};
 	let toolCalls = 0;
+	let rejectedToolCalls = 0;
 	let iterations = 0;
 	let inputTokens = 0;
 	let outputTokens = 0;
@@ -426,10 +427,12 @@ export async function runHarnessNativeRuntime(options: {
 		providerFailure: failure,
 		iterations,
 		toolCalls,
+		rejectedToolCalls,
 		transportRetries,
 		budget: {
 			maxIterations: options.policy.maxIterations,
 			maxToolCalls: options.policy.maxToolCalls,
+			maxRejectedToolCalls: options.policy.maxRejectedToolCalls,
 			maxObservationBytes: options.policy.maxObservationBytes,
 			maxTransportRetries: options.policy.maxTransportRetries,
 		},
@@ -484,10 +487,12 @@ export async function runHarnessNativeRuntime(options: {
 					? answer.decision.calls
 					: [];
 		if (requests.length === 0) return fail("invalid-decision");
-		if (toolCalls + requests.length > options.policy.maxToolCalls) return fail("tool-limit");
+		if (requests.length > 1 && toolCalls + requests.length > options.policy.maxToolCalls) return fail("tool-limit");
 		for (const request of requests) {
-			toolCalls += 1;
+			if (toolCalls >= options.policy.maxToolCalls) return fail("tool-limit");
 			const tool = await executeTool(options.worktreePath, request, options.policy.maxObservationBytes);
+			if (tool.status === "rejected") rejectedToolCalls += 1;
+			else toolCalls += 1;
 			trajectory.push({
 				iteration,
 				decision: "tool",
@@ -499,6 +504,8 @@ export async function runHarnessNativeRuntime(options: {
 				observationSummary: tool.evidence,
 			});
 			observations.push(tool.observation);
+			if (tool.status === "rejected" && rejectedToolCalls >= options.policy.maxRejectedToolCalls)
+				return fail("rejected-tool-limit");
 			if (request.callId === undefined) continue;
 			session.recordToolResults([
 				{

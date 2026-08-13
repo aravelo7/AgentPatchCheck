@@ -8,33 +8,43 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const suiteScript = join(scriptDirectory, "run-harness-native-benchmark-suite.mjs");
 const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/u;
 const providerProfiles = new Set(["openai-responses", "deepseek-chat"]);
+const suiteVersions = new Set(["v1", "v2"]);
 const maxRuns = 20;
 
 function parseArguments(argv) {
 	let outputRoot;
 	let model;
 	let providerProfile = "openai-responses";
+	let suiteVersion = "v1";
 	let runs;
 	for (let index = 0; index < argv.length; index += 1) {
 		const argument = argv[index];
-		if (argument !== "--output-root" && argument !== "--model" && argument !== "--provider-profile" && argument !== "--runs")
+		if (
+			argument !== "--output-root" &&
+			argument !== "--model" &&
+			argument !== "--provider-profile" &&
+			argument !== "--suite-version" &&
+			argument !== "--runs"
+		)
 			throw new Error(`Unknown argument: ${argument}`);
 		const value = argv[index + 1];
 		if (value === undefined || !value.trim()) throw new Error(`Missing value for ${argument}.`);
 		if (argument === "--output-root") outputRoot = resolve(value);
 		else if (argument === "--model") model = value.trim();
 		else if (argument === "--provider-profile") providerProfile = value.trim();
+		else if (argument === "--suite-version") suiteVersion = value.trim();
 		else runs = Number(value);
 		index += 1;
 	}
 	if (outputRoot === undefined || model === undefined || runs === undefined)
 		throw new Error(
-			"Usage: npm run benchmark:harness-native-repetitions -- --output-root <new-directory> --runs <2-20> --model <model> [--provider-profile <profile>]",
+			"Usage: npm run benchmark:harness-native-repetitions -- --output-root <new-directory> --runs <2-20> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2>]",
 		);
 	if (!modelPattern.test(model)) throw new Error("model must be a valid 1-128 character model identifier.");
 	if (!providerProfiles.has(providerProfile)) throw new Error("provider-profile must be one of: openai-responses, deepseek-chat.");
+	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2.");
 	if (!Number.isSafeInteger(runs) || runs < 2 || runs > maxRuns) throw new Error(`runs must be an integer from 2 to ${maxRuns}.`);
-	return { outputRoot, model, providerProfile, runs };
+	return { outputRoot, model, providerProfile, suiteVersion, runs };
 }
 
 async function assertPathDoesNotExist(path) {
@@ -95,6 +105,8 @@ async function main() {
 			options.model,
 			"--provider-profile",
 			options.providerProfile,
+			"--suite-version",
+			options.suiteVersion,
 		]);
 		outputs.push(parseSuiteOutput(result, runNumber));
 	}
@@ -105,6 +117,7 @@ async function main() {
 		suite: outputs[0]?.suite ?? null,
 		model: options.model,
 		providerProfile: options.providerProfile,
+		suiteVersion: options.suiteVersion,
 		runs: outputs.map((output, index) => ({
 			run: index + 1,
 			benchmarkOk: output.benchmarkOk,

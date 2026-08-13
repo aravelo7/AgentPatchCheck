@@ -27,6 +27,7 @@ export function sumNativeQuality(outputs) {
 		"finalPublicVerificationPassed",
 		"hiddenOraclePassed",
 		"transportRetries",
+		"rejectedToolCalls",
 		"providerFailureTasks",
 		"agentExecutionFailureTasks",
 	];

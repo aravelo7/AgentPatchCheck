@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "settings-semantic",
+  "verification": {
+    "commands": [
+      {
+        "command": "node",
+        "args": [
+          "-e",
+          "const fs = require('node:fs'); const settings = JSON.parse(fs.readFileSync('settings.json', 'utf8')); process.exit(settings.featureEnabled === true && settings.retryLimit === 3 ? 0 : 1);"
+        ]
+      }
+    ]
+  }
+}

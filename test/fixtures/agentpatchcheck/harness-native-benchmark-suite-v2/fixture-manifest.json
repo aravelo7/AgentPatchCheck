@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "baseCommit": "41bfa2e34e2d76d755cb5a11fc932b6fed4c32b8",
+  "suite": {
+    "id": "harness-native-public-repair",
+    "fixtureVersion": "v2"
+  },
+  "taskCount": 6,
+  "budgets": {
+    "timeoutMs": 120000,
+    "maxIterations": 6,
+    "maxToolCalls": 8,
+    "maxObservationBytes": 4096
+  }
+}
