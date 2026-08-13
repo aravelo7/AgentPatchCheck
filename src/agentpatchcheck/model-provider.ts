@@ -4,7 +4,7 @@ import type {
 	HarnessNativeProviderFailureDetail,
 	HarnessNativeToolName,
 	ModelProviderConfiguration,
-	PublicVerificationFeedback,
+	RepairContext,
 } from "./types";
 
 export type ModelDecision =
@@ -18,7 +18,7 @@ export interface ModelProviderContext {
 	observations: string[];
 	tools: readonly HarnessNativeToolName[];
 	model: string;
-	publicVerificationFeedback?: PublicVerificationFeedback;
+	repairContext: RepairContext;
 }
 
 export interface ModelProviderDecision {
@@ -159,9 +159,15 @@ function providerFailure(
 }
 
 function requestInput(context: ModelProviderContext): string {
-	return `${context.prompt}\n\nPublic verification feedback:\n${
-		context.publicVerificationFeedback === undefined ? "None." : JSON.stringify(context.publicVerificationFeedback)
-	}\n\nObservations:\n${context.observations.join("\n---\n")}`;
+	const phaseInstruction =
+		context.repairContext.phase === "initial"
+			? "Execution phase: initial. Complete the task instructions using the managed workspace."
+			: "Execution phase: public-verification repair. The initial attempt is complete and its changes are already present in this managed workspace. Do not repeat initial-attempt instructions. Inspect the current workspace, make one targeted repair in response to the public feedback, then call finish.";
+	const feedback =
+		context.repairContext.phase === "initial"
+			? "None."
+			: JSON.stringify(context.repairContext.publicVerificationFeedback);
+	return `${phaseInstruction}\n\nTask instructions:\n${context.prompt}\n\nPublic verification feedback:\n${feedback}\n\nObservations:\n${context.observations.join("\n---\n")}`;
 }
 
 function selectedTools(tools: readonly HarnessNativeToolName[]) {

@@ -13,6 +13,7 @@ import { loadTaskSpec } from "../../src/agentpatchcheck/task-spec";
 const execFile = promisify(execFileCallback);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const suiteScript = join(projectRoot, "scripts", "run-harness-native-benchmark-suite.mjs");
+const repetitionsScript = join(projectRoot, "scripts", "run-harness-native-benchmark-repetitions.mjs");
 
 interface NativeSuiteDryRunOutput {
 	version: 1;
@@ -43,10 +44,10 @@ describe("Harness-native Benchmark Suite v1", () => {
 				suite: { id: "harness-native-public-repair", fixtureVersion: "v1" },
 				model: "test-model",
 				providerProfile: "openai-responses",
-				baseCommit: "1b3e5dfa5797ee11738ea6bd991458c3be4e37a5",
+				baseCommit: "ea3b436179b5fc7e98ee2f260193560f74ca663b",
 				budgets: { timeoutMs: 120000, maxIterations: 6, maxToolCalls: 8, maxObservationBytes: 4096 },
 			});
-			expect(output.taskSpecPaths).toHaveLength(4);
+			expect(output.taskSpecPaths).toHaveLength(5);
 			for (const taskSpecPath of output.taskSpecPaths) {
 				const task = JSON.parse(await readFile(taskSpecPath, "utf8")) as { model: string };
 				expect(task.model).toBe("test-model");
@@ -63,6 +64,14 @@ describe("Harness-native Benchmark Suite v1", () => {
 					maxToolCalls: 8,
 					maxObservationBytes: 4096,
 				},
+			});
+			const feedbackTaskPath = output.taskSpecPaths.find((path) => path.endsWith("recursive-feedback-repair.json"));
+			const feedbackPolicy = await validateTaskPolicy(await loadTaskSpec(feedbackTaskPath ?? ""));
+			expect(feedbackPolicy).toMatchObject({
+				agentAdapter: "harness-native",
+				patchExpectation: "changes-required",
+				verificationProfile: { name: "recursive-feedback-repair" },
+				nativeAgent: { maxIterations: 8, maxToolCalls: 10 },
 			});
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -118,6 +127,23 @@ describe("Harness-native Benchmark Suite v1", () => {
 					windowsHide: true,
 				}),
 			).rejects.toMatchObject({ stderr: expect.stringContaining("--model") });
+			await expect(access(outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an unsafe repetition count before starting a model-backed experiment", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-repetitions-"));
+		const outputRoot = join(root, "suite");
+		try {
+			await expect(
+				execFile(
+					process.execPath,
+					[repetitionsScript, "--output-root", outputRoot, "--runs", "1", "--model", "test-model"],
+					{ cwd: projectRoot, windowsHide: true },
+				),
+			).rejects.toMatchObject({ stderr: expect.stringContaining("runs must be an integer") });
 			await expect(access(outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
 		} finally {
 			await rm(root, { recursive: true, force: true });

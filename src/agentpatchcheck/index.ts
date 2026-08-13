@@ -111,6 +111,7 @@ export type {
 	PatchVerdictReasonCode,
 	PatchVerdictStatus,
 	PublicVerificationFeedback,
+	RepairContext,
 	RiskFinding,
 	RiskLevel,
 	RiskPolicy,

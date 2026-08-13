@@ -24,7 +24,11 @@ describe("AgentAdapter", () => {
 				agentScript: scriptPath,
 			});
 
-			const result = await getAgentAdapter("script").execute({ policy, worktreePath: directory });
+			const result = await getAgentAdapter("script").execute({
+				policy,
+				worktreePath: directory,
+				repairContext: { phase: "initial", publicVerificationFeedback: null },
+			});
 
 			expect(result).toMatchObject({ executable: process.execPath, exitCode: 0, timedOut: false });
 			expect(result.stdout).toContain("script adapter ran");

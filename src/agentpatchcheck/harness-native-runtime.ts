@@ -16,7 +16,7 @@ import type {
 	HarnessNativeRuntimeResult,
 	HarnessNativeToolName,
 	HarnessNativeTrajectoryStep,
-	PublicVerificationFeedback,
+	RepairContext,
 } from "./types";
 
 export type HarnessNativeModelProvider = Pick<ModelProvider, "id" | "decide"> &
@@ -67,7 +67,7 @@ function isExcludedRecursiveSearchFile(name: string): boolean {
 export function createHarnessNativeRuntime(providerOverride?: HarnessNativeModelProvider): AgentRuntime {
 	return {
 		id: "harness-native",
-		execute: async ({ policy, worktreePath, publicVerificationFeedback }) => {
+		execute: async ({ policy, worktreePath, repairContext }) => {
 			if (policy.nativeAgent === null || policy.model === undefined)
 				throw new Error("Harness-native Runtime requires validated native policy and model.");
 			const provider = providerOverride ?? createModelProvider(policy.nativeAgent.modelProvider);
@@ -79,7 +79,7 @@ export function createHarnessNativeRuntime(providerOverride?: HarnessNativeModel
 				worktreePath,
 				provider,
 				timeoutMs: policy.timeoutMs,
-				publicVerificationFeedback,
+				repairContext,
 			});
 			const execution: AgentExecution = {
 				executable: "harness-native",
@@ -381,9 +381,11 @@ export async function runHarnessNativeRuntime(options: {
 	worktreePath: string;
 	provider: HarnessNativeModelProvider;
 	timeoutMs: number;
-	publicVerificationFeedback?: PublicVerificationFeedback;
+	/** Direct runtime callers default to an initial execution; the Headless Core always passes this explicitly. */
+	repairContext?: RepairContext;
 }): Promise<HarnessNativeRuntimeResult> {
 	const startedAt = Date.now();
+	const repairContext = options.repairContext ?? { phase: "initial", publicVerificationFeedback: null };
 	const trajectory: HarnessNativeTrajectoryStep[] = [];
 	const observations: string[] = [];
 	const session = options.provider.createSession?.() ?? {
@@ -435,7 +437,7 @@ export async function runHarnessNativeRuntime(options: {
 				observations,
 				tools: registeredTools,
 				model: options.model,
-				publicVerificationFeedback: options.publicVerificationFeedback,
+				repairContext,
 			});
 		} catch (error) {
 			return fail("model-failed", error instanceof ModelProviderFailureError ? error.failure : null);

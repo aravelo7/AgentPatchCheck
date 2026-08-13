@@ -13,18 +13,14 @@ import type {
 	AgentPatchCheckResult,
 	AssessmentResult,
 	CommandVerification,
-	PublicVerificationFeedback,
+	RepairContext,
 	TaskPolicy,
 } from "./types";
 
 export interface HeadlessCoreDependencies {
 	createWorkspace: typeof createIsolatedWorkspace;
 	collectPatch: typeof collectPatchSnapshot;
-	runAgent: (
-		policy: TaskPolicy,
-		worktreePath: string,
-		publicVerificationFeedback?: PublicVerificationFeedback,
-	) => Promise<AgentExecution>;
+	runAgent: (policy: TaskPolicy, worktreePath: string, repairContext: RepairContext) => Promise<AgentExecution>;
 	runVerification: typeof runCommandVerification;
 	writeEvidence: typeof writeEvidenceBundle;
 	assessEvidence: typeof assessEvidenceBundle;
@@ -33,8 +29,8 @@ export interface HeadlessCoreDependencies {
 const defaultDependencies: HeadlessCoreDependencies = {
 	createWorkspace: createIsolatedWorkspace,
 	collectPatch: collectPatchSnapshot,
-	runAgent: async (policy, worktreePath, publicVerificationFeedback) =>
-		await getAgentAdapter(policy.agentAdapter).execute({ policy, worktreePath, publicVerificationFeedback }),
+	runAgent: async (policy, worktreePath, repairContext) =>
+		await getAgentAdapter(policy.agentAdapter).execute({ policy, worktreePath, repairContext }),
 	runVerification: runCommandVerification,
 	writeEvidence: writeEvidenceBundle,
 	assessEvidence: assessEvidenceBundle,
@@ -66,10 +62,10 @@ async function runAgentSafely(
 	runAgent: HeadlessCoreDependencies["runAgent"],
 	policy: TaskPolicy,
 	worktreePath: string,
-	publicVerificationFeedback?: PublicVerificationFeedback,
+	repairContext: RepairContext,
 ): Promise<AgentExecution> {
 	try {
-		return await runAgent(policy, worktreePath, publicVerificationFeedback);
+		return await runAgent(policy, worktreePath, repairContext);
 	} catch (error) {
 		return failedAgentExecution(policy, error instanceof Error ? error.message : String(error));
 	}
@@ -116,7 +112,10 @@ export async function executeAgentPatchCheck(
 		worktreeRoot: policy.worktreeRoot,
 	});
 	const agentBudgetStartedAt = Date.now();
-	const initialAgent = await runAgentSafely(resolvedDependencies.runAgent, policy, workspace.path);
+	const initialAgent = await runAgentSafely(resolvedDependencies.runAgent, policy, workspace.path, {
+		phase: "initial",
+		publicVerificationFeedback: null,
+	});
 	let agent = initialAgent;
 	let commandVerification = await runVerificationSafely(resolvedDependencies.runVerification, policy, workspace.path);
 	const feedback = createPublicVerificationFeedback(commandVerification);
@@ -133,7 +132,7 @@ export async function executeAgentPatchCheck(
 						resolvedDependencies.runAgent,
 						{ ...policy, timeoutMs: remainingAgentBudgetMs },
 						workspace.path,
-						feedback,
+						{ phase: "public-verification-repair", publicVerificationFeedback: feedback },
 					)
 				: failedAgentExecution(policy, "Harness-native public verification repair budget was exhausted.");
 		const attempts: AgentExecutionAttempt[] = [

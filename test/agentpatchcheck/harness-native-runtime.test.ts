@@ -44,7 +44,11 @@ describe("Harness-native Agent Runtime", () => {
 					return { decision: { kind: "finish" } };
 				},
 			};
-			const result = await createHarnessNativeAdapter(provider).execute({ policy, worktreePath: worktree });
+			const result = await createHarnessNativeAdapter(provider).execute({
+				policy,
+				worktreePath: worktree,
+				repairContext: { phase: "initial", publicVerificationFeedback: null },
+			});
 			expect(result).toMatchObject({
 				executable: "harness-native",
 				exitCode: 0,

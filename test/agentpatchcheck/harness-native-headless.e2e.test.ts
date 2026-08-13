@@ -90,7 +90,11 @@ describe("Harness-native Headless Core E2E", () => {
 				execute: async (policy) =>
 					await executeAgentPatchCheck(policy, {
 						runAgent: async (nativePolicy, worktreePath) =>
-							await createHarnessNativeAdapter(provider).execute({ policy: nativePolicy, worktreePath }),
+							await createHarnessNativeAdapter(provider).execute({
+								policy: nativePolicy,
+								worktreePath,
+								repairContext: { phase: "initial", publicVerificationFeedback: null },
+							}),
 					}),
 				readAgentVersion: async () => null,
 			});
@@ -157,9 +161,9 @@ describe("Harness-native Headless Core E2E", () => {
 			let repairDecisions = 0;
 			const repairProvider: HarnessNativeModelProvider = {
 				id: "openai-responses",
-				decide: async ({ observations, publicVerificationFeedback }) => {
+				decide: async ({ observations, repairContext }) => {
 					if (observations.length === 0) {
-						if (publicVerificationFeedback === undefined)
+						if (repairContext.phase === "initial")
 							return {
 								decision: {
 									kind: "tool",
@@ -188,11 +192,11 @@ describe("Harness-native Headless Core E2E", () => {
 				},
 			};
 			const result = await executeAgentPatchCheck(policy, {
-				runAgent: async (nativePolicy, worktreePath, publicVerificationFeedback) =>
+				runAgent: async (nativePolicy, worktreePath, repairContext) =>
 					await createHarnessNativeAdapter(repairProvider).execute({
 						policy: nativePolicy,
 						worktreePath,
-						publicVerificationFeedback,
+						repairContext,
 					}),
 			});
 
@@ -287,9 +291,9 @@ describe("Harness-native Headless Core E2E", () => {
 			let repairDecisions = 0;
 			const provider: HarnessNativeModelProvider = {
 				id: "openai-responses",
-				decide: async ({ observations, publicVerificationFeedback }) => {
+				decide: async ({ observations, repairContext }) => {
 					if (observations.length > 0) return { decision: { kind: "finish" } };
-					if (publicVerificationFeedback === undefined)
+					if (repairContext.phase === "initial")
 						return {
 							decision: {
 								kind: "tool",
@@ -308,11 +312,11 @@ describe("Harness-native Headless Core E2E", () => {
 				},
 			};
 			const result = await executeAgentPatchCheck(policy, {
-				runAgent: async (nativePolicy, worktreePath, publicVerificationFeedback) =>
+				runAgent: async (nativePolicy, worktreePath, repairContext) =>
 					await createHarnessNativeAdapter(provider).execute({
 						policy: nativePolicy,
 						worktreePath,
-						publicVerificationFeedback,
+						repairContext,
 					}),
 			});
 

@@ -1,0 +1,160 @@
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+
+const scriptDirectory = dirname(fileURLToPath(import.meta.url));
+const suiteScript = join(scriptDirectory, "run-harness-native-benchmark-suite.mjs");
+const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/u;
+const providerProfiles = new Set(["openai-responses", "deepseek-chat"]);
+const maxRuns = 20;
+
+function parseArguments(argv) {
+	let outputRoot;
+	let model;
+	let providerProfile = "openai-responses";
+	let runs;
+	for (let index = 0; index < argv.length; index += 1) {
+		const argument = argv[index];
+		if (argument !== "--output-root" && argument !== "--model" && argument !== "--provider-profile" && argument !== "--runs")
+			throw new Error(`Unknown argument: ${argument}`);
+		const value = argv[index + 1];
+		if (value === undefined || !value.trim()) throw new Error(`Missing value for ${argument}.`);
+		if (argument === "--output-root") outputRoot = resolve(value);
+		else if (argument === "--model") model = value.trim();
+		else if (argument === "--provider-profile") providerProfile = value.trim();
+		else runs = Number(value);
+		index += 1;
+	}
+	if (outputRoot === undefined || model === undefined || runs === undefined)
+		throw new Error(
+			"Usage: npm run benchmark:harness-native-repetitions -- --output-root <new-directory> --runs <2-20> --model <model> [--provider-profile <profile>]",
+		);
+	if (!modelPattern.test(model)) throw new Error("model must be a valid 1-128 character model identifier.");
+	if (!providerProfiles.has(providerProfile)) throw new Error("provider-profile must be one of: openai-responses, deepseek-chat.");
+	if (!Number.isSafeInteger(runs) || runs < 2 || runs > maxRuns) throw new Error(`runs must be an integer from 2 to ${maxRuns}.`);
+	return { outputRoot, model, providerProfile, runs };
+}
+
+async function assertPathDoesNotExist(path) {
+	try {
+		await access(path);
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+		throw error;
+	}
+	throw new Error(`Output root must not already exist: ${path}`);
+}
+
+async function runSuite(args) {
+	return await new Promise((resolveRun, rejectRun) => {
+		const child = spawn(process.execPath, [suiteScript, ...args], {
+			cwd: dirname(scriptDirectory),
+			stdio: ["ignore", "pipe", "pipe"],
+			windowsHide: true,
+		});
+		let stdout = "";
+		let stderr = "";
+		child.stdout.on("data", (chunk) => {
+			stdout += chunk.toString();
+		});
+		child.stderr.on("data", (chunk) => {
+			stderr += chunk.toString();
+		});
+		child.once("error", rejectRun);
+		child.once("close", (code, signal) => resolveRun({ code, signal, stdout, stderr }));
+	});
+}
+
+function parseSuiteOutput(result, runNumber) {
+	if (result.code !== 0 && result.code !== 1)
+		throw new Error(`Run ${runNumber} did not return a Benchmark result: ${result.stderr.trim() || result.stdout.trim()}`);
+	let output;
+	try {
+		output = JSON.parse(result.stdout);
+	} catch (error) {
+		throw new Error(`Run ${runNumber} did not return JSON: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (output?.mode !== "executed" || typeof output.benchmarkReportPath !== "string" || typeof output.benchmarkOk !== "boolean")
+		throw new Error(`Run ${runNumber} returned an invalid Benchmark result.`);
+	return output;
+}
+
+function createTaskAggregate(outputs) {
+	const aggregate = new Map();
+	for (const output of outputs) {
+		for (const task of output.taskResults) {
+			const current = aggregate.get(task.id) ?? { id: task.id, passedRuns: 0, statusCounts: {} };
+			current.passedRuns += task.status === "passed" ? 1 : 0;
+			current.statusCounts[task.status] = (current.statusCounts[task.status] ?? 0) + 1;
+			aggregate.set(task.id, current);
+		}
+	}
+	return [...aggregate.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function sumNativeQuality(outputs) {
+	const keys = [
+		"nativeTasks",
+		"initialPublicVerificationPassed",
+		"publicRepairAttempted",
+		"publicRepairRecovered",
+		"finalPublicVerificationPassed",
+		"hiddenOraclePassed",
+		"providerFailureTasks",
+		"agentExecutionFailureTasks",
+	];
+	const totals = Object.fromEntries(keys.map((key) => [key, 0]));
+	for (const output of outputs) {
+		if (output.nativeQuality === null || output.nativeQuality === undefined) continue;
+		for (const key of keys) totals[key] += output.nativeQuality[key] ?? 0;
+	}
+	return totals;
+}
+
+async function main() {
+	const options = parseArguments(process.argv.slice(2));
+	await assertPathDoesNotExist(options.outputRoot);
+	await mkdir(options.outputRoot, { recursive: true });
+	const outputs = [];
+	for (let runNumber = 1; runNumber <= options.runs; runNumber += 1) {
+		const runDirectory = join(options.outputRoot, `run-${String(runNumber).padStart(3, "0")}`);
+		const result = await runSuite([
+			"--output-root",
+			runDirectory,
+			"--model",
+			options.model,
+			"--provider-profile",
+			options.providerProfile,
+		]);
+		outputs.push(parseSuiteOutput(result, runNumber));
+	}
+	const report = {
+		version: 1,
+		mode: "executed",
+		suite: outputs[0]?.suite ?? null,
+		model: options.model,
+		providerProfile: options.providerProfile,
+		runs: outputs.map((output, index) => ({
+			run: index + 1,
+			benchmarkOk: output.benchmarkOk,
+			benchmarkReportPath: output.benchmarkReportPath,
+		})),
+		summary: {
+			totalRuns: outputs.length,
+			passedRuns: outputs.filter((output) => output.benchmarkOk).length,
+			failedRuns: outputs.filter((output) => !output.benchmarkOk).length,
+			tasks: createTaskAggregate(outputs),
+			nativeQuality: sumNativeQuality(outputs),
+		},
+	};
+	const reportPath = join(options.outputRoot, "repetitions-report.json");
+	await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+	process.stdout.write(`${JSON.stringify({ ...report, reportPath }, null, 2)}\n`);
+	if (report.summary.failedRuns > 0) process.exitCode = 1;
+}
+
+void main().catch((error) => {
+	process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+	process.exitCode = 1;
+});

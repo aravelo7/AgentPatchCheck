@@ -1,11 +1,11 @@
-import type { AgentAdapterId, AgentExecution, PublicVerificationFeedback, TaskPolicy } from "./types";
+import type { AgentAdapterId, AgentExecution, RepairContext, TaskPolicy } from "./types";
 
 /** Harness-owned runtimes consume validated policy and return execution facts only. */
 export interface AgentRuntimeContext {
 	policy: TaskPolicy;
 	worktreePath: string;
-	/** A sanitized result from Harness-owned public verification; Hidden Oracle data is never included. */
-	publicVerificationFeedback?: PublicVerificationFeedback;
+	/** Explicit Harness-owned execution phase; Hidden Oracle data is never included. */
+	repairContext: RepairContext;
 }
 
 /** Runtimes never construct patches, verifier output, Evidence, Risk, or apply decisions. */

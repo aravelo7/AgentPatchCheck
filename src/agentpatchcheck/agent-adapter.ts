@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { appendBoundedOutput } from "./bounded-output";
 import { runCodex, terminateCodexProcess } from "./codex-runner";
 import { createHarnessNativeRuntime, type HarnessNativeModelProvider } from "./harness-native-runtime";
-import type { AgentAdapterId, AgentExecution, PublicVerificationFeedback, TaskPolicy } from "./types";
+import type { AgentAdapterId, AgentExecution, RepairContext, TaskPolicy } from "./types";
 
 const OUTPUT_LIMIT_BYTES = 1_024 * 1_024;
 export const SCRIPT_ADAPTER_WORKTREE_ENV = "AGENTPATCHCHECK_AGENT_WORKTREE";
@@ -11,7 +11,7 @@ export const SCRIPT_ADAPTER_WORKTREE_ENV = "AGENTPATCHCHECK_AGENT_WORKTREE";
 export interface AgentAdapterContext {
 	policy: TaskPolicy;
 	worktreePath: string;
-	publicVerificationFeedback?: PublicVerificationFeedback;
+	repairContext: RepairContext;
 }
 
 export interface AgentAdapter {

@@ -21,6 +21,10 @@
     {
       "id": "recursive-cross-directory-repair",
       "taskSpec": "tasks/recursive-cross-directory-repair.json"
+    },
+    {
+      "id": "recursive-feedback-repair",
+      "taskSpec": "tasks/recursive-feedback-repair.json"
     }
   ]
 }

@@ -17,6 +17,7 @@ const context = {
 		"apply-patch",
 	] as const,
 	model: "test-model",
+	repairContext: { phase: "initial", publicVerificationFeedback: null } as const,
 };
 
 function configuration(protocol: ModelProviderConfiguration["protocol"]): ModelProviderConfiguration {
@@ -117,6 +118,47 @@ describe("Model Provider Registry", () => {
 				expect.objectContaining({ function: expect.objectContaining({ name: "finish" }) }),
 			]),
 		});
+	});
+
+	it("serializes a distinct bounded repair context for both supported protocols", async () => {
+		for (const protocol of ["responses", "chat-completions"] as const) {
+			let requestBody = "";
+			const provider = createModelProvider(configuration(protocol), {
+				fetcher: async (_input, init) => {
+					requestBody = typeof init?.body === "string" ? init.body : "";
+					return new Response(
+						JSON.stringify(
+							protocol === "responses"
+								? { output: [{ type: "function_call", name: "finish", arguments: "{}" }] }
+								: {
+										choices: [
+											{ message: { tool_calls: [{ function: { name: "finish", arguments: "{}" } }] } },
+										],
+									},
+						),
+					);
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			});
+
+			await provider.decide({
+				...context,
+				repairContext: {
+					phase: "public-verification-repair",
+					publicVerificationFeedback: {
+						version: 1,
+						status: "failed",
+						summary: "The public verification command failed.",
+						commands: [{ command: "node", exitCode: 1, signal: null, timedOut: false }],
+					},
+				},
+			});
+
+			expect(requestBody).toContain("Execution phase: public-verification repair");
+			expect(requestBody).toContain("Do not repeat initial-attempt instructions");
+			expect(requestBody).toContain("The public verification command failed.");
+			expect(requestBody).not.toContain("fake-secret");
+		}
 	});
 
 	it("requires a function call in every DeepSeek-compatible Chat Completions round", async () => {

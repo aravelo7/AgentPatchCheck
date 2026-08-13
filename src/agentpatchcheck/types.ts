@@ -164,6 +164,11 @@ export interface PublicVerificationFeedback {
 	}>;
 }
 
+/** Harness-owned phase contract for one Agent execution. Hidden Oracle data is never included. */
+export type RepairContext =
+	| { phase: "initial"; publicVerificationFeedback: null }
+	| { phase: "public-verification-repair"; publicVerificationFeedback: PublicVerificationFeedback };
+
 export interface AgentExecutionAttempt {
 	phase: "initial" | "public-verification-repair";
 	feedback: PublicVerificationFeedback | null;
