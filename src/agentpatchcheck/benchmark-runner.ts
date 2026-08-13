@@ -184,6 +184,20 @@ function createRepairCycle(
 	};
 }
 
+function createNativeRuntimeSummary(result: AgentPatchCheckResult): BenchmarkTaskResult["nativeRuntime"] {
+	const executions = result.agent.attempts?.map((attempt) => attempt.execution) ?? [result.agent];
+	const runtimes = executions.flatMap((execution) => (execution.runtime === undefined ? [] : [execution.runtime]));
+	if (runtimes.length === 0) return null;
+	return {
+		attempts: executions.length,
+		iterations: runtimes.reduce((total, runtime) => total + runtime.iterations, 0),
+		toolCalls: runtimes.reduce((total, runtime) => total + runtime.toolCalls, 0),
+		providerFailureKinds: runtimes.flatMap((runtime) =>
+			runtime.providerFailure === null ? [] : [runtime.providerFailure.kind],
+		),
+	};
+}
+
 function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"] {
 	const byStatus = Object.fromEntries(allStatuses.map((status) => [status, 0])) as Record<BenchmarkTaskStatus, number>;
 	for (const task of tasks) byStatus[task.status] += 1;
@@ -206,6 +220,27 @@ function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"]
 						(cycle) => cycle.outcome === "initial-agent-timed-out" || cycle.outcome === "repair-timed-out",
 					).length,
 				};
+	const nativeTasks = tasks.filter((task) => task.configuration.agentAdapter === "harness-native");
+	const nativeQuality =
+		nativeTasks.length === 0
+			? null
+			: {
+					nativeTasks: nativeTasks.length,
+					initialPublicVerificationPassed: nativeTasks.filter(
+						(task) => task.repairCycle?.outcome === "initial-pass",
+					).length,
+					publicRepairAttempted: nativeTasks.filter((task) => task.repairCycle?.attempted).length,
+					publicRepairRecovered: nativeTasks.filter((task) => task.repairCycle?.outcome === "repaired").length,
+					finalPublicVerificationPassed: nativeTasks.filter((task) => task.verificationStatus === "passed").length,
+					hiddenOraclePassed: nativeTasks.filter((task) => task.hiddenOracleStatus === "passed").length,
+					providerFailureTasks: nativeTasks.filter(
+						(task) => (task.nativeRuntime?.providerFailureKinds.length ?? 0) > 0,
+					).length,
+					agentExecutionFailureTasks: nativeTasks.filter(
+						(task) =>
+							task.status === "agent-failed" && (task.nativeRuntime?.providerFailureKinds.length ?? 0) === 0,
+					).length,
+				};
 	return {
 		total: tasks.length,
 		passed: byStatus.passed,
@@ -216,6 +251,7 @@ function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"]
 				? `${byStatus.passed}/${tasks.length} tasks passed.`
 				: `${byStatus.passed}/${tasks.length} tasks passed; ${tasks.length - byStatus.passed} failed (${failures.join(", ")}).`,
 		...(repairCycleSummary === null ? {} : { repairCycles: repairCycleSummary }),
+		...(nativeQuality === null ? {} : { nativeQuality }),
 	};
 }
 
@@ -312,6 +348,7 @@ export async function runBenchmark(
 					durationMs: result.agent.durationMs,
 					timedOut: result.agent.timedOut,
 				},
+				nativeRuntime: policy.agentAdapter === "harness-native" ? createNativeRuntimeSummary(result) : null,
 				verificationStatus: result.commandVerification.status,
 				repairCycle: createRepairCycle(policy, result),
 				hiddenOracleStatus: result.hiddenOracle?.status ?? null,
@@ -340,6 +377,7 @@ export async function runBenchmark(
 				evidence: null,
 				assessment: null,
 				agent: null,
+				nativeRuntime: null,
 				verificationStatus: null,
 				repairCycle: null,
 				hiddenOracleStatus: null,

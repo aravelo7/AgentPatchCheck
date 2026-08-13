@@ -99,6 +99,34 @@ const toolParameters: Record<HarnessNativeToolName, Record<string, unknown>> = {
 		required: ["path", "expectedText", "replacementText"],
 		additionalProperties: false,
 	},
+	"apply-patch-batch": {
+		type: "object",
+		properties: {
+			patches: {
+				type: "array",
+				minItems: 2,
+				maxItems: 8,
+				items: {
+					type: "object",
+					properties: {
+						path: { type: "string" },
+						expectedText: { type: "string" },
+						replacementText: { type: "string" },
+					},
+					required: ["path", "expectedText", "replacementText"],
+					additionalProperties: false,
+				},
+			},
+		},
+		required: ["patches"],
+		additionalProperties: false,
+	},
+	"create-file": {
+		type: "object",
+		properties: { path: { type: "string" }, content: { type: "string" } },
+		required: ["path", "content"],
+		additionalProperties: false,
+	},
 };
 const controlToolParameters = { type: "object", properties: {}, additionalProperties: false };
 

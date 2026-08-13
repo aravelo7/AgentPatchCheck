@@ -9,6 +9,14 @@
     {
       "id": "public-repair",
       "taskSpec": "tasks/public-repair.json"
+    },
+    {
+      "id": "create-new-file",
+      "taskSpec": "tasks/create-new-file.json"
+    },
+    {
+      "id": "multi-file-local-repair",
+      "taskSpec": "tasks/multi-file-local-repair.json"
     }
   ]
 }

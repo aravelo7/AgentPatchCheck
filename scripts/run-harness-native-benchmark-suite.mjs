@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,22 +8,51 @@ const projectRoot = resolve(scriptDirectory, "..");
 const fixtureSource = join(projectRoot, "test", "fixtures", "agentpatchcheck", "harness-native-benchmark-suite-v1");
 const cliPath = join(projectRoot, "src", "agentpatchcheck", "cli.ts");
 const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/u;
+const providerProfiles = {
+	"openai-responses": {
+		nativeAgent: {
+			provider: "openai",
+			protocol: "responses",
+			credentialRef: "openai-primary",
+		},
+		requiredEnvironment: "OPENAI_API_KEY",
+	},
+	"deepseek-chat": {
+		nativeAgent: {
+			provider: "openai-compatible",
+			protocol: "chat-completions",
+			thinkingMode: "disabled",
+			baseUrl: "https://api.deepseek.com",
+			credentialRef: "deepseek-primary",
+		},
+		requiredEnvironment: "DEEPSEEK_API_KEY",
+	},
+};
+
+function getProviderProfile(profileId) {
+	const profile = providerProfiles[profileId];
+	if (profile === undefined)
+		throw new Error(`provider-profile must be one of: ${Object.keys(providerProfiles).join(", ")}.`);
+	return profile;
+}
 
 function parseArguments(argv) {
 	let outputRoot;
 	let model;
 	let dryRun = false;
+	let providerProfile = "openai-responses";
 	for (let index = 0; index < argv.length; index += 1) {
 		const argument = argv[index];
 		if (argument === "--dry-run") {
 			dryRun = true;
 			continue;
 		}
-		if (argument === "--output-root" || argument === "--model") {
+		if (argument === "--output-root" || argument === "--model" || argument === "--provider-profile") {
 			const value = argv[index + 1];
 			if (value === undefined || !value.trim()) throw new Error(`Missing value for ${argument}.`);
 			if (argument === "--output-root") outputRoot = resolve(value);
-			else model = value.trim();
+			else if (argument === "--model") model = value.trim();
+			else providerProfile = value.trim();
 			index += 1;
 			continue;
 		}
@@ -31,10 +60,11 @@ function parseArguments(argv) {
 	}
 	if (outputRoot === undefined || model === undefined)
 		throw new Error(
-			"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--dry-run]",
+			"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--dry-run]",
 		);
 	if (!modelPattern.test(model)) throw new Error("model must be a valid 1-128 character model identifier.");
-	return { outputRoot, model, dryRun };
+	getProviderProfile(providerProfile);
+	return { outputRoot, model, providerProfile, dryRun };
 }
 
 async function assertPathDoesNotExist(path) {
@@ -74,11 +104,22 @@ async function runGit(repository, args, env) {
 	return result.stdout.trim();
 }
 
-async function materializeTaskSpec(taskPath, model) {
+async function materializeTaskSpec(taskPath, model, providerProfile) {
 	const task = JSON.parse(await readFile(taskPath, "utf8"));
 	if (task.model !== "__AGENTPATCHCHECK_MODEL__") throw new Error("Fixture task model placeholder is invalid.");
+	if (task.nativeAgent === null || typeof task.nativeAgent !== "object")
+		throw new Error("Fixture task must define a Harness-native agent configuration.");
 	task.model = model;
+	task.nativeAgent = { ...task.nativeAgent, ...providerProfile.nativeAgent };
 	await writeFile(taskPath, `${JSON.stringify(task, null, 2)}\n`, "utf8");
+}
+
+async function materializeTaskSpecs(tasksDirectory, model, providerProfile) {
+	const taskPaths = (await readdir(tasksDirectory))
+		.filter((entry) => entry.endsWith(".json"))
+		.map((entry) => join(tasksDirectory, entry));
+	await Promise.all(taskPaths.map(async (taskPath) => await materializeTaskSpec(taskPath, model, providerProfile)));
+	return taskPaths;
 }
 
 function parseBenchmarkResponse(stdout) {
@@ -92,16 +133,18 @@ function parseBenchmarkResponse(stdout) {
 
 async function main() {
 	const options = parseArguments(process.argv.slice(2));
-	if (!options.dryRun && !process.env.OPENAI_API_KEY?.trim())
-		throw new Error("OPENAI_API_KEY is required to run the Harness-native Benchmark Suite. Use --dry-run to validate setup.");
+	const providerProfile = getProviderProfile(options.providerProfile ?? "openai-responses");
+	if (!options.dryRun && !process.env[providerProfile.requiredEnvironment]?.trim())
+		throw new Error(
+			`${providerProfile.requiredEnvironment} is required for provider profile ${options.providerProfile ?? "openai-responses"}. Use --dry-run to validate setup.`,
+		);
 	await assertPathDoesNotExist(options.outputRoot);
 	await mkdir(dirname(options.outputRoot), { recursive: true });
 	await cp(fixtureSource, options.outputRoot, { recursive: true, errorOnExist: true, force: false });
 
 	const fixtureManifest = JSON.parse(await readFile(join(options.outputRoot, "fixture-manifest.json"), "utf8"));
 	const repository = join(options.outputRoot, "fixture-repository");
-	const taskPath = join(options.outputRoot, "tasks", "public-repair.json");
-	await materializeTaskSpec(taskPath, options.model);
+	const taskPaths = await materializeTaskSpecs(join(options.outputRoot, "tasks"), options.model, providerProfile);
 	const commitEnvironment = {
 		GIT_AUTHOR_NAME: "AgentPatchCheck Fixture",
 		GIT_AUTHOR_EMAIL: "fixture@example.invalid",
@@ -128,7 +171,8 @@ async function main() {
 					outputRoot: options.outputRoot,
 					baseCommit,
 					model: options.model,
-					taskSpecPath: taskPath,
+					providerProfile: options.providerProfile,
+					taskSpecPaths: taskPaths,
 					budgets: fixtureManifest.budgets,
 				},
 				null,
@@ -151,7 +195,16 @@ async function main() {
 	const report = benchmarkResult.report;
 	if (report.benchmark.suite?.id !== fixtureManifest.suite.id || report.benchmark.suite.fixtureVersion !== fixtureManifest.suite.fixtureVersion)
 		throw new Error("Benchmark report suite identity does not match the fixture manifest.");
-	if (report.tasks.some((task) => task.configuration.agentAdapter !== "harness-native" || task.configuration.model !== options.model))
+	if (
+		report.tasks.some(
+			(task) =>
+				task.configuration.agentAdapter !== "harness-native" ||
+				task.configuration.model !== options.model ||
+				task.configuration.modelProvider?.provider !== providerProfile.nativeAgent.provider ||
+				task.configuration.modelProvider?.protocol !== providerProfile.nativeAgent.protocol ||
+				task.configuration.modelProvider?.credentialRef !== providerProfile.nativeAgent.credentialRef,
+		)
+	)
 		throw new Error("Benchmark report does not record the requested Harness-native Agent identity.");
 
 	process.stdout.write(
@@ -163,6 +216,7 @@ async function main() {
 				outputRoot: options.outputRoot,
 				baseCommit,
 				model: options.model,
+				providerProfile: options.providerProfile,
 				benchmarkReportPath: benchmarkResult.reference.path,
 				benchmarkOk: response.ok,
 				taskResults: report.tasks.map((task) => ({
@@ -172,6 +226,7 @@ async function main() {
 					hiddenOracleStatus: task.hiddenOracleStatus,
 				})),
 				repairCycles: report.summary.repairCycles ?? null,
+				nativeQuality: report.summary.nativeQuality ?? null,
 			},
 			null,
 			2,

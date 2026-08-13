@@ -212,7 +212,9 @@ export type HarnessNativeToolName =
 	| "search-text"
 	| "git-status"
 	| "git-diff"
-	| "apply-patch";
+	| "apply-patch"
+	| "apply-patch-batch"
+	| "create-file";
 export type HarnessNativeTerminationReason =
 	| "finished"
 	| "model-failed"
@@ -730,6 +732,13 @@ export interface BenchmarkTaskResult {
 	evidence: EvidenceBundleReference | null;
 	assessment: AssessmentReportReference | null;
 	agent: Pick<AgentExecution, "executable" | "args" | "exitCode" | "signal" | "durationMs" | "timedOut"> | null;
+	/** Present only for Harness-native tasks; aggregates all bounded attempts in this task. */
+	nativeRuntime?: {
+		attempts: number;
+		iterations: number;
+		toolCalls: number;
+		providerFailureKinds: HarnessNativeProviderFailureKind[];
+	} | null;
 	verificationStatus: CommandVerificationStatus | null;
 	/** Present for Harness-native tasks that reached Headless Core execution. */
 	repairCycle?: BenchmarkRepairCycleResult | null;
@@ -771,6 +780,17 @@ export interface BenchmarkReport {
 			repaired: number;
 			failed: number;
 			timedOut: number;
+		};
+		/** Count-based quality facts. Consumers calculate rates using the named denominators. */
+		nativeQuality?: {
+			nativeTasks: number;
+			initialPublicVerificationPassed: number;
+			publicRepairAttempted: number;
+			publicRepairRecovered: number;
+			finalPublicVerificationPassed: number;
+			hiddenOraclePassed: number;
+			providerFailureTasks: number;
+			agentExecutionFailureTasks: number;
 		};
 	};
 }

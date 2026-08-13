@@ -88,6 +88,160 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
+	it("creates one new UTF-8 workspace file exclusively", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "create-file",
+									arguments: { path: "new-file.txt", content: "created\\n" },
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Create one file.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(result.trajectory[0]).toMatchObject({ tool: "create-file", toolStatus: "ok" });
+			expect(await readFile(join(worktree, "new-file.txt"), "utf8")).toBe("created\\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("applies a fully preflighted multi-file patch batch", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "first.txt"), "first-before\n", "utf8");
+			await writeFile(join(worktree, "second.txt"), "second-before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-patch-batch",
+									arguments: {
+										patches: [
+											{ path: "first.txt", expectedText: "first-before", replacementText: "first-after" },
+											{ path: "second.txt", expectedText: "second-before", replacementText: "second-after" },
+										],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Update two files.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(result.trajectory[0]).toMatchObject({ tool: "apply-patch-batch", toolStatus: "ok" });
+			expect(await readFile(join(worktree, "first.txt"), "utf8")).toBe("first-after\n");
+			expect(await readFile(join(worktree, "second.txt"), "utf8")).toBe("second-after\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an invalid multi-file patch batch without changing any target", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "first.txt"), "first-before\n", "utf8");
+			await writeFile(join(worktree, "second.txt"), "second-before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-patch-batch",
+									arguments: {
+										patches: [
+											{ path: "first.txt", expectedText: "first-before", replacementText: "first-after" },
+											{ path: "second.txt", expectedText: "missing", replacementText: "second-after" },
+										],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Try an invalid batch.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result.trajectory[0]).toMatchObject({ tool: "apply-patch-batch", toolStatus: "rejected" });
+			expect(await readFile(join(worktree, "first.txt"), "utf8")).toBe("first-before\n");
+			expect(await readFile(join(worktree, "second.txt"), "utf8")).toBe("second-before\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects new-file overwrite, missing-parent, and workspace-escape attempts", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "existing.txt"), "original\\n", "utf8");
+			const requests = [
+				{ path: "existing.txt", content: "overwrite" },
+				{ path: "missing/new.txt", content: "missing parent" },
+				{ path: "../outside.txt", content: "escape" },
+			];
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length < requests.length
+						? {
+								decision: {
+									kind: "tool",
+									tool: "create-file",
+									arguments: requests[observations.length] ?? {},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 4, maxToolCalls: 3 }),
+				prompt: "Try invalid creates.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 3 });
+			expect(result.trajectory.map((step) => step.toolStatus)).toEqual(["rejected", "rejected", "rejected", null]);
+			expect(await readFile(join(worktree, "existing.txt"), "utf8")).toBe("original\\n");
+			await expect(readFile(join(worktree, "missing", "new.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
 	it("preflights a tool batch, then executes and replays each call sequentially", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {

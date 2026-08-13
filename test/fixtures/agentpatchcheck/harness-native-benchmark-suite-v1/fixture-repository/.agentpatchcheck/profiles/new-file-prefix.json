@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "new-file-prefix",
+  "verification": {
+    "commands": [
+      {
+        "command": "node",
+        "args": [
+          "-e",
+          "const fs = require('node:fs'); process.exit(fs.existsSync('created.txt') && fs.readFileSync('created.txt', 'utf8').startsWith('created') ? 0 : 1);"
+        ]
+      }
+    ]
+  }
+}

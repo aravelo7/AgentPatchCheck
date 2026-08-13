@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { runBenchmark } from "../../src/agentpatchcheck/benchmark-runner";
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
-import type { AgentPatchCheckResult, BenchmarkDefinition, PatchVerdictStatus } from "../../src/agentpatchcheck/types";
+import type {
+	AgentPatchCheckResult,
+	BenchmarkDefinition,
+	HarnessNativeRuntimeResult,
+	PatchVerdictStatus,
+} from "../../src/agentpatchcheck/types";
 
 function createResult(options: {
 	exitCode?: number | null;
@@ -139,11 +144,39 @@ describe("Benchmark Runner", () => {
 				},
 			],
 		};
+		const runtime: HarnessNativeRuntimeResult = {
+			version: 1,
+			provider: "openai:responses",
+			providerIdentity: {
+				provider: "openai",
+				protocol: "responses",
+				thinkingMode: "default",
+				endpointSha256: "a".repeat(64),
+				credentialRef: "openai-primary",
+				implementation: "openai-compatible-v1",
+				configuredModel: "test-model",
+				actualModel: "test-model",
+			},
+			model: "test-model",
+			status: "succeeded",
+			terminationReason: "finished",
+			providerFailure: null,
+			iterations: 2,
+			toolCalls: 1,
+			budget: { maxIterations: 3, maxToolCalls: 2, maxObservationBytes: 1024 },
+			usage: { inputTokens: 1, outputTokens: 1 },
+			trajectory: [],
+		};
 		const repaired = createResult({ verificationStatus: "passed" });
 		repaired.agent = {
 			...repaired.agent,
+			runtime,
 			attempts: [
-				{ phase: "initial", feedback: null, execution: { ...repaired.agent } },
+				{
+					phase: "initial",
+					feedback: null,
+					execution: { ...repaired.agent, runtime: { ...runtime, iterations: 1, toolCalls: 1 } },
+				},
 				{
 					phase: "public-verification-repair",
 					feedback: {
@@ -152,7 +185,7 @@ describe("Benchmark Runner", () => {
 						summary: "Public verification failed.",
 						commands: [{ command: "verify", exitCode: 1, signal: null, timedOut: false }],
 					},
-					execution: { ...repaired.agent },
+					execution: { ...repaired.agent, runtime },
 				},
 			],
 		};
@@ -185,6 +218,22 @@ describe("Benchmark Runner", () => {
 			repaired: 1,
 			failed: 0,
 			timedOut: 0,
+		});
+		expect(result.report.tasks[0]?.nativeRuntime).toEqual({
+			attempts: 2,
+			iterations: 3,
+			toolCalls: 2,
+			providerFailureKinds: [],
+		});
+		expect(result.report.summary.nativeQuality).toEqual({
+			nativeTasks: 1,
+			initialPublicVerificationPassed: 0,
+			publicRepairAttempted: 1,
+			publicRepairRecovered: 1,
+			finalPublicVerificationPassed: 1,
+			hiddenOraclePassed: 0,
+			providerFailureTasks: 0,
+			agentExecutionFailureTasks: 0,
 		});
 	});
 

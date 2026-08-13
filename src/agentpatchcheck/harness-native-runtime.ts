@@ -1,5 +1,5 @@
 import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { runGit } from "../workspace/git-utils";
 import type { AgentRuntime } from "./agent-runtime";
@@ -21,6 +21,17 @@ import type {
 
 export type HarnessNativeModelProvider = Pick<ModelProvider, "id" | "decide"> &
 	Partial<Pick<ModelProvider, "createSession">>;
+
+const registeredTools: HarnessNativeToolName[] = [
+	"read-file",
+	"list-directory",
+	"search-text",
+	"git-status",
+	"git-diff",
+	"apply-patch",
+	"apply-patch-batch",
+	"create-file",
+];
 
 export function createHarnessNativeRuntime(providerOverride?: HarnessNativeModelProvider): AgentRuntime {
 	return {
@@ -55,10 +66,10 @@ export function createHarnessNativeRuntime(providerOverride?: HarnessNativeModel
 	};
 }
 
-async function safePath(root: string, value: unknown): Promise<string> {
+function validateRelativeToolPath(value: unknown): string {
 	if (typeof value !== "string" || !value || value.includes("\0") || isAbsolute(value))
 		throw new Error("Tool path is invalid.");
-	if (value === ".") return root;
+	if (value === ".") return value;
 	const segments = value.split(/[\\/]/u);
 	if (
 		segments.some(
@@ -67,7 +78,13 @@ async function safePath(root: string, value: unknown): Promise<string> {
 		)
 	)
 		throw new Error("Tool path is outside the managed workspace.");
-	const candidate = resolve(root, value);
+	return value;
+}
+
+async function safePath(root: string, value: unknown): Promise<string> {
+	const relativeValue = validateRelativeToolPath(value);
+	if (relativeValue === ".") return root;
+	const candidate = resolve(root, relativeValue);
 	const relativePath = relative(root, candidate);
 	if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath))
 		throw new Error("Tool path is outside the managed workspace.");
@@ -79,11 +96,72 @@ async function safePath(root: string, value: unknown): Promise<string> {
 	return candidate;
 }
 
+async function safeNewFile(root: string, value: unknown): Promise<string> {
+	const relativeValue = validateRelativeToolPath(value);
+	if (relativeValue === ".") throw new Error("New file path is invalid.");
+	const parentPath = await safePath(root, dirname(relativeValue));
+	const parentMetadata = await lstat(parentPath);
+	if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink())
+		throw new Error("New file parent is not a regular directory.");
+	const path = join(parentPath, basename(relativeValue));
+	try {
+		await lstat(path);
+		throw new Error("New file target already exists.");
+	} catch (error) {
+		if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return path;
+		throw error;
+	}
+}
+
 async function regularFile(root: string, value: unknown): Promise<string> {
 	const path = await safePath(root, value);
 	const metadata = await lstat(path);
 	if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("Tool path is not a regular file.");
 	return path;
+}
+
+interface ConstrainedPatch {
+	path: string;
+	expectedText: string;
+	replacementText: string;
+}
+
+async function preparePatchBatch(
+	root: string,
+	value: unknown,
+): Promise<Array<{ path: string; content: string; replacement: string }>> {
+	if (!Array.isArray(value) || value.length < 2 || value.length > 8)
+		throw new Error("Patch batch must contain 2-8 patches.");
+	const patches: ConstrainedPatch[] = [];
+	for (const item of value) {
+		if (item === null || typeof item !== "object") throw new Error("Patch batch entry is invalid.");
+		const patch = item as Partial<ConstrainedPatch>;
+		if (
+			typeof patch.expectedText !== "string" ||
+			typeof patch.replacementText !== "string" ||
+			patch.expectedText.length > 32_768 ||
+			patch.replacementText.length > 32_768 ||
+			patch.expectedText.includes("\0") ||
+			patch.replacementText.includes("\0")
+		)
+			throw new Error("Patch batch entry content is invalid.");
+		patches.push({
+			path: await regularFile(root, patch.path),
+			expectedText: patch.expectedText,
+			replacementText: patch.replacementText,
+		});
+	}
+	if (new Set(patches.map((patch) => patch.path)).size !== patches.length)
+		throw new Error("Patch batch must not target the same file twice.");
+	const prepared = await Promise.all(
+		patches.map(async (patch) => {
+			const content = await readFile(patch.path, "utf8");
+			if (content.split(patch.expectedText).length !== 2)
+				throw new Error("Patch batch expectedText must match each target exactly once.");
+			return { path: patch.path, content, replacement: content.replace(patch.expectedText, patch.replacementText) };
+		}),
+	);
+	return prepared;
 }
 
 function summary(value: string, limit: number): string {
@@ -157,6 +235,26 @@ async function executeTool(root: string, request: ModelDecision & { kind: "tool"
 				status: "ok" as const,
 				observation: "Patch applied.",
 				evidence: "Applied one constrained text replacement.",
+			};
+		}
+		if (name === "apply-patch-batch") {
+			const patches = await preparePatchBatch(root, request.arguments.patches);
+			for (const patch of patches) await writeFile(patch.path, patch.replacement, "utf8");
+			return {
+				status: "ok" as const,
+				observation: `Patch batch applied to ${patches.length} files.`,
+				evidence: `Applied ${patches.length} constrained text replacements after batch preflight.`,
+			};
+		}
+		if (name === "create-file") {
+			const content = request.arguments.content;
+			if (typeof content !== "string" || content.length > 32_768 || content.includes("\0"))
+				throw new Error("New file content is invalid.");
+			await writeFile(await safeNewFile(root, request.arguments.path), content, { encoding: "utf8", flag: "wx" });
+			return {
+				status: "ok" as const,
+				observation: "New file created.",
+				evidence: "Created one new workspace file exclusively.",
 			};
 		}
 		return {
@@ -240,7 +338,7 @@ export async function runHarnessNativeRuntime(options: {
 			answer = await session.decide({
 				prompt: options.prompt,
 				observations,
-				tools: ["read-file", "list-directory", "search-text", "git-status", "git-diff", "apply-patch"],
+				tools: registeredTools,
 				model: options.model,
 				publicVerificationFeedback: options.publicVerificationFeedback,
 			});
@@ -286,9 +384,7 @@ export async function runHarnessNativeRuntime(options: {
 			trajectory.push({
 				iteration,
 				decision: "tool",
-				tool: ["read-file", "list-directory", "search-text", "git-status", "git-diff", "apply-patch"].includes(
-					request.tool,
-				)
+				tool: registeredTools.includes(request.tool as HarnessNativeToolName)
 					? (request.tool as HarnessNativeToolName)
 					: null,
 				arguments: safeArguments(request.arguments),

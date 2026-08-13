@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "multi-file-prefix",
+  "verification": {
+    "commands": [
+      {
+        "command": "node",
+        "args": [
+          "-e",
+          "const fs = require('node:fs'); process.exit(fs.readFileSync('first.txt', 'utf8').startsWith('first-after') && fs.readFileSync('second.txt', 'utf8').startsWith('second-after') ? 0 : 1);"
+        ]
+      }
+    ]
+  }
+}

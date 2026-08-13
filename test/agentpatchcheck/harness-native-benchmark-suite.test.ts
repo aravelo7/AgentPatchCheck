@@ -21,7 +21,8 @@ interface NativeSuiteDryRunOutput {
 	outputRoot: string;
 	baseCommit: string;
 	model: string;
-	taskSpecPath: string;
+	providerProfile: string;
+	taskSpecPaths: string[];
 	budgets: { timeoutMs: number; maxIterations: number; maxToolCalls: number; maxObservationBytes: number };
 }
 
@@ -41,13 +42,17 @@ describe("Harness-native Benchmark Suite v1", () => {
 				mode: "dry-run",
 				suite: { id: "harness-native-public-repair", fixtureVersion: "v1" },
 				model: "test-model",
-				baseCommit: "f15f6f4227826eacd0713e323e4143f3cd0cb316",
-				budgets: { timeoutMs: 120000, maxIterations: 6, maxToolCalls: 6, maxObservationBytes: 4096 },
+				providerProfile: "openai-responses",
+				baseCommit: "e541a35c27928260146e4c1f72db897fdefc8870",
+				budgets: { timeoutMs: 120000, maxIterations: 6, maxToolCalls: 8, maxObservationBytes: 4096 },
 			});
-			const task = JSON.parse(await readFile(output.taskSpecPath, "utf8")) as { model: string };
-			expect(task.model).toBe("test-model");
+			expect(output.taskSpecPaths).toHaveLength(3);
+			for (const taskSpecPath of output.taskSpecPaths) {
+				const task = JSON.parse(await readFile(taskSpecPath, "utf8")) as { model: string };
+				expect(task.model).toBe("test-model");
+			}
 			expect(output.outputRoot).toBe(outputRoot);
-			const policy = await validateTaskPolicy(await loadTaskSpec(output.taskSpecPath));
+			const policy = await validateTaskPolicy(await loadTaskSpec(output.taskSpecPaths[0] ?? ""));
 			expect(policy).toMatchObject({
 				agentAdapter: "harness-native",
 				model: "test-model",
@@ -55,10 +60,49 @@ describe("Harness-native Benchmark Suite v1", () => {
 				nativeAgent: {
 					modelProvider: { credentialRef: "openai-primary", provider: "openai", protocol: "responses" },
 					maxIterations: 6,
-					maxToolCalls: 6,
+					maxToolCalls: 8,
 					maxObservationBytes: 4096,
 				},
 			});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("materializes the fixed DeepSeek Chat profile without using a credential in dry-run mode", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			const { stdout } = await execFile(
+				process.execPath,
+				[
+					suiteScript,
+					"--output-root",
+					outputRoot,
+					"--model",
+					"deepseek-v4-pro",
+					"--provider-profile",
+					"deepseek-chat",
+					"--dry-run",
+				],
+				{ cwd: projectRoot, windowsHide: true },
+			);
+			const output = JSON.parse(stdout) as NativeSuiteDryRunOutput;
+			expect(output.providerProfile).toBe("deepseek-chat");
+			for (const taskSpecPath of output.taskSpecPaths) {
+				const policy = await validateTaskPolicy(await loadTaskSpec(taskSpecPath));
+				expect(policy).toMatchObject({
+					model: "deepseek-v4-pro",
+					nativeAgent: {
+						modelProvider: {
+							credentialRef: "deepseek-primary",
+							provider: "openai-compatible",
+							protocol: "chat-completions",
+							thinkingMode: "disabled",
+						},
+					},
+				});
+			}
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -91,6 +135,31 @@ describe("Harness-native Benchmark Suite v1", () => {
 					env: { ...process.env, OPENAI_API_KEY: "" },
 				}),
 			).rejects.toMatchObject({ stderr: expect.stringContaining("OPENAI_API_KEY") });
+			await expect(access(outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("requires the selected profile credential before materializing a real run", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			await expect(
+				execFile(
+					process.execPath,
+					[
+						suiteScript,
+						"--output-root",
+						outputRoot,
+						"--model",
+						"deepseek-v4-pro",
+						"--provider-profile",
+						"deepseek-chat",
+					],
+					{ cwd: projectRoot, windowsHide: true, env: { ...process.env, DEEPSEEK_API_KEY: "" } },
+				),
+			).rejects.toMatchObject({ stderr: expect.stringContaining("DEEPSEEK_API_KEY") });
 			await expect(access(outputRoot)).rejects.toMatchObject({ code: "ENOENT" });
 		} finally {
 			await rm(root, { recursive: true, force: true });
