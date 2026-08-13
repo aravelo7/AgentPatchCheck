@@ -103,3 +103,68 @@ export function sumNativeQuality(outputs) {
 	}
 	return totals;
 }
+
+function createRate(numerator, denominator) {
+	return {
+		numerator,
+		denominator,
+		rate: denominator === 0 ? null : numerator / denominator,
+	};
+}
+
+/**
+ * Rates are intentionally produced only for a single immutable experiment
+ * identity. This keeps Provider, fixture, Oracle, and Harness drift from
+ * being presented as a model-quality change.
+ */
+export function createQualityBaseline(outputs, compatibility) {
+	if (compatibility.status !== "comparable") {
+		return {
+			status: "not-comparable",
+			reasons: compatibility.reasons,
+			rates: null,
+			failureClassification: null,
+		};
+	}
+	const tasks = createTaskAggregate(outputs);
+	const nativeQuality = sumNativeQuality(outputs);
+	const totalTaskExecutions = tasks.reduce(
+		(total, task) => total + Object.values(task.statusCounts).reduce((count, value) => count + value, 0),
+		0,
+	);
+	const passedTaskExecutions = tasks.reduce((total, task) => total + task.passedRuns, 0);
+	const statusCounts = Object.fromEntries(
+		Object.entries(
+			tasks.reduce((counts, task) => {
+				for (const [status, count] of Object.entries(task.statusCounts)) counts[status] = (counts[status] ?? 0) + count;
+				return counts;
+			}, {}),
+		).sort(([left], [right]) => left.localeCompare(right)),
+	);
+	return {
+		status: "ready",
+		reasons: [],
+		rates: {
+			runPassRate: createRate(outputs.filter((output) => output.benchmarkOk).length, outputs.length),
+			taskPassRate: createRate(passedTaskExecutions, totalTaskExecutions),
+			finalPublicVerificationPassRate: createRate(
+				nativeQuality.finalPublicVerificationPassed,
+				nativeQuality.nativeTasks,
+			),
+			hiddenOraclePassRate: createRate(nativeQuality.hiddenOraclePassed, nativeQuality.nativeTasks),
+			publicVerificationFalsePositiveRate: createRate(
+				tasks.reduce((total, task) => total + task.publicVerificationFalsePositives, 0),
+				nativeQuality.finalPublicVerificationPassed,
+			),
+			publicRepairRecoveryRate: createRate(
+				nativeQuality.publicRepairRecovered,
+				nativeQuality.publicRepairAttempted,
+			),
+		},
+		failureClassification: {
+			byTaskStatus: statusCounts,
+			providerFailureTasks: nativeQuality.providerFailureTasks,
+			agentExecutionFailureTasks: nativeQuality.agentExecutionFailureTasks,
+		},
+	};
+}

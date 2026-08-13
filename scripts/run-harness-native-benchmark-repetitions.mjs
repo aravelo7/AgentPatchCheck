@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import {
 	createRepetitionCompatibility,
+	createQualityBaseline,
 	createTaskAggregate,
 	sumNativeQuality,
 } from "./harness-native-repetition-report.mjs";
@@ -122,6 +123,7 @@ async function main() {
 	);
 	const compatibility = createRepetitionCompatibility(benchmarkReports);
 	const tasks = createTaskAggregate(outputs);
+	const qualityBaseline = createQualityBaseline(outputs, compatibility);
 	const report = {
 		version: 1,
 		mode: "executed",
@@ -130,6 +132,7 @@ async function main() {
 		providerProfile: options.providerProfile,
 		suiteVersion: options.suiteVersion,
 		experimentIdentity: compatibility,
+		qualityBaseline,
 		runs: outputs.map((output, index) => ({
 			run: index + 1,
 			benchmarkOk: output.benchmarkOk,

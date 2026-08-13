@@ -61,6 +61,12 @@ BenchmarkReport has the same suite/configuration, fixture/base, Hidden Oracle, P
 identity; in that case it exposes a SHA-256 fingerprint. `identity-drift` or `incomplete` means its aggregate rates
 must not be compared as a model-quality regression signal.
 
+When the identity is comparable, `qualityBaseline` records rate objects with an explicit `numerator`, `denominator`,
+and decimal `rate`: whole-suite pass rate, task pass rate, final public verification pass rate, Hidden Oracle pass rate,
+public-verification false-positive rate, and bounded public-repair recovery rate. It also classifies failures by task
+status and separately records Provider failures versus Agent execution failures. If identity is not comparable, these
+rates are `null`; consumers must not manufacture a cross-experiment success rate from the raw task counts.
+
 ```powershell
 npm.cmd run benchmark:harness-native-repetitions -- `
   --output-root D:\Benchmarks\agentpatchcheck-native-v2-deepseek-repetitions `
@@ -145,6 +151,10 @@ precomputed percentages so a consumer cannot accidentally mix model transport fa
 
 The v1/v2 suites contain five/six tasks respectively and are integration fixtures, not statistically meaningful quality
 scores. Future versioned corpora must grow the task denominator before publishing rates.
+
+The first retained v2 quality sample is documented in
+[`harness-native-quality-baseline-v2.md`](./harness-native-quality-baseline-v2.md). It records only comparable-run
+results and explicitly retains the observed Agent failure and Hidden Oracle false positive.
 
 OpenAI documents the Responses API as the API for multi-turn and tool-calling workflows; choose and compare models on
 representative tasks rather than treating a single result as a general capability claim.

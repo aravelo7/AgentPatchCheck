@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	createRepetitionCompatibility,
+	createQualityBaseline,
 	createTaskAggregate,
 	sumNativeQuality,
 } from "../../scripts/harness-native-repetition-report.mjs";
@@ -85,6 +86,58 @@ describe("Harness-native repetition report", () => {
 		expect(createRepetitionCompatibility([report({ executionIdentity: undefined })])).toMatchObject({
 			status: "incomplete",
 			fingerprint: null,
+		});
+	});
+
+	it("creates quality rates only for a comparable experiment identity", () => {
+		const outputs = [
+			{
+				benchmarkOk: true,
+				taskResults: [
+					{ id: "repair", status: "passed", verificationStatus: "passed", hiddenOracleStatus: "passed" },
+				],
+				nativeQuality: {
+					nativeTasks: 1,
+					finalPublicVerificationPassed: 1,
+					hiddenOraclePassed: 1,
+					publicRepairAttempted: 1,
+					publicRepairRecovered: 1,
+					providerFailureTasks: 0,
+					agentExecutionFailureTasks: 0,
+				},
+			},
+			{
+				benchmarkOk: false,
+				taskResults: [
+					{ id: "repair", status: "hidden-oracle-failed", verificationStatus: "passed", hiddenOracleStatus: "failed" },
+				],
+				nativeQuality: {
+					nativeTasks: 1,
+					finalPublicVerificationPassed: 1,
+					hiddenOraclePassed: 0,
+					publicRepairAttempted: 0,
+					publicRepairRecovered: 0,
+					providerFailureTasks: 0,
+					agentExecutionFailureTasks: 0,
+				},
+			},
+		];
+		const ready = createQualityBaseline(outputs, { status: "comparable", fingerprint: "fixture", reasons: [] });
+		expect(ready).toMatchObject({
+			status: "ready",
+			rates: {
+				runPassRate: { numerator: 1, denominator: 2, rate: 0.5 },
+				taskPassRate: { numerator: 1, denominator: 2, rate: 0.5 },
+				hiddenOraclePassRate: { numerator: 1, denominator: 2, rate: 0.5 },
+				publicVerificationFalsePositiveRate: { numerator: 1, denominator: 2, rate: 0.5 },
+			},
+			failureClassification: { byTaskStatus: { "hidden-oracle-failed": 1, passed: 1 } },
+		});
+		expect(createQualityBaseline(outputs, { status: "identity-drift", fingerprint: null, reasons: ["drift"] })).toEqual({
+			status: "not-comparable",
+			reasons: ["drift"],
+			rates: null,
+			failureClassification: null,
 		});
 	});
 });
