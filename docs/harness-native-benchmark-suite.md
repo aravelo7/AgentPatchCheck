@@ -56,6 +56,11 @@ and summed Native Agent quality counters. It also records `publicVerificationFal
 verification passed but the Hidden Oracle explicitly rejected the patch. Oracle infrastructure errors are not included.
 It does not retry a failed task or hide provider failures.
 
+The parent report now additionally contains `experimentIdentity`. It is `comparable` only if every child
+BenchmarkReport has the same suite/configuration, fixture/base, Hidden Oracle, Provider/Agent, and Harness environment
+identity; in that case it exposes a SHA-256 fingerprint. `identity-drift` or `incomplete` means its aggregate rates
+must not be compared as a model-quality regression signal.
+
 ```powershell
 npm.cmd run benchmark:harness-native-repetitions -- `
   --output-root D:\Benchmarks\agentpatchcheck-native-v2-deepseek-repetitions `

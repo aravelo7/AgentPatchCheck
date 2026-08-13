@@ -1,3 +1,68 @@
+import { createHash } from "node:crypto";
+
+function sha256(value) {
+	return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function taskIdentity(task) {
+	return {
+		taskId: task.taskId,
+		configuration: {
+			taskSpecSha256: task.configuration.taskSpecSha256,
+			verificationProfile: task.configuration.verificationProfile === null ? null : {
+				name: task.configuration.verificationProfile.name,
+				sha256: task.configuration.verificationProfile.sha256,
+			},
+			riskPolicyProfile: task.configuration.riskPolicyProfile === null ? null : {
+				name: task.configuration.riskPolicyProfile.name,
+				sha256: task.configuration.riskPolicyProfile.sha256,
+			},
+			model: task.configuration.model,
+			modelProvider: task.configuration.modelProvider ?? null,
+			agentAdapter: task.configuration.agentAdapter,
+		},
+		execution: task.executionIdentity === undefined ? null : {
+			baseCommit: task.executionIdentity.baseCommit,
+			hiddenOracleSha256: task.executionIdentity.hiddenOracleSha256,
+			agent: task.executionIdentity.agent,
+			modelProvider: task.executionIdentity.modelProvider ?? null,
+		},
+	};
+}
+
+function benchmarkIdentity(report) {
+	return {
+		execution: report.executionIdentity ?? null,
+		suite: report.benchmark.suite,
+		tasks: report.tasks.map(taskIdentity).sort((left, right) => left.taskId.localeCompare(right.taskId)),
+	};
+}
+
+/**
+ * Repetitions are rate-bearing only when every persisted BenchmarkReport has
+ * the same immutable execution identity. Status differences never affect this.
+ */
+export function createRepetitionCompatibility(reports) {
+	if (reports.length === 0) return { status: "incomplete", fingerprint: null, reasons: ["No BenchmarkReports were recorded."] };
+	const identities = reports.map(benchmarkIdentity);
+	if (identities.some((identity) => identity.execution === null || identity.tasks.some((task) => task.execution === null)))
+		return {
+			status: "incomplete",
+			fingerprint: null,
+			reasons: ["One or more BenchmarkReports lack execution identity."],
+		};
+	const baseline = identities[0];
+	const baselineJson = JSON.stringify(baseline);
+	const driftedRuns = identities.flatMap((identity, index) => (JSON.stringify(identity) === baselineJson ? [] : [index + 1]));
+	if (driftedRuns.length > 0)
+		return {
+			status: "identity-drift",
+			fingerprint: null,
+			reasons: [`Execution identity differs in repetition run(s): ${driftedRuns.join(", ")}.`],
+		};
+	return { status: "comparable", fingerprint: sha256(baseline), reasons: [] };
+}
+
 export function createTaskAggregate(outputs) {
 	const aggregate = new Map();
 	for (const output of outputs) {

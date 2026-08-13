@@ -220,4 +220,30 @@ describe("Harness-native Benchmark Suite v1", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+
+	it("preserves a child suite credential diagnostic in a repetitions failure", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-repetitions-"));
+		const outputRoot = join(root, "suite");
+		try {
+			await expect(
+				execFile(
+					process.execPath,
+					[
+						repetitionsScript,
+						"--output-root",
+						outputRoot,
+						"--runs",
+						"2",
+						"--model",
+						"test-model",
+						"--provider-profile",
+						"deepseek-chat",
+					],
+					{ cwd: projectRoot, windowsHide: true, env: { ...process.env, DEEPSEEK_API_KEY: "" } },
+				),
+			).rejects.toMatchObject({ stderr: expect.stringContaining("DEEPSEEK_API_KEY") });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });

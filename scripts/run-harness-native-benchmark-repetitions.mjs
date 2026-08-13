@@ -2,7 +2,11 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { createTaskAggregate, sumNativeQuality } from "./harness-native-repetition-report.mjs";
+import {
+	createRepetitionCompatibility,
+	createTaskAggregate,
+	sumNativeQuality,
+} from "./harness-native-repetition-report.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const suiteScript = join(scriptDirectory, "run-harness-native-benchmark-suite.mjs");
@@ -84,7 +88,10 @@ function parseSuiteOutput(result, runNumber) {
 	try {
 		output = JSON.parse(result.stdout);
 	} catch (error) {
-		throw new Error(`Run ${runNumber} did not return JSON: ${error instanceof Error ? error.message : String(error)}`);
+		const diagnostic = result.stderr.trim() || result.stdout.trim();
+		throw new Error(
+			`Run ${runNumber} did not return JSON: ${error instanceof Error ? error.message : String(error)}${diagnostic ? ` (${diagnostic})` : ""}`,
+		);
 	}
 	if (output?.mode !== "executed" || typeof output.benchmarkReportPath !== "string" || typeof output.benchmarkOk !== "boolean")
 		throw new Error(`Run ${runNumber} returned an invalid Benchmark result.`);
@@ -110,6 +117,10 @@ async function main() {
 		]);
 		outputs.push(parseSuiteOutput(result, runNumber));
 	}
+	const benchmarkReports = await Promise.all(
+		outputs.map(async (output) => JSON.parse(await readFile(output.benchmarkReportPath, "utf8"))),
+	);
+	const compatibility = createRepetitionCompatibility(benchmarkReports);
 	const tasks = createTaskAggregate(outputs);
 	const report = {
 		version: 1,
@@ -118,6 +129,7 @@ async function main() {
 		model: options.model,
 		providerProfile: options.providerProfile,
 		suiteVersion: options.suiteVersion,
+		experimentIdentity: compatibility,
 		runs: outputs.map((output, index) => ({
 			run: index + 1,
 			benchmarkOk: output.benchmarkOk,
