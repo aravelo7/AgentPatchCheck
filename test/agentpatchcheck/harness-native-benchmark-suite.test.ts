@@ -43,10 +43,10 @@ describe("Harness-native Benchmark Suite v1", () => {
 				suite: { id: "harness-native-public-repair", fixtureVersion: "v1" },
 				model: "test-model",
 				providerProfile: "openai-responses",
-				baseCommit: "e541a35c27928260146e4c1f72db897fdefc8870",
+				baseCommit: "1b3e5dfa5797ee11738ea6bd991458c3be4e37a5",
 				budgets: { timeoutMs: 120000, maxIterations: 6, maxToolCalls: 8, maxObservationBytes: 4096 },
 			});
-			expect(output.taskSpecPaths).toHaveLength(3);
+			expect(output.taskSpecPaths).toHaveLength(4);
 			for (const taskSpecPath of output.taskSpecPaths) {
 				const task = JSON.parse(await readFile(taskSpecPath, "utf8")) as { model: string };
 				expect(task.model).toBe("test-model");

@@ -5,8 +5,9 @@ Headless Core corpus and is not part of ordinary CI.
 
 The suite materializes a disposable Git fixture, pins its fixture/base, TaskSpec, verification profile, risk profile,
 and Hidden Oracle source in the resulting Evidence and BenchmarkReport. Its fixed corpus contains a public-repair
-task, a new-file task, and a multi-file local-repair task; the public-repair task deliberately produces a public
-verification failure first, then measures the bounded single repair attempt before the Hidden Oracle runs.
+task, a new-file task, a multi-file local-repair task, and a recursive cross-directory repair task; the public-repair
+task deliberately produces a public verification failure first, then measures the bounded single repair attempt before
+the Hidden Oracle runs.
 
 ## Run
 
@@ -56,9 +57,11 @@ npm.cmd run benchmark:harness-native-suite -- `
 
 ## Limits and boundaries
 
-- The v1 corpus uses three independent managed workspaces and requires a patch from each task.
+- The v1 corpus uses four independent managed workspaces and requires a patch from each task.
 - The multi-file task allows only exact replacements in two existing files; it verifies both public prefixes and exact
   final content through a Hidden Oracle.
+- The recursive task requires bounded cross-directory discovery before two nested source-file replacements; its Hidden
+  Oracle verifies the exact final content of both targets.
 - The Native Agent is bounded to six model iterations and eight tool calls, with a 120-second task timeout and 4 KiB
   observations.
 - The public verifier only checks the expected README prefix. The Hidden Oracle checks exact final content after the
@@ -78,7 +81,7 @@ precomputed percentages so a consumer cannot accidentally mix model transport fa
 - `providerFailureTasks` is separate from `agentExecutionFailureTasks`; neither should be silently counted as a semantic
   patch failure.
 
-The v1 suite contains three tasks and is an integration fixture, not a statistically meaningful quality score. Future
+The v1 suite contains four tasks and is an integration fixture, not a statistically meaningful quality score. Future
 versioned corpora must grow the task denominator before publishing rates.
 
 OpenAI documents the Responses API as the API for multi-turn and tool-calling workflows; choose and compare models on

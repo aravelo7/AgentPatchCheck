@@ -17,6 +17,10 @@
     {
       "id": "multi-file-local-repair",
       "taskSpec": "tasks/multi-file-local-repair.json"
+    },
+    {
+      "id": "recursive-cross-directory-repair",
+      "taskSpec": "tasks/recursive-cross-directory-repair.json"
     }
   ]
 }
