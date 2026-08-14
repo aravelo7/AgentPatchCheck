@@ -1,0 +1,1 @@
+Use only the managed workspace tools. Create the previously absent file `created.txt` with entire UTF-8 content `created\n`, then finish. Do not modify README.md or any other file. Do not assume any hidden checks exist.

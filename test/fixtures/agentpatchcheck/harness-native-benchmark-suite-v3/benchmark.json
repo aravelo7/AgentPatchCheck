@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "name": "harness-native-public-repair-v3",
+  "suite": {
+    "id": "harness-native-public-repair",
+    "fixtureVersion": "v3"
+  },
+  "tasks": [
+    {
+      "id": "public-repair",
+      "taskSpec": "tasks/public-repair.json"
+    },
+    {
+      "id": "create-new-file",
+      "taskSpec": "tasks/create-new-file.json"
+    },
+    {
+      "id": "multi-file-local-repair",
+      "taskSpec": "tasks/multi-file-local-repair.json"
+    },
+    {
+      "id": "recursive-cross-directory-repair",
+      "taskSpec": "tasks/recursive-cross-directory-repair.json"
+    },
+    {
+      "id": "recursive-feedback-repair",
+      "taskSpec": "tasks/recursive-feedback-repair.json"
+    },
+    {
+      "id": "configuration-semantic-repair",
+      "taskSpec": "tasks/configuration-semantic-repair.json"
+    },
+    {
+      "id": "recursive-feedback-invariant-repair",
+      "taskSpec": "tasks/recursive-feedback-invariant-repair.json"
+    },
+    {
+      "id": "nested-configuration-invariant-repair",
+      "taskSpec": "tasks/nested-configuration-invariant-repair.json"
+    }
+  ]
+}

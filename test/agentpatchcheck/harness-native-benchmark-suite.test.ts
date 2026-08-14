@@ -146,6 +146,41 @@ describe("Harness-native Benchmark Suite v1", () => {
 		}
 	});
 
+	it("materializes the separately versioned v3 corpus with feedback invariants and nested configuration semantics", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			const { stdout } = await execFile(
+				process.execPath,
+				[suiteScript, "--output-root", outputRoot, "--model", "test-model", "--suite-version", "v3", "--dry-run"],
+				{ cwd: projectRoot, windowsHide: true },
+			);
+			const output = JSON.parse(stdout) as NativeSuiteDryRunOutput;
+			expect(output).toMatchObject({
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v3" },
+				baseCommit: "f5fe46204f769c8f73f4d59c4639b80f62a8c396",
+			});
+			expect(output.taskSpecPaths).toHaveLength(8);
+			const feedbackInvariantPath = output.taskSpecPaths.find((path) =>
+				path.endsWith("recursive-feedback-invariant-repair.json"),
+			);
+			const configurationInvariantPath = output.taskSpecPaths.find((path) =>
+				path.endsWith("nested-configuration-invariant-repair.json"),
+			);
+			expect(await validateTaskPolicy(await loadTaskSpec(feedbackInvariantPath ?? ""))).toMatchObject({
+				verificationProfile: { name: "recursive-feedback-invariant" },
+				hiddenOracle: { scriptPath: expect.stringContaining("oracle-recursive-feedback-invariant-exact.mjs") },
+				nativeAgent: { maxIterations: 8, maxToolCalls: 10 },
+			});
+			expect(await validateTaskPolicy(await loadTaskSpec(configurationInvariantPath ?? ""))).toMatchObject({
+				verificationProfile: { name: "nested-settings-targets" },
+				hiddenOracle: { scriptPath: expect.stringContaining("oracle-nested-settings-exact.mjs") },
+			});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("fails before materializing a suite when model selection is omitted", async () => {
 		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
 		const outputRoot = join(root, "suite");

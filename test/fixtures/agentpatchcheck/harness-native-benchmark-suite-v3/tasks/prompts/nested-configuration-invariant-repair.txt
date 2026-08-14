@@ -1,0 +1,1 @@
+Use only the managed workspace tools. Update `service-settings.json` so `retry.enabled` is true and `retry.limit` is 3. Preserve `retry.backoffMs`, `telemetry`, `labels`, property order, formatting, and every other file exactly. Then finish. Do not assume any hidden checks exist.

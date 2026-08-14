@@ -391,7 +391,11 @@ export async function runHarnessNativeRuntime(options: {
 	repairContext?: RepairContext;
 }): Promise<HarnessNativeRuntimeResult> {
 	const startedAt = Date.now();
-	const repairContext = options.repairContext ?? { phase: "initial", publicVerificationFeedback: null };
+	const repairContext = options.repairContext ?? {
+		phase: "initial",
+		publicVerificationFeedback: null,
+		repairInstruction: null,
+	};
 	const trajectory: HarnessNativeTrajectoryStep[] = [];
 	const observations: string[] = [];
 	const session = options.provider.createSession?.() ?? {

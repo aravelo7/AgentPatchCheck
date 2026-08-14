@@ -5,6 +5,7 @@ export const TASK_POLICY_BRAND: unique symbol = Symbol("TaskPolicy");
 export interface TaskPolicyInput {
 	repositoryRoot: string;
 	prompt: string;
+	publicVerificationRepairInstruction?: string;
 	baseRef?: string;
 	worktreeRoot?: string;
 	runId?: string;
@@ -114,6 +115,7 @@ export interface TaskPolicy {
 	baseCommit: string;
 	worktreeRoot: string;
 	prompt: string;
+	publicVerificationRepairInstruction: string | null;
 	runId?: string;
 	codexExecutable?: string;
 	agentAdapter: AgentAdapterId;
@@ -166,8 +168,12 @@ export interface PublicVerificationFeedback {
 
 /** Harness-owned phase contract for one Agent execution. Hidden Oracle data is never included. */
 export type RepairContext =
-	| { phase: "initial"; publicVerificationFeedback: null }
-	| { phase: "public-verification-repair"; publicVerificationFeedback: PublicVerificationFeedback };
+	| { phase: "initial"; publicVerificationFeedback: null; repairInstruction?: null }
+	| {
+			phase: "public-verification-repair";
+			publicVerificationFeedback: PublicVerificationFeedback;
+			repairInstruction?: string | null;
+	  };
 
 export interface AgentExecutionAttempt {
 	phase: "initial" | "public-verification-repair";
@@ -340,6 +346,7 @@ export interface TaskPolicyEvidenceSnapshot {
 	worktreeRoot: string;
 	promptLength: number;
 	promptSha256: string;
+	publicVerificationRepairInstruction?: { length: number; sha256: string } | null;
 	codexExecutable: string | null;
 	agentAdapter?: AgentAdapterId;
 	model: string | null;

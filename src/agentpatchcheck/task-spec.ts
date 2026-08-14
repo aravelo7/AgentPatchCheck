@@ -12,6 +12,7 @@ const taskSpecSchema = z
 		repositoryRoot: z.string(),
 		prompt: z.string().optional(),
 		promptFile: z.string().optional(),
+		publicVerificationRepairInstruction: z.string().optional(),
 		baseRef: z.string().optional(),
 		worktreeRoot: z.string().optional(),
 		runId: z.string().optional(),
@@ -193,6 +194,7 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 	return {
 		repositoryRoot,
 		prompt,
+		publicVerificationRepairInstruction: parsed.data.publicVerificationRepairInstruction,
 		baseRef: parsed.data.baseRef,
 		worktreeRoot:
 			parsed.data.worktreeRoot === undefined

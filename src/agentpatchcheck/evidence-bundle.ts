@@ -98,6 +98,15 @@ export function createEvidenceBundle(options: {
 }): EvidenceBundle {
 	const createdAt = (options.createdAt ?? new Date()).toISOString();
 	const promptSha256 = createHash("sha256").update(options.policy.prompt, "utf8").digest("hex");
+	const publicVerificationRepairInstruction =
+		options.policy.publicVerificationRepairInstruction === null
+			? null
+			: {
+					length: options.policy.publicVerificationRepairInstruction.length,
+					sha256: createHash("sha256")
+						.update(options.policy.publicVerificationRepairInstruction, "utf8")
+						.digest("hex"),
+				};
 	const agent = redactAgentExecution(options.execution.agent, options.policy.prompt);
 	const patch = redactPatchSnapshot(options.execution.patch, options.policy.prompt);
 	const commandVerification = redactCommandVerification(options.execution.commandVerification, options.policy.prompt);
@@ -113,6 +122,7 @@ export function createEvidenceBundle(options: {
 			worktreeRoot: options.policy.worktreeRoot,
 			promptLength: options.policy.prompt.length,
 			promptSha256,
+			publicVerificationRepairInstruction,
 			codexExecutable: options.policy.codexExecutable ?? null,
 			agentAdapter: options.policy.agentAdapter,
 			model: options.policy.model ?? null,

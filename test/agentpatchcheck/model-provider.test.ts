@@ -224,6 +224,7 @@ describe("Model Provider Registry", () => {
 				...context,
 				repairContext: {
 					phase: "public-verification-repair",
+					repairInstruction: "Only modify src/config/beta.ts, then finish.",
 					publicVerificationFeedback: {
 						version: 1,
 						status: "failed",
@@ -236,6 +237,7 @@ describe("Model Provider Registry", () => {
 			expect(requestBody).toContain("Execution phase: public-verification repair");
 			expect(requestBody).toContain("Do not repeat initial-attempt instructions");
 			expect(requestBody).toContain("The public verification command failed.");
+			expect(requestBody).toContain("Only modify src/config/beta.ts, then finish.");
 			expect(requestBody).not.toContain("fake-secret");
 		}
 	});

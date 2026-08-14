@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "repositoryRoot": "../fixture-repository",
+  "promptFile": "prompts/recursive-feedback-invariant-repair.txt",
+  "publicVerificationRepairInstruction": "The initial change is already retained. Only inspect and modify src/config/beta.ts: replace the exact cross-before-b value with cross-after-b. Do not search, list directories, inspect other files, or modify any other path. Then call finish.",
+  "agentAdapter": "harness-native",
+  "model": "__AGENTPATCHCHECK_MODEL__",
+  "nativeAgent": {
+    "provider": "openai",
+    "protocol": "responses",
+    "credentialRef": "openai-primary",
+    "maxIterations": 8,
+    "maxToolCalls": 10,
+    "maxObservationBytes": 4096
+  },
+  "timeoutMs": 120000,
+  "sandbox": "workspace-write",
+  "allowNetwork": true,
+  "patchExpectation": "changes-required",
+  "verificationProfile": "recursive-feedback-invariant",
+  "riskPolicyProfile": "policies/suite-risk.json",
+  "hiddenOracle": {
+    "script": "scripts/oracle-recursive-feedback-invariant-exact.mjs",
+    "isolation": "none"
+  }
+}

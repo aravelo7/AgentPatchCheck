@@ -173,7 +173,12 @@ function requestInput(context: ModelProviderContext): string {
 		context.repairContext.phase === "initial"
 			? "None."
 			: JSON.stringify(context.repairContext.publicVerificationFeedback);
-	return `${phaseInstruction}\n\nTask instructions:\n${context.prompt}\n\nPublic verification feedback:\n${feedback}\n\nObservations:\n${context.observations.join("\n---\n")}`;
+	const repairInstruction =
+		context.repairContext.phase === "public-verification-repair" &&
+		typeof context.repairContext.repairInstruction === "string"
+			? `\n\nHarness-owned targeted repair instruction:\n${context.repairContext.repairInstruction}`
+			: "";
+	return `${phaseInstruction}${repairInstruction}\n\nTask instructions:\n${context.prompt}\n\nPublic verification feedback:\n${feedback}\n\nObservations:\n${context.observations.join("\n---\n")}`;
 }
 
 function selectedTools(tools: readonly HarnessNativeToolName[]) {

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "recursive-feedback-invariant",
+  "verification": {
+    "commands": [
+      {
+        "command": "node",
+        "args": [
+          "-e",
+          "const fs = require('node:fs'); process.exit(fs.readFileSync('src/feature/alpha.ts', 'utf8').includes('cross-after-a') && fs.readFileSync('src/config/beta.ts', 'utf8').includes('cross-after-b') ? 0 : 1);"
+        ]
+      }
+    ]
+  }
+}

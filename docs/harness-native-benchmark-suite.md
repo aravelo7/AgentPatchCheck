@@ -11,7 +11,10 @@ failure first, then measure the bounded single repair attempt before the Hidden 
 
 The separately versioned v2 corpus preserves all five v1 tasks and adds `configuration-semantic-repair`: public
 verification checks the requested settings values, while the Hidden Oracle checks the exact intended JSON document.
-The corpus is selected explicitly; no existing suite identity is mutated.
+The separately versioned v3 corpus preserves v2 and adds `recursive-feedback-invariant-repair` (a bounded feedback
+repair whose Oracle also protects an unrelated source file) and `nested-configuration-invariant-repair` (publicly
+checks two nested settings while the Oracle protects the complete configuration document). The corpus is selected
+explicitly; no existing suite identity is mutated.
 
 ## Run
 
@@ -113,13 +116,13 @@ npm.cmd run benchmark:harness-native-suite -- `
   --output-root D:\Benchmarks\agentpatchcheck-native-v1-dry-run `
   --model <model-id> `
   --provider-profile <openai-responses|deepseek-chat> `
-  --suite-version <v1|v2> `
+  --suite-version <v1|v2|v3> `
   --dry-run
 ```
 
 ## Limits and boundaries
 
-- The v1 corpus uses five independent managed workspaces and requires a patch from each task; v2 uses six.
+- The v1/v2/v3 corpora use five/six/eight independent managed workspaces respectively and require a patch from each task.
 - The multi-file task allows only exact replacements in two existing files; it verifies both public prefixes and exact
   final content through a Hidden Oracle.
 - The recursive task requires bounded cross-directory discovery before two nested source-file replacements; its Hidden
@@ -149,8 +152,8 @@ precomputed percentages so a consumer cannot accidentally mix model transport fa
 - `providerFailureTasks` is separate from `agentExecutionFailureTasks`; neither should be silently counted as a semantic
   patch failure.
 
-The v1/v2 suites contain five/six tasks respectively and are integration fixtures, not statistically meaningful quality
-scores. Future versioned corpora must grow the task denominator before publishing rates.
+The v1/v2/v3 suites contain five/six/eight tasks respectively and are integration fixtures, not statistically meaningful
+quality scores. Future versioned corpora must grow the task denominator before publishing rates.
 
 The first retained v2 quality sample is documented in
 [`harness-native-quality-baseline-v2.md`](./harness-native-quality-baseline-v2.md). It records only comparable-run

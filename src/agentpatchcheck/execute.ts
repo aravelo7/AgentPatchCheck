@@ -115,6 +115,7 @@ export async function executeAgentPatchCheck(
 	const initialAgent = await runAgentSafely(resolvedDependencies.runAgent, policy, workspace.path, {
 		phase: "initial",
 		publicVerificationFeedback: null,
+		repairInstruction: null,
 	});
 	let agent = initialAgent;
 	let commandVerification = await runVerificationSafely(resolvedDependencies.runVerification, policy, workspace.path);
@@ -132,7 +133,11 @@ export async function executeAgentPatchCheck(
 						resolvedDependencies.runAgent,
 						{ ...policy, timeoutMs: remainingAgentBudgetMs },
 						workspace.path,
-						{ phase: "public-verification-repair", publicVerificationFeedback: feedback },
+						{
+							phase: "public-verification-repair",
+							publicVerificationFeedback: feedback,
+							repairInstruction: policy.publicVerificationRepairInstruction,
+						},
 					)
 				: failedAgentExecution(policy, "Harness-native public verification repair budget was exhausted.");
 		const attempts: AgentExecutionAttempt[] = [

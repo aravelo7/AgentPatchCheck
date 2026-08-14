@@ -1,0 +1,13 @@
+{
+  "retry": {
+    "enabled": false,
+    "limit": 1,
+    "backoffMs": 200
+  },
+  "telemetry": {
+    "enabled": true
+  },
+  "labels": [
+    "stable"
+  ]
+}

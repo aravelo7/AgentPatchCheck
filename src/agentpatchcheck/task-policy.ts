@@ -27,6 +27,7 @@ import { validateVerificationPolicy } from "./verification-policy";
 export const DEFAULT_TASK_TIMEOUT_MS = 15 * 60 * 1_000;
 export const MAX_TASK_TIMEOUT_MS = 60 * 60 * 1_000;
 export const MAX_TASK_PROMPT_LENGTH = 16_000;
+export const MAX_PUBLIC_VERIFICATION_REPAIR_INSTRUCTION_LENGTH = 2_048;
 
 const SANDBOXES = new Set<AgentPatchCheckSandbox>(["read-only", "workspace-write"]);
 const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
@@ -145,6 +146,17 @@ function normalizePrompt(prompt: string): string {
 		throw new Error(`Prompt must not exceed ${MAX_TASK_PROMPT_LENGTH} characters.`);
 	}
 	return prompt;
+}
+
+function normalizePublicVerificationRepairInstruction(instruction: string | undefined): string | null {
+	if (instruction === undefined) return null;
+	assertNoNullBytes(instruction, "Public verification repair instruction");
+	if (!instruction.trim()) throw new Error("Public verification repair instruction must not be empty.");
+	if (instruction.length > MAX_PUBLIC_VERIFICATION_REPAIR_INSTRUCTION_LENGTH)
+		throw new Error(
+			`Public verification repair instruction must not exceed ${MAX_PUBLIC_VERIFICATION_REPAIR_INSTRUCTION_LENGTH} characters.`,
+		);
+	return instruction;
 }
 
 function normalizePatchExpectation(expectation: PatchExpectation | undefined): PatchExpectation {
@@ -353,6 +365,9 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		baseCommit,
 		worktreeRoot,
 		prompt: normalizePrompt(input.prompt),
+		publicVerificationRepairInstruction: normalizePublicVerificationRepairInstruction(
+			input.publicVerificationRepairInstruction,
+		),
 		runId: normalizeOptionalRunId(input.runId),
 		codexExecutable: normalizeOptionalExecutable(input.codexExecutable),
 		agentAdapter,

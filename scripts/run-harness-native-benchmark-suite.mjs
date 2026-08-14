@@ -29,7 +29,7 @@ const providerProfiles = {
 		requiredEnvironment: "DEEPSEEK_API_KEY",
 	},
 };
-const suiteVersions = new Set(["v1", "v2"]);
+const suiteVersions = new Set(["v1", "v2", "v3"]);
 
 function getProviderProfile(profileId) {
 	const profile = providerProfiles[profileId];
@@ -64,11 +64,11 @@ function parseArguments(argv) {
 	}
 	if (outputRoot === undefined || model === undefined)
 		throw new Error(
-			"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2>] [--dry-run]",
+			"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2|v3>] [--dry-run]",
 		);
 	if (!modelPattern.test(model)) throw new Error("model must be a valid 1-128 character model identifier.");
 	getProviderProfile(providerProfile);
-	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2.");
+	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2, v3.");
 	return { outputRoot, model, providerProfile, suiteVersion, dryRun };
 }
 

@@ -13,7 +13,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const suiteScript = join(scriptDirectory, "run-harness-native-benchmark-suite.mjs");
 const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/u;
 const providerProfiles = new Set(["openai-responses", "deepseek-chat"]);
-const suiteVersions = new Set(["v1", "v2"]);
+const suiteVersions = new Set(["v1", "v2", "v3"]);
 const maxRuns = 20;
 
 function parseArguments(argv) {
@@ -43,11 +43,11 @@ function parseArguments(argv) {
 	}
 	if (outputRoot === undefined || model === undefined || runs === undefined)
 		throw new Error(
-			"Usage: npm run benchmark:harness-native-repetitions -- --output-root <new-directory> --runs <2-20> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2>]",
+			"Usage: npm run benchmark:harness-native-repetitions -- --output-root <new-directory> --runs <2-20> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2|v3>]",
 		);
 	if (!modelPattern.test(model)) throw new Error("model must be a valid 1-128 character model identifier.");
 	if (!providerProfiles.has(providerProfile)) throw new Error("provider-profile must be one of: openai-responses, deepseek-chat.");
-	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2.");
+	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2, v3.");
 	if (!Number.isSafeInteger(runs) || runs < 2 || runs > maxRuns) throw new Error(`runs must be an integer from 2 to ${maxRuns}.`);
 	return { outputRoot, model, providerProfile, suiteVersion, runs };
 }

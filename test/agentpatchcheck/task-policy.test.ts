@@ -2,7 +2,11 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { MAX_TASK_PROMPT_LENGTH, validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
+import {
+	MAX_PUBLIC_VERIFICATION_REPAIR_INSTRUCTION_LENGTH,
+	MAX_TASK_PROMPT_LENGTH,
+	validateTaskPolicy,
+} from "../../src/agentpatchcheck/task-policy";
 
 describe("validateTaskPolicy", () => {
 	it("resolves a repository-rooted policy with safe defaults", async () => {
@@ -104,6 +108,22 @@ describe("validateTaskPolicy", () => {
 				nativeAgent: { credentialRef: "openai-primary", maxRejectedToolCalls: 17 },
 			}),
 		).rejects.toThrow("maxRejectedToolCalls must be an integer between 1 and 16");
+	});
+
+	it("validates a bounded Harness-owned public verification repair instruction", async () => {
+		const policy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Inspect the change.",
+			publicVerificationRepairInstruction: "Only modify src/config/beta.ts, then finish.",
+		});
+		expect(policy.publicVerificationRepairInstruction).toBe("Only modify src/config/beta.ts, then finish.");
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				publicVerificationRepairInstruction: "x".repeat(MAX_PUBLIC_VERIFICATION_REPAIR_INSTRUCTION_LENGTH + 1),
+			}),
+		).rejects.toThrow("Public verification repair instruction must not exceed");
 	});
 
 	it("validates direct verification commands and rejects shell launchers", async () => {

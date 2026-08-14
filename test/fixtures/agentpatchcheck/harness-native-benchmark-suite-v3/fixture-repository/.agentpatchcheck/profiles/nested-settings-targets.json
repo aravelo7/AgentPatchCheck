@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "nested-settings-targets",
+  "verification": {
+    "commands": [
+      {
+        "command": "node",
+        "args": [
+          "-e",
+          "const fs = require('node:fs'); const settings = JSON.parse(fs.readFileSync('service-settings.json', 'utf8')); process.exit(settings.retry?.enabled === true && settings.retry?.limit === 3 ? 0 : 1);"
+        ]
+      }
+    ]
+  }
+}
