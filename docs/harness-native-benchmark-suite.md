@@ -159,5 +159,9 @@ The first retained v2 quality sample is documented in
 [`harness-native-quality-baseline-v2.md`](./harness-native-quality-baseline-v2.md). It records only comparable-run
 results and explicitly retains the observed Agent failure and Hidden Oracle false positive.
 
+The first retained v3 quality sample is documented in
+[`harness-native-quality-baseline-v3.md`](./harness-native-quality-baseline-v3.md). Its three-run sample exercises
+the new feedback-repair and nested-configuration invariants, but is explicitly not a general 100% capability claim.
+
 OpenAI documents the Responses API as the API for multi-turn and tool-calling workflows; choose and compare models on
 representative tasks rather than treating a single result as a general capability claim.
