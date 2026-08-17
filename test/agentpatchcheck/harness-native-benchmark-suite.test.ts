@@ -207,6 +207,36 @@ describe("Harness-native Benchmark Suite v1", () => {
 		}
 	});
 
+	it("materializes the v5 controlled edit and self-verification corpus without changing v4", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			const { stdout } = await execFile(
+				process.execPath,
+				[suiteScript, "--output-root", outputRoot, "--model", "test-model", "--suite-version", "v5", "--dry-run"],
+				{ cwd: projectRoot, windowsHide: true },
+			);
+			const output = JSON.parse(stdout) as NativeSuiteDryRunOutput;
+			expect(output).toMatchObject({
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v5" },
+				baseCommit: "1f487c7346407098397230807a9f4c971a826781",
+			});
+			expect(output.taskSpecPaths).toHaveLength(13);
+			const taskPath = output.taskSpecPaths.find((path) => path.endsWith("edit-batch-public-verification.json"));
+			const policy = await validateTaskPolicy(await loadTaskSpec(taskPath ?? ""));
+			expect(policy).toMatchObject({
+				verificationProfile: { name: "edit-batch-public" },
+				hiddenOracle: { scriptPath: expect.stringContaining("oracle-edit-batch-public-verification.mjs") },
+				nativeAgent: { maxIterations: 8, maxToolCalls: 10 },
+			});
+			expect(
+				await readFile(join(outputRoot, "tasks", "prompts", "edit-batch-public-verification.txt"), "utf8"),
+			).toContain("apply-edit-batch");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("fails before materializing a suite when model selection is omitted", async () => {
 		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
 		const outputRoot = join(root, "suite");

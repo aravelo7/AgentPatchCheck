@@ -373,6 +373,138 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
+	it("preflights and applies a combined existing-file and new-file edit batch", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await mkdir(join(worktree, "docs"), { recursive: true });
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-edit-batch",
+									arguments: {
+										patches: [
+											{
+												path: "README.md",
+												expectedText: "before",
+												replacementText: "after",
+											},
+										],
+										creates: [{ path: "docs/usage.md", content: "usage\n" }],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Update README and add usage documentation.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(result.trajectory[0]).toMatchObject({ tool: "apply-edit-batch", toolStatus: "ok" });
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("after\n");
+			expect(await readFile(join(worktree, "docs", "usage.md"), "utf8")).toBe("usage\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a combined edit batch before changing any target when creation preflight fails", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			await writeFile(join(worktree, "existing.md"), "original\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-edit-batch",
+									arguments: {
+										patches: [
+											{
+												path: "README.md",
+												expectedText: "before",
+												replacementText: "after",
+											},
+										],
+										creates: [{ path: "existing.md", content: "overwrite\n" }],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Try an invalid batch.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result.trajectory[0]).toMatchObject({ tool: "apply-edit-batch", toolStatus: "rejected" });
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("before\n");
+			expect(await readFile(join(worktree, "existing.md"), "utf8")).toBe("original\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects more than eight combined edits before changing any target", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-edit-batch",
+									arguments: {
+										patches: [{ path: "README.md", expectedText: "before", replacementText: "after" }],
+										creates: Array.from({ length: 8 }, (_, index) => ({
+											path: `new-${index}.txt`,
+											content: "new\n",
+										})),
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Try an oversized batch.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result.trajectory[0]).toMatchObject({ tool: "apply-edit-batch", toolStatus: "rejected" });
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("before\n");
+			await expect(readFile(join(worktree, "new-0.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
 	it("applies a multi-line LF request to a CRLF file while preserving CRLF output", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {

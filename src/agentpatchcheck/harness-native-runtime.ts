@@ -33,6 +33,7 @@ const registeredTools: HarnessNativeToolName[] = [
 	"git-diff",
 	"apply-patch",
 	"apply-patch-batch",
+	"apply-edit-batch",
 	"create-file",
 ];
 
@@ -172,6 +173,11 @@ interface ConstrainedPatch {
 	replacementText: string;
 }
 
+interface ConstrainedNewFile {
+	path: string;
+	content: string;
+}
+
 function exactOccurrenceCount(content: string, expectedText: string): number {
 	return content.split(expectedText).length - 1;
 }
@@ -199,12 +205,13 @@ function replaceExactText(
 	return content.replace(normalizedExpected, normalizeLineEndings(replacementText, lineEnding));
 }
 
-async function preparePatchBatch(
+async function preparePatches(
 	root: string,
 	value: unknown,
+	options: { minimum: number; maximum: number; failureMessage: string },
 ): Promise<Array<{ path: string; content: string; replacement: string }>> {
-	if (!Array.isArray(value) || value.length < 2 || value.length > 8)
-		throw new Error("Patch batch must contain 2-8 patches.");
+	if (!Array.isArray(value) || value.length < options.minimum || value.length > options.maximum)
+		throw new Error(options.failureMessage);
 	const patches: ConstrainedPatch[] = [];
 	for (const item of value) {
 		if (item === null || typeof item !== "object") throw new Error("Patch batch entry is invalid.");
@@ -242,6 +249,45 @@ async function preparePatchBatch(
 		}),
 	);
 	return prepared;
+}
+
+async function preparePatchBatch(root: string, value: unknown) {
+	return await preparePatches(root, value, {
+		minimum: 2,
+		maximum: 8,
+		failureMessage: "Patch batch must contain 2-8 patches.",
+	});
+}
+
+async function prepareNewFiles(root: string, value: unknown): Promise<ConstrainedNewFile[]> {
+	if (!Array.isArray(value) || value.length > 8) throw new Error("New-file batch is invalid.");
+	const files: ConstrainedNewFile[] = [];
+	for (const item of value) {
+		if (item === null || typeof item !== "object") throw new Error("New-file batch entry is invalid.");
+		const file = item as Partial<ConstrainedNewFile>;
+		if (typeof file.content !== "string" || file.content.length > 32_768 || file.content.includes("\0"))
+			throw new Error("New-file batch entry content is invalid.");
+		files.push({ path: await safeNewFile(root, file.path), content: file.content });
+	}
+	if (new Set(files.map((file) => file.path)).size !== files.length)
+		throw new Error("New-file batch must not target the same file twice.");
+	return files;
+}
+
+async function prepareEditBatch(root: string, value: unknown) {
+	if (value === null || typeof value !== "object") throw new Error("Edit batch is invalid.");
+	const batch = value as { patches?: unknown; creates?: unknown };
+	const patches = await preparePatches(root, batch.patches, {
+		minimum: 0,
+		maximum: 8,
+		failureMessage: "Edit batch patches are invalid.",
+	});
+	const creates = await prepareNewFiles(root, batch.creates);
+	const editCount = patches.length + creates.length;
+	if (editCount < 2 || editCount > 8) throw new Error("Edit batch must contain 2-8 edits.");
+	if (new Set([...patches.map((patch) => patch.path), ...creates.map((file) => file.path)]).size !== editCount)
+		throw new Error("Edit batch must not mix a patch and creation for the same file.");
+	return { patches, creates };
 }
 
 function summary(value: string, limit: number): string {
@@ -396,6 +442,16 @@ async function executeTool(
 				status: "ok" as const,
 				observation: `Patch batch applied to ${patches.length} files.`,
 				evidence: `Applied ${patches.length} constrained text replacements after batch preflight.`,
+			};
+		}
+		if (name === "apply-edit-batch") {
+			const batch = await prepareEditBatch(root, request.arguments);
+			for (const patch of batch.patches) await writeFile(patch.path, patch.replacement, "utf8");
+			for (const file of batch.creates) await writeFile(file.path, file.content, { encoding: "utf8", flag: "wx" });
+			return {
+				status: "ok" as const,
+				observation: `Edit batch applied to ${batch.patches.length} existing and ${batch.creates.length} new files.`,
+				evidence: `Applied ${batch.patches.length} constrained replacements and created ${batch.creates.length} files after batch preflight.`,
 			};
 		}
 		if (name === "create-file") {

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "edit-batch-public",
+  "verification": {
+    "commands": [
+      {
+        "command": "node",
+        "args": [
+          "-e",
+          "const fs=require('node:fs');process.exit(fs.readFileSync('src/edition/status.ts','utf8')==='export const editionStatus = \\\"published\\\";\\n'?0:1);"
+        ]
+      }
+    ]
+  }
+}

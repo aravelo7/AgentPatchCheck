@@ -133,6 +133,39 @@ const toolParameters: Record<HarnessNativeToolName, Record<string, unknown>> = {
 		required: ["patches"],
 		additionalProperties: false,
 	},
+	"apply-edit-batch": {
+		type: "object",
+		properties: {
+			patches: {
+				type: "array",
+				minItems: 0,
+				maxItems: 8,
+				items: {
+					type: "object",
+					properties: {
+						path: { type: "string" },
+						expectedText: { type: "string" },
+						replacementText: { type: "string" },
+					},
+					required: ["path", "expectedText", "replacementText"],
+					additionalProperties: false,
+				},
+			},
+			creates: {
+				type: "array",
+				minItems: 0,
+				maxItems: 8,
+				items: {
+					type: "object",
+					properties: { path: { type: "string" }, content: { type: "string" } },
+					required: ["path", "content"],
+					additionalProperties: false,
+				},
+			},
+		},
+		required: ["patches", "creates"],
+		additionalProperties: false,
+	},
 	"create-file": {
 		type: "object",
 		properties: { path: { type: "string" }, content: { type: "string" } },
@@ -195,7 +228,9 @@ function selectedTools(tools: readonly HarnessNativeToolName[]) {
 			description:
 				name === "run-public-verification"
 					? "Run one TaskSpec-declared public verification command by its zero-based index. It cannot run arbitrary commands."
-					: `Request the Harness-owned ${name} tool.`,
+					: name === "apply-edit-batch"
+						? "Apply a preflighted batch of existing-file text replacements and new-file creations. Every target must stay within the managed workspace."
+						: `Request the Harness-owned ${name} tool.`,
 			parameters: toolParameters[name],
 		})),
 		{
