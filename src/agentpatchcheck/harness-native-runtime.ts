@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 
 import { runGit } from "../workspace/git-utils";
 import type { AgentRuntime } from "./agent-runtime";
+import { runVerificationCommand } from "./command-verifier";
 import {
 	createModelProvider,
 	type ModelDecision,
@@ -17,6 +18,7 @@ import type {
 	HarnessNativeToolName,
 	HarnessNativeTrajectoryStep,
 	RepairContext,
+	VerificationPolicy,
 } from "./types";
 
 export type HarnessNativeModelProvider = Pick<ModelProvider, "id" | "decide"> &
@@ -33,6 +35,12 @@ const registeredTools: HarnessNativeToolName[] = [
 	"apply-patch-batch",
 	"create-file",
 ];
+
+function availableTools(verification: VerificationPolicy | undefined): HarnessNativeToolName[] {
+	return verification !== undefined && verification.commands.length > 0
+		? [...registeredTools, "run-public-verification"]
+		: registeredTools;
+}
 
 const RECURSIVE_SEARCH_MAX_DEPTH = 4;
 const RECURSIVE_SEARCH_MAX_DIRECTORIES = 64;
@@ -86,6 +94,7 @@ export function createHarnessNativeRuntime(providerOverride?: HarnessNativeModel
 				provider,
 				timeoutMs: policy.timeoutMs,
 				repairContext,
+				verification: policy.verification,
 			});
 			const execution: AgentExecution = {
 				executable: "harness-native",
@@ -295,7 +304,12 @@ async function searchTextRecursively(root: string, value: unknown, query: string
 	};
 }
 
-async function executeTool(root: string, request: ModelDecision & { kind: "tool" }, limit: number) {
+async function executeTool(
+	root: string,
+	request: ModelDecision & { kind: "tool" },
+	limit: number,
+	verification: VerificationPolicy | undefined,
+) {
 	const name = request.tool;
 	try {
 		if (name === "read-file") {
@@ -395,6 +409,24 @@ async function executeTool(root: string, request: ModelDecision & { kind: "tool"
 				evidence: "Created one new workspace file exclusively.",
 			};
 		}
+		if (name === "run-public-verification") {
+			const index = request.arguments.index;
+			if (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0 || verification === undefined)
+				throw new Error("Public verification command index is invalid.");
+			const command = verification.commands[index];
+			if (command === undefined) throw new Error("Public verification command index is unavailable.");
+			const result = await runVerificationCommand({
+				command,
+				cwd: root,
+				outputLimitBytes: verification.outputLimitBytes,
+			});
+			const outcome = result.exitCode === 0 && !result.timedOut ? "passed" : "failed";
+			return {
+				status: "ok" as const,
+				observation: `Public verification command ${index} ${outcome}. Exit code: ${result.exitCode ?? "unavailable"}. Timed out: ${result.timedOut}.`,
+				evidence: `Ran TaskSpec-declared public verification command ${index}: ${outcome}.`,
+			};
+		}
 		return {
 			status: "rejected" as const,
 			observation: "Tool is not registered.",
@@ -426,6 +458,8 @@ export async function runHarnessNativeRuntime(options: {
 	timeoutMs: number;
 	/** Direct runtime callers default to an initial execution; the Headless Core always passes this explicitly. */
 	repairContext?: RepairContext;
+	/** Only TaskPolicy-declared verification commands are exposed to the Agent. */
+	verification?: VerificationPolicy;
 }): Promise<HarnessNativeRuntimeResult> {
 	const startedAt = Date.now();
 	const repairContext = options.repairContext ?? {
@@ -433,6 +467,7 @@ export async function runHarnessNativeRuntime(options: {
 		publicVerificationFeedback: null,
 		repairInstruction: null,
 	};
+	const tools = availableTools(options.verification);
 	const trajectory: HarnessNativeTrajectoryStep[] = [];
 	const observations: string[] = [];
 	const session = options.provider.createSession?.() ?? {
@@ -488,7 +523,7 @@ export async function runHarnessNativeRuntime(options: {
 			answer = await session.decide({
 				prompt: options.prompt,
 				observations,
-				tools: registeredTools,
+				tools,
 				model: options.model,
 				repairContext,
 			});
@@ -531,13 +566,18 @@ export async function runHarnessNativeRuntime(options: {
 		if (requests.length > 1 && toolCalls + requests.length > options.policy.maxToolCalls) return fail("tool-limit");
 		for (const request of requests) {
 			if (toolCalls >= options.policy.maxToolCalls) return fail("tool-limit");
-			const tool = await executeTool(options.worktreePath, request, options.policy.maxObservationBytes);
+			const tool = await executeTool(
+				options.worktreePath,
+				request,
+				options.policy.maxObservationBytes,
+				options.verification,
+			);
 			if (tool.status === "rejected") rejectedToolCalls += 1;
 			else toolCalls += 1;
 			trajectory.push({
 				iteration,
 				decision: "tool",
-				tool: registeredTools.includes(request.tool as HarnessNativeToolName)
+				tool: tools.includes(request.tool as HarnessNativeToolName)
 					? (request.tool as HarnessNativeToolName)
 					: null,
 				arguments: safeArguments(request.arguments),

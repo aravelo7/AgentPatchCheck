@@ -9,7 +9,18 @@ import type {
 	VerificationPolicy,
 } from "./types";
 
-async function runVerificationCommand(options: {
+const sensitiveEnvironmentName = /(?:api[_-]?key|token|secret|password|passwd|authorization)/iu;
+
+function sanitizedVerificationEnvironment(): NodeJS.ProcessEnv {
+	return Object.fromEntries(Object.entries(process.env).filter(([name]) => !sensitiveEnvironmentName.test(name)));
+}
+
+/**
+ * Executes one already-validated public verification command without a shell.
+ * Its child environment deliberately excludes credential-shaped variables so
+ * workspace code cannot inherit provider credentials during Agent self-checks.
+ */
+export async function runVerificationCommand(options: {
 	command: VerificationCommand;
 	cwd: string;
 	outputLimitBytes: number;
@@ -18,7 +29,7 @@ async function runVerificationCommand(options: {
 	return await new Promise<CommandVerificationResult>((resolve) => {
 		const child = spawn(options.command.command, options.command.args, {
 			cwd: options.cwd,
-			env: process.env,
+			env: sanitizedVerificationEnvironment(),
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,

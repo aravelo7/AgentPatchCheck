@@ -139,6 +139,12 @@ const toolParameters: Record<HarnessNativeToolName, Record<string, unknown>> = {
 		required: ["path", "content"],
 		additionalProperties: false,
 	},
+	"run-public-verification": {
+		type: "object",
+		properties: { index: { type: "integer", minimum: 0 } },
+		required: ["index"],
+		additionalProperties: false,
+	},
 };
 const controlToolParameters = { type: "object", properties: {}, additionalProperties: false };
 
@@ -186,7 +192,10 @@ function selectedTools(tools: readonly HarnessNativeToolName[]) {
 		...tools.map((name) => ({
 			type: "function" as const,
 			name,
-			description: `Request the Harness-owned ${name} tool.`,
+			description:
+				name === "run-public-verification"
+					? "Run one TaskSpec-declared public verification command by its zero-based index. It cannot run arbitrary commands."
+					: `Request the Harness-owned ${name} tool.`,
 			parameters: toolParameters[name],
 		})),
 		{

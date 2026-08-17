@@ -231,7 +231,8 @@ export type HarnessNativeToolName =
 	| "git-diff"
 	| "apply-patch"
 	| "apply-patch-batch"
-	| "create-file";
+	| "create-file"
+	| "run-public-verification";
 export type HarnessNativeTerminationReason =
 	| "finished"
 	| "model-failed"

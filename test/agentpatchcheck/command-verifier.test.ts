@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createPublicVerificationFeedback, runCommandVerification } from "../../src/agentpatchcheck/command-verifier";
+import {
+	createPublicVerificationFeedback,
+	runCommandVerification,
+	runVerificationCommand,
+} from "../../src/agentpatchcheck/command-verifier";
 import { validateVerificationPolicy } from "../../src/agentpatchcheck/verification-policy";
 
 describe("CommandVerifier", () => {
@@ -63,6 +67,27 @@ describe("CommandVerifier", () => {
 		expect(result.commands).toHaveLength(1);
 		expect(result.commands[0]).toMatchObject({ command, exitCode: null, signal: null, timedOut: false });
 		expect(result.commands[0]?.stderr.length).toBeGreaterThan(0);
+	});
+
+	it("does not expose credential-shaped environment variables to verification commands", async () => {
+		const previous = process.env.DEEPSEEK_API_KEY;
+		process.env.DEEPSEEK_API_KEY = "test-provider-secret";
+		try {
+			const result = await runVerificationCommand({
+				command: {
+					command: process.execPath,
+					args: ["-e", "process.exit(process.env.DEEPSEEK_API_KEY ? 1 : 0)"],
+					timeoutMs: 1_000,
+				},
+				cwd: process.cwd(),
+				outputLimitBytes: 1_024,
+			});
+
+			expect(result).toMatchObject({ exitCode: 0, timedOut: false });
+		} finally {
+			if (previous === undefined) delete process.env.DEEPSEEK_API_KEY;
+			else process.env.DEEPSEEK_API_KEY = previous;
+		}
 	});
 
 	it("creates repair feedback without verifier output or command arguments", () => {

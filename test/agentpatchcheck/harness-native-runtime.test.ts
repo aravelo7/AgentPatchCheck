@@ -243,6 +243,95 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
+	it("runs only a TaskPolicy-declared public verification command without exposing its output", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			let verificationObservation = "";
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations, tools }) => {
+					expect(tools).toContain("run-public-verification");
+					if (observations.length === 0)
+						return {
+							decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } },
+						};
+					verificationObservation = observations[0] ?? "";
+					if (observations.length === 1)
+						return {
+							decision: {
+								kind: "tool",
+								tool: "apply-patch",
+								arguments: { path: "README.md", expectedText: "before", replacementText: "after" },
+							},
+						};
+					return { decision: { kind: "finish" } };
+				},
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 3, maxToolCalls: 2 }),
+				prompt: "Repair README.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+				verification: {
+					commands: [
+						{
+							command: process.execPath,
+							args: [
+								"-e",
+								"const fs = require('node:fs'); if (fs.readFileSync('README.md', 'utf8').includes('after')) process.exit(0); process.stderr.write('internal verification detail'); process.exit(1);",
+							],
+							timeoutMs: 1_000,
+						},
+					],
+					outputLimitBytes: 1_024,
+					allowShell: false,
+					allowNetwork: false,
+				},
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 2 });
+			expect(result.trajectory[0]).toMatchObject({
+				tool: "run-public-verification",
+				toolStatus: "ok",
+				observationSummary: "Ran TaskSpec-declared public verification command 0: failed.",
+			});
+			expect(verificationObservation).toContain("Public verification command 0 failed.");
+			expect(verificationObservation).not.toContain("internal verification detail");
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("after\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("does not expose public verification when TaskPolicy declares no verifier", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ tools }) => {
+					expect(tools).not.toContain("run-public-verification");
+					return { decision: { kind: "finish" } };
+				},
+			};
+
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 1, maxToolCalls: 1 }),
+				prompt: "Inspect.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 0 });
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
 	it("applies a fully preflighted multi-file patch batch", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {
