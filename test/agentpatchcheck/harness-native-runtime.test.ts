@@ -284,6 +284,91 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
+	it("applies a multi-line LF request to a CRLF file while preserving CRLF output", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\r\nafter\r\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-patch",
+									arguments: {
+										path: "README.md",
+										expectedText: "before\nafter",
+										replacementText: "after\nbefore",
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Update CRLF file.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("after\r\nbefore\r\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("preflights CRLF batch replacements before writing either target", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "first.txt"), "first-before\r\nline\r\n", "utf8");
+			await writeFile(join(worktree, "second.txt"), "second-before\r\nline\r\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-patch-batch",
+									arguments: {
+										patches: [
+											{
+												path: "first.txt",
+												expectedText: "first-before\nline",
+												replacementText: "first-after\nline",
+											},
+											{
+												path: "second.txt",
+												expectedText: "second-before\nline",
+												replacementText: "second-after\nline",
+											},
+										],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Update CRLF files.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(await readFile(join(worktree, "first.txt"), "utf8")).toBe("first-after\r\nline\r\n");
+			expect(await readFile(join(worktree, "second.txt"), "utf8")).toBe("second-after\r\nline\r\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects an invalid multi-file patch batch without changing any target", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {

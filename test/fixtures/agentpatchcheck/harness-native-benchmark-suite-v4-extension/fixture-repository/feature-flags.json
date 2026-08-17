@@ -1,0 +1,9 @@
+{
+  "beta": {
+    "enabled": true,
+    "rollout": 25
+  },
+  "stable": {
+    "enabled": true
+  }
+}

@@ -163,6 +163,33 @@ interface ConstrainedPatch {
 	replacementText: string;
 }
 
+function exactOccurrenceCount(content: string, expectedText: string): number {
+	return content.split(expectedText).length - 1;
+}
+
+function normalizeLineEndings(value: string, lineEnding: "\n" | "\r\n"): string {
+	return value.replace(/\r\n|\r|\n/gu, lineEnding);
+}
+
+/**
+ * Retains exact matching as the default. A single CRLF/LF fallback is allowed
+ * only for multi-line model text and writes with the target file's line style.
+ */
+function replaceExactText(
+	content: string,
+	expectedText: string,
+	replacementText: string,
+	failureMessage: string,
+): string {
+	if (exactOccurrenceCount(content, expectedText) === 1) return content.replace(expectedText, replacementText);
+	if (!/[\r\n]/u.test(expectedText)) throw new Error(failureMessage);
+	const lineEnding = content.includes("\r\n") ? "\r\n" : "\n";
+	const normalizedExpected = normalizeLineEndings(expectedText, lineEnding);
+	if (normalizedExpected === expectedText || exactOccurrenceCount(content, normalizedExpected) !== 1)
+		throw new Error(failureMessage);
+	return content.replace(normalizedExpected, normalizeLineEndings(replacementText, lineEnding));
+}
+
 async function preparePatchBatch(
 	root: string,
 	value: unknown,
@@ -193,9 +220,16 @@ async function preparePatchBatch(
 	const prepared = await Promise.all(
 		patches.map(async (patch) => {
 			const content = await readFile(patch.path, "utf8");
-			if (content.split(patch.expectedText).length !== 2)
-				throw new Error("Patch batch expectedText must match each target exactly once.");
-			return { path: patch.path, content, replacement: content.replace(patch.expectedText, patch.replacementText) };
+			return {
+				path: patch.path,
+				content,
+				replacement: replaceExactText(
+					content,
+					patch.expectedText,
+					patch.replacementText,
+					"Patch batch expectedText must match each target exactly once.",
+				),
+			};
 		}),
 	);
 	return prepared;
@@ -330,8 +364,11 @@ async function executeTool(root: string, request: ModelDecision & { kind: "tool"
 			)
 				throw new Error("Patch arguments are invalid.");
 			const content = await readFile(path, "utf8");
-			if (content.split(expected).length !== 2) throw new Error("Patch expectedText must match exactly once.");
-			await writeFile(path, content.replace(expected, replacement), "utf8");
+			await writeFile(
+				path,
+				replaceExactText(content, expected, replacement, "Patch expectedText must match exactly once."),
+				"utf8",
+			);
 			return {
 				status: "ok" as const,
 				observation: "Patch applied.",

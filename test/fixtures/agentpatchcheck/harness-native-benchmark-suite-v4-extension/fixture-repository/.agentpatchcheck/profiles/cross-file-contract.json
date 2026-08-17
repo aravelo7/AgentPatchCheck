@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "name": "cross-file-contract",
+  "verification": { "commands": [{ "command": "node", "args": ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('src/api/request.ts','utf8').includes('ready')?0:1);"] }] }
+}

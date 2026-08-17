@@ -29,7 +29,7 @@ const providerProfiles = {
 		requiredEnvironment: "DEEPSEEK_API_KEY",
 	},
 };
-const suiteVersions = new Set(["v1", "v2", "v3"]);
+const suiteVersions = new Set(["v1", "v2", "v3", "v4"]);
 
 function getProviderProfile(profileId) {
 	const profile = providerProfiles[profileId];
@@ -64,11 +64,11 @@ function parseArguments(argv) {
 	}
 	if (outputRoot === undefined || model === undefined)
 		throw new Error(
-			"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2|v3>] [--dry-run]",
+		"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2|v3|v4>] [--dry-run]",
 		);
 	if (!modelPattern.test(model)) throw new Error("model must be a valid 1-128 character model identifier.");
 	getProviderProfile(providerProfile);
-	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2, v3.");
+	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2, v3, v4.");
 	return { outputRoot, model, providerProfile, suiteVersion, dryRun };
 }
 
@@ -139,14 +139,22 @@ function parseBenchmarkResponse(stdout) {
 async function main() {
 	const options = parseArguments(process.argv.slice(2));
 	const providerProfile = getProviderProfile(options.providerProfile ?? "openai-responses");
-	const fixtureSource = join(fixtureRoot, `harness-native-benchmark-suite-${options.suiteVersion}`);
+	const fixtureSources =
+		options.suiteVersion === "v4"
+			? [
+				join(fixtureRoot, "harness-native-benchmark-suite-v3"),
+				join(fixtureRoot, "harness-native-benchmark-suite-v4-extension"),
+			]
+			: [join(fixtureRoot, `harness-native-benchmark-suite-${options.suiteVersion}`)];
 	if (!options.dryRun && !process.env[providerProfile.requiredEnvironment]?.trim())
 		throw new Error(
 			`${providerProfile.requiredEnvironment} is required for provider profile ${options.providerProfile ?? "openai-responses"}. Use --dry-run to validate setup.`,
 		);
 	await assertPathDoesNotExist(options.outputRoot);
 	await mkdir(dirname(options.outputRoot), { recursive: true });
-	await cp(fixtureSource, options.outputRoot, { recursive: true, errorOnExist: true, force: false });
+	await cp(fixtureSources[0], options.outputRoot, { recursive: true, errorOnExist: true, force: false });
+	for (const fixtureSource of fixtureSources.slice(1))
+		await cp(fixtureSource, options.outputRoot, { recursive: true, errorOnExist: false, force: true });
 
 	const fixtureManifest = JSON.parse(await readFile(join(options.outputRoot, "fixture-manifest.json"), "utf8"));
 	const repository = join(options.outputRoot, "fixture-repository");

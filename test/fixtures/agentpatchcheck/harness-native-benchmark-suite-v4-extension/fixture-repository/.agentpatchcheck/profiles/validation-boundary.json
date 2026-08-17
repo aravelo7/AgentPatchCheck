@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "name": "validation-boundary",
+  "verification": { "commands": [{ "command": "node", "args": ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('src/validation/range.ts','utf8').includes('<= 65535')?0:1);"] }] }
+}

@@ -1,0 +1,5 @@
+{
+  "version": 1, "repositoryRoot": "../fixture-repository", "promptFile": "prompts/source-normalization-repair.txt", "agentAdapter": "harness-native", "model": "__AGENTPATCHCHECK_MODEL__",
+  "nativeAgent": { "provider": "openai", "protocol": "responses", "credentialRef": "openai-primary", "maxIterations": 6, "maxToolCalls": 8, "maxObservationBytes": 4096 },
+  "timeoutMs": 120000, "sandbox": "workspace-write", "allowNetwork": true, "patchExpectation": "changes-required", "verificationProfile": "source-normalization", "riskPolicyProfile": "policies/suite-risk.json", "hiddenOracle": { "script": "scripts/oracle-source-normalization.mjs", "isolation": "none" }
+}

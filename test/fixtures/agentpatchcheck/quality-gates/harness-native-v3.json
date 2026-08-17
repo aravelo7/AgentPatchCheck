@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "harness-native-v3-minimum-quality",
+  "suite": {
+    "id": "harness-native-public-repair",
+    "fixtureVersion": "v3"
+  },
+  "minimumRuns": 3,
+  "minimumRates": {
+    "taskPassRate": 0.9,
+    "finalPublicVerificationPassRate": 0.95,
+    "hiddenOraclePassRate": 0.95,
+    "publicRepairRecoveryRate": 0.9
+  },
+  "maximumPublicVerificationFalsePositiveRate": 0.05,
+  "maximumAgentExecutionFailureTasks": 1
+}

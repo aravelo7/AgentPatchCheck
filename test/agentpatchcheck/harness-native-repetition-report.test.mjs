@@ -6,6 +6,7 @@ import {
 	createTaskAggregate,
 	sumNativeQuality,
 } from "../../scripts/harness-native-repetition-report.mjs";
+import { evaluateQualityGate, parseQualityGate } from "../../scripts/harness-native-quality-gate.mjs";
 
 function report(options = {}) {
 	return {
@@ -139,5 +140,56 @@ describe("Harness-native repetition report", () => {
 			rates: null,
 			failureClassification: null,
 		});
+	});
+
+	it("fails closed when a versioned quality gate sees an incomparable or insufficient experiment", () => {
+		const gate = parseQualityGate({
+			version: 1,
+			name: "fixture gate",
+			suite: { id: "native-suite", fixtureVersion: "v2" },
+			minimumRuns: 3,
+			minimumRates: { taskPassRate: 0.9, hiddenOraclePassRate: 0.9 },
+			maximumPublicVerificationFalsePositiveRate: 0.05,
+		});
+		const incomplete = {
+			suite: { id: "native-suite", fixtureVersion: "v2" },
+			experimentIdentity: { status: "identity-drift" },
+			qualityBaseline: { status: "not-comparable", rates: null, failureClassification: null },
+			summary: { totalRuns: 2 },
+		};
+		expect(evaluateQualityGate(gate, incomplete)).toMatchObject({
+			status: "failed",
+			reasons: expect.arrayContaining([
+				"The repetition report is not comparable.",
+				"The repetition report has fewer than 3 runs.",
+			]),
+		});
+	});
+
+	it("passes only when every configured quality threshold is met", () => {
+		const gate = parseQualityGate({
+			version: 1,
+			name: "fixture gate",
+			suite: { id: "native-suite", fixtureVersion: "v2" },
+			minimumRuns: 3,
+			minimumRates: { taskPassRate: 0.9, hiddenOraclePassRate: 0.9 },
+			maximumPublicVerificationFalsePositiveRate: 0.05,
+			maximumAgentExecutionFailureTasks: 1,
+		});
+		const report = {
+			suite: { id: "native-suite", fixtureVersion: "v2" },
+			experimentIdentity: { status: "comparable" },
+			summary: { totalRuns: 3 },
+			qualityBaseline: {
+				status: "ready",
+				rates: {
+					taskPassRate: { rate: 1 },
+					hiddenOraclePassRate: { rate: 1 },
+					publicVerificationFalsePositiveRate: { rate: 0 },
+				},
+				failureClassification: { providerFailureTasks: 0, agentExecutionFailureTasks: 1 },
+			},
+		};
+		expect(evaluateQualityGate(gate, report)).toEqual({ version: 1, name: "fixture gate", status: "passed", reasons: [] });
 	});
 });

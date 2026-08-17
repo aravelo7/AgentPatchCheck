@@ -116,13 +116,13 @@ npm.cmd run benchmark:harness-native-suite -- `
   --output-root D:\Benchmarks\agentpatchcheck-native-v1-dry-run `
   --model <model-id> `
   --provider-profile <openai-responses|deepseek-chat> `
-  --suite-version <v1|v2|v3> `
+  --suite-version <v1|v2|v3|v4> `
   --dry-run
 ```
 
 ## Limits and boundaries
 
-- The v1/v2/v3 corpora use five/six/eight independent managed workspaces respectively and require a patch from each task.
+- The v1/v2/v3/v4 corpora use five/six/eight/twelve independent managed workspaces respectively and require a patch from each task.
 - The multi-file task allows only exact replacements in two existing files; it verifies both public prefixes and exact
   final content through a Hidden Oracle.
 - The recursive task requires bounded cross-directory discovery before two nested source-file replacements; its Hidden
@@ -152,8 +152,8 @@ precomputed percentages so a consumer cannot accidentally mix model transport fa
 - `providerFailureTasks` is separate from `agentExecutionFailureTasks`; neither should be silently counted as a semantic
   patch failure.
 
-The v1/v2/v3 suites contain five/six/eight tasks respectively and are integration fixtures, not statistically meaningful
-quality scores. Future versioned corpora must grow the task denominator before publishing rates.
+The v1/v2/v3/v4 suites contain five/six/eight/twelve tasks respectively and are integration fixtures, not statistically
+meaningful quality scores. Future versioned corpora must grow the task denominator before publishing rates.
 
 The first retained v2 quality sample is documented in
 [`harness-native-quality-baseline-v2.md`](./harness-native-quality-baseline-v2.md). It records only comparable-run
@@ -165,3 +165,37 @@ the new feedback-repair and nested-configuration invariants, but is explicitly n
 
 OpenAI documents the Responses API as the API for multi-turn and tool-calling workflows; choose and compare models on
 representative tasks rather than treating a single result as a general capability claim.
+
+## Quality gates for repeated runs
+
+`benchmark:harness-native-repetitions` can consume a strict Harness-owned JSON quality gate. A gate is evaluated only
+after all repetitions complete and fails closed when the report is not comparable, its suite identity differs, or the
+sample has fewer than the configured runs. It can set minimum rates and ceilings for public-verification false positives,
+Provider failures, and Agent execution failures. It does not alter task execution, verification, or Evidence.
+
+The versioned v3 example is
+[`quality-gates/harness-native-v3.json`](../test/fixtures/agentpatchcheck/quality-gates/harness-native-v3.json):
+
+```powershell
+npm.cmd run benchmark:harness-native-repetitions -- `
+  --output-root D:\Benchmarks\agentpatchcheck-native-v3-gated `
+  --runs 3 `
+  --model <model-id> `
+  --provider-profile <openai-responses|deepseek-chat> `
+  --suite-version v3 `
+  --quality-gate test\fixtures\agentpatchcheck\quality-gates\harness-native-v3.json
+```
+
+The generated repetition report records `qualityGate` with `passed` or `failed` plus stable reasons. A failed gate
+returns exit code 1 even if individual benchmark invocations completed. This makes the gate suitable for CI after a
+project deliberately pins an experiment identity and acceptance policy.
+
+## V4 corpus increment
+
+V4 preserves all eight v3 tasks and adds four independently materialized workspaces: source normalization,
+cross-file status-contract migration, feature-flag preservation, and an inclusive numeric boundary repair. Each new
+task has a narrow public verifier and an exact Hidden Oracle. The cross-file and feature-flag tasks specifically retain
+the distinction between a convenient public check and the complete final-state requirement.
+
+V4 is a versioned corpus increment, not the final P0 corpus target. Twelve fixture tasks do not yet substitute for a
+20–30 task corpus or for separately selected historical fixes from real repositories.

@@ -181,6 +181,32 @@ describe("Harness-native Benchmark Suite v1", () => {
 		}
 	});
 
+	it("materializes the v4 extension corpus without changing the v3 source fixture", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			const { stdout } = await execFile(
+				process.execPath,
+				[suiteScript, "--output-root", outputRoot, "--model", "test-model", "--suite-version", "v4", "--dry-run"],
+				{ cwd: projectRoot, windowsHide: true },
+			);
+			const output = JSON.parse(stdout) as NativeSuiteDryRunOutput;
+			expect(output).toMatchObject({
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v4" },
+				baseCommit: "5af355fd77539c8ca140d678651880fdad668b4b",
+			});
+			expect(output.taskSpecPaths).toHaveLength(12);
+			const contractTaskPath = output.taskSpecPaths.find((path) => path.endsWith("cross-file-contract-repair.json"));
+			expect(await validateTaskPolicy(await loadTaskSpec(contractTaskPath ?? ""))).toMatchObject({
+				verificationProfile: { name: "cross-file-contract" },
+				hiddenOracle: { scriptPath: expect.stringContaining("oracle-cross-file-contract.mjs") },
+				nativeAgent: { maxIterations: 8, maxToolCalls: 10 },
+			});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("fails before materializing a suite when model selection is omitted", async () => {
 		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
 		const outputRoot = join(root, "suite");

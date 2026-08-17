@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "name": "source-normalization",
+  "verification": { "commands": [{ "command": "node", "args": ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('src/domain/normalize.ts','utf8').includes('trim().toLowerCase()')?0:1);"] }] }
+}

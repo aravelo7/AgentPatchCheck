@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "name": "feature-flag-target",
+  "verification": { "commands": [{ "command": "node", "args": ["-e", "const flag=JSON.parse(require('node:fs').readFileSync('feature-flags.json','utf8'));process.exit(flag.beta.enabled===false?0:1);"] }] }
+}
