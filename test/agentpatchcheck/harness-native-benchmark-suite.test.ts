@@ -237,6 +237,86 @@ describe("Harness-native Benchmark Suite v1", () => {
 		}
 	});
 
+	it("materializes the v6 directed cross-file repair corpus without changing v5", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			const { stdout } = await execFile(
+				process.execPath,
+				[suiteScript, "--output-root", outputRoot, "--model", "test-model", "--suite-version", "v6", "--dry-run"],
+				{ cwd: projectRoot, windowsHide: true },
+			);
+			const output = JSON.parse(stdout) as NativeSuiteDryRunOutput;
+			expect(output).toMatchObject({
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v6" },
+				baseCommit: "1f487c7346407098397230807a9f4c971a826781",
+			});
+			expect(output.taskSpecPaths).toHaveLength(13);
+			expect(JSON.parse(await readFile(join(outputRoot, "benchmark.json"), "utf8"))).toMatchObject({
+				name: "harness-native-public-repair-v6",
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v6" },
+			});
+			const prompt = await readFile(join(outputRoot, "tasks", "prompts", "cross-file-contract-repair.txt"), "utf8");
+			expect(prompt).toContain("src/api/request.ts");
+			expect(prompt).toContain("src/api/response.ts");
+			expect(prompt).toContain("apply-edit-batch");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("materializes the v7 directed source normalization corpus without changing v6", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			const { stdout } = await execFile(
+				process.execPath,
+				[suiteScript, "--output-root", outputRoot, "--model", "test-model", "--suite-version", "v7", "--dry-run"],
+				{ cwd: projectRoot, windowsHide: true },
+			);
+			const output = JSON.parse(stdout) as NativeSuiteDryRunOutput;
+			expect(output).toMatchObject({
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v7" },
+				baseCommit: "1f487c7346407098397230807a9f4c971a826781",
+			});
+			expect(JSON.parse(await readFile(join(outputRoot, "benchmark.json"), "utf8"))).toMatchObject({
+				name: "harness-native-public-repair-v7",
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v7" },
+			});
+			const prompt = await readFile(join(outputRoot, "tasks", "prompts", "source-normalization-repair.txt"), "utf8");
+			expect(prompt).toContain("src/domain/normalize.ts");
+			expect(prompt).toContain("apply-patch");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("materializes the v8 directed validation-boundary corpus without changing v7", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
+		const outputRoot = join(root, "suite");
+		try {
+			const { stdout } = await execFile(
+				process.execPath,
+				[suiteScript, "--output-root", outputRoot, "--model", "test-model", "--suite-version", "v8", "--dry-run"],
+				{ cwd: projectRoot, windowsHide: true },
+			);
+			const output = JSON.parse(stdout) as NativeSuiteDryRunOutput;
+			expect(output).toMatchObject({
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v8" },
+				baseCommit: "1f487c7346407098397230807a9f4c971a826781",
+			});
+			expect(JSON.parse(await readFile(join(outputRoot, "benchmark.json"), "utf8"))).toMatchObject({
+				name: "harness-native-public-repair-v8",
+				suite: { id: "harness-native-public-repair", fixtureVersion: "v8" },
+			});
+			const prompt = await readFile(join(outputRoot, "tasks", "prompts", "validation-boundary-repair.txt"), "utf8");
+			expect(prompt).toContain("src/validation/range.ts");
+			expect(prompt).toContain("finish");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("fails before materializing a suite when model selection is omitted", async () => {
 		const root = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-benchmark-suite-"));
 		const outputRoot = join(root, "suite");
@@ -302,6 +382,8 @@ describe("Harness-native Benchmark Suite v1", () => {
 						"deepseek-v4-pro",
 						"--provider-profile",
 						"deepseek-chat",
+						"--suite-version",
+						"v7",
 					],
 					{ cwd: projectRoot, windowsHide: true, env: { ...process.env, DEEPSEEK_API_KEY: "" } },
 				),
@@ -329,6 +411,8 @@ describe("Harness-native Benchmark Suite v1", () => {
 						"test-model",
 						"--provider-profile",
 						"deepseek-chat",
+						"--suite-version",
+						"v6",
 					],
 					{ cwd: projectRoot, windowsHide: true, env: { ...process.env, DEEPSEEK_API_KEY: "" } },
 				),

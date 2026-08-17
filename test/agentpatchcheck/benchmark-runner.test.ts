@@ -336,7 +336,7 @@ describe("Benchmark Runner", () => {
 			coreSchemaVersion: 1,
 			suite: { sourceSha256: "benchmark-sha", id: "smoke", fixtureVersion: "1" },
 		});
-		expect(result.report.summary).toEqual({
+		expect(result.report.summary).toMatchObject({
 			total: 8,
 			passed: 1,
 			failed: 7,
@@ -358,6 +358,82 @@ describe("Benchmark Runner", () => {
 			passed: 1,
 			failed: 7,
 			summaryText: result.report.summary.summaryText,
+		});
+	});
+
+	it("separates execution budget exhaustion from completion and semantic outcomes", async () => {
+		const definition: BenchmarkDefinition = {
+			version: 1,
+			sourcePath: "D:\\benchmarks\\classification.json",
+			sourceSha256: "classification-sha",
+			name: "classification",
+			suite: null,
+			tasks: [{ id: "bounded", taskSpecPath: "bounded.json", taskSpecSha256: "bounded-sha", expectedStatus: null }],
+		};
+		const bounded = createResult({
+			exitCode: 1,
+			verificationStatus: "passed",
+			hiddenOracleStatus: "passed",
+			verdict: "fail",
+		});
+		const runtime: HarnessNativeRuntimeResult = {
+			version: 1,
+			provider: "openai:responses",
+			providerIdentity: {
+				provider: "openai",
+				protocol: "responses",
+				thinkingMode: "default",
+				endpointSha256: "a".repeat(64),
+				credentialRef: "openai-primary",
+				implementation: "openai-compatible-v1",
+				configuredModel: "test-model",
+				actualModel: "test-model",
+			},
+			model: "test-model",
+			status: "failed",
+			terminationReason: "tool-limit",
+			providerFailure: null,
+			iterations: 6,
+			toolCalls: 8,
+			rejectedToolCalls: 0,
+			transportRetries: 0,
+			budget: {
+				maxIterations: 6,
+				maxToolCalls: 8,
+				maxRejectedToolCalls: 4,
+				maxObservationBytes: 1024,
+				maxTransportRetries: 0,
+			},
+			usage: { inputTokens: 1, outputTokens: 1 },
+			trajectory: [],
+		};
+		bounded.agent = { ...bounded.agent, runtime };
+		const result = await runBenchmark(definition, {
+			loadTaskSpec: async () => ({
+				repositoryRoot: process.cwd(),
+				prompt: "bounded",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: { credentialRef: "openai-primary" },
+			}),
+			validateTaskPolicy,
+			execute: async () => bounded,
+			writeReport: async ({ path, report }) => ({ path, createdAt: report.createdAt }),
+			createRunId: () => "classification-benchmark",
+			readAgentVersion: async () => null,
+		});
+		expect(result.report.tasks[0]).toMatchObject({
+			status: "agent-failed",
+			failureClassification: {
+				execution: "tool-budget-exhausted",
+				completion: "completion-noncompliant",
+				semantic: "passed",
+			},
+		});
+		expect(result.report.summary.failureClassification).toMatchObject({
+			byExecution: { "tool-budget-exhausted": 1 },
+			byCompletion: { "completion-noncompliant": 1 },
+			bySemantic: { passed: 1 },
 		});
 	});
 });

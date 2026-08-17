@@ -1,0 +1,1 @@
+Update only src/validation/range.ts. Read that file, then use one apply-patch tool call to change the upper-bound comparison from `value < 65535` to `value <= 65535`, preserving the lower-bound comparison. Do not inspect, search, or modify any other path. After the patch succeeds, call finish immediately.

@@ -1,0 +1,1 @@
+Update only src/domain/normalize.ts. Read that file, then use one apply-patch tool call to change normalizeName so it returns value.trim().toLowerCase(). Do not inspect, search, or modify any other path. After the patch succeeds, call finish.

@@ -72,11 +72,18 @@ export function createTaskAggregate(outputs) {
 				passedRuns: 0,
 				publicVerificationFalsePositives: 0,
 				statusCounts: {},
+				failureClassification: { byExecution: {}, byCompletion: {}, bySemantic: {} },
 			};
 			current.passedRuns += task.status === "passed" ? 1 : 0;
 			current.publicVerificationFalsePositives +=
 				task.verificationStatus === "passed" && task.hiddenOracleStatus === "failed" ? 1 : 0;
 			current.statusCounts[task.status] = (current.statusCounts[task.status] ?? 0) + 1;
+			if (task.failureClassification !== null && task.failureClassification !== undefined) {
+				for (const [key, value] of Object.entries(task.failureClassification)) {
+					const counts = current.failureClassification[`by${key[0].toUpperCase()}${key.slice(1)}`];
+					counts[value] = (counts[value] ?? 0) + 1;
+				}
+			}
 			aggregate.set(task.id, current);
 		}
 	}
@@ -141,6 +148,13 @@ export function createQualityBaseline(outputs, compatibility) {
 			}, {}),
 		).sort(([left], [right]) => left.localeCompare(right)),
 	);
+	const classificationCounts = { byExecution: {}, byCompletion: {}, bySemantic: {} };
+	for (const task of tasks) {
+		for (const [dimension, counts] of Object.entries(task.failureClassification)) {
+			for (const [classification, count] of Object.entries(counts))
+				classificationCounts[dimension][classification] = (classificationCounts[dimension][classification] ?? 0) + count;
+		}
+	}
 	return {
 		status: "ready",
 		reasons: [],
@@ -163,6 +177,7 @@ export function createQualityBaseline(outputs, compatibility) {
 		},
 		failureClassification: {
 			byTaskStatus: statusCounts,
+			...classificationCounts,
 			providerFailureTasks: nativeQuality.providerFailureTasks,
 			agentExecutionFailureTasks: nativeQuality.agentExecutionFailureTasks,
 		},

@@ -29,7 +29,7 @@ const providerProfiles = {
 		requiredEnvironment: "DEEPSEEK_API_KEY",
 	},
 };
-const suiteVersions = new Set(["v1", "v2", "v3", "v4", "v5"]);
+const suiteVersions = new Set(["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"]);
 
 function getProviderProfile(profileId) {
 	const profile = providerProfiles[profileId];
@@ -64,11 +64,11 @@ function parseArguments(argv) {
 	}
 	if (outputRoot === undefined || model === undefined)
 		throw new Error(
-		"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2|v3|v4|v5>] [--dry-run]",
+		"Usage: npm run benchmark:harness-native-suite -- --output-root <new-directory> --model <model> [--provider-profile <profile>] [--suite-version <v1|v2|v3|v4|v5|v6|v7|v8>] [--dry-run]",
 		);
 	if (!modelPattern.test(model)) throw new Error("model must be a valid 1-128 character model identifier.");
 	getProviderProfile(providerProfile);
-	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2, v3, v4, v5.");
+	if (!suiteVersions.has(suiteVersion)) throw new Error("suite-version must be one of: v1, v2, v3, v4, v5, v6, v7, v8.");
 	return { outputRoot, model, providerProfile, suiteVersion, dryRun };
 }
 
@@ -140,11 +140,20 @@ async function main() {
 	const options = parseArguments(process.argv.slice(2));
 	const providerProfile = getProviderProfile(options.providerProfile ?? "openai-responses");
 	const fixtureSources =
-		options.suiteVersion === "v4" || options.suiteVersion === "v5"
+		options.suiteVersion === "v4" || options.suiteVersion === "v5" || options.suiteVersion === "v6" || options.suiteVersion === "v7" || options.suiteVersion === "v8"
 			? [
 				join(fixtureRoot, "harness-native-benchmark-suite-v3"),
 				join(fixtureRoot, "harness-native-benchmark-suite-v4-extension"),
-				...(options.suiteVersion === "v5" ? [join(fixtureRoot, "harness-native-benchmark-suite-v5-extension")] : []),
+				...(options.suiteVersion === "v5" || options.suiteVersion === "v6" || options.suiteVersion === "v7" || options.suiteVersion === "v8"
+					? [join(fixtureRoot, "harness-native-benchmark-suite-v5-extension")]
+					: []),
+				...(options.suiteVersion === "v6" || options.suiteVersion === "v7" || options.suiteVersion === "v8"
+					? [join(fixtureRoot, "harness-native-benchmark-suite-v6-extension")]
+					: []),
+				...(options.suiteVersion === "v7" || options.suiteVersion === "v8"
+					? [join(fixtureRoot, "harness-native-benchmark-suite-v7-extension")]
+					: []),
+				...(options.suiteVersion === "v8" ? [join(fixtureRoot, "harness-native-benchmark-suite-v8-extension")] : []),
 			]
 			: [join(fixtureRoot, `harness-native-benchmark-suite-${options.suiteVersion}`)];
 	if (!options.dryRun && !process.env[providerProfile.requiredEnvironment]?.trim())
@@ -239,6 +248,7 @@ async function main() {
 				taskResults: report.tasks.map((task) => ({
 					id: task.taskId,
 					status: task.status,
+					failureClassification: task.failureClassification ?? null,
 					verificationStatus: task.verificationStatus,
 					repairCycle: task.repairCycle ?? null,
 					hiddenOracleStatus: task.hiddenOracleStatus,

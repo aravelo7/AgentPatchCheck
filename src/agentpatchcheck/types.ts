@@ -673,6 +673,37 @@ export type BenchmarkTaskStatus =
 	| "assessment-failed"
 	| "setup-failed";
 
+/**
+ * Orthogonal execution, completion, and semantic facts for a Benchmark task.
+ * `BenchmarkTaskStatus` remains the stable overall decision; these fields make
+ * its underlying failure mode auditable without weakening any gate.
+ */
+export type BenchmarkExecutionClassification =
+	| "completed"
+	| "timed-out"
+	| "provider-failed"
+	| "tool-budget-exhausted"
+	| "iteration-budget-exhausted"
+	| "rejected-tool-budget-exhausted"
+	| "agent-execution-failed"
+	| "setup-failed";
+
+export type BenchmarkCompletionClassification = "completed" | "completion-noncompliant" | "not-reached";
+
+export type BenchmarkSemanticClassification =
+	| "passed"
+	| "public-verification-failed"
+	| "hidden-oracle-failed"
+	| "hidden-oracle-error"
+	| "assessment-failed"
+	| "not-evaluated";
+
+export interface BenchmarkFailureClassification {
+	execution: BenchmarkExecutionClassification;
+	completion: BenchmarkCompletionClassification;
+	semantic: BenchmarkSemanticClassification;
+}
+
 export interface BenchmarkTaskDefinition {
 	id: string;
 	taskSpecPath: string;
@@ -757,6 +788,8 @@ export interface BenchmarkTaskResult {
 	configuration: BenchmarkTaskConfiguration;
 	executionIdentity: BenchmarkTaskExecutionIdentity | null;
 	status: BenchmarkTaskStatus;
+	/** Absent only in BenchmarkReports produced before failure classification was introduced. */
+	failureClassification?: BenchmarkFailureClassification;
 	durationMs: number;
 	evidence: EvidenceBundleReference | null;
 	assessment: AssessmentReportReference | null;
@@ -803,6 +836,12 @@ export interface BenchmarkReport {
 		passed: number;
 		failed: number;
 		byStatus: Record<BenchmarkTaskStatus, number>;
+		/** Absent only in BenchmarkReports produced before failure classification was introduced. */
+		failureClassification?: {
+			byExecution: Partial<Record<BenchmarkExecutionClassification, number>>;
+			byCompletion: Partial<Record<BenchmarkCompletionClassification, number>>;
+			bySemantic: Partial<Record<BenchmarkSemanticClassification, number>>;
+		};
 		summaryText: string;
 		repairCycles?: {
 			nativeTasks: number;

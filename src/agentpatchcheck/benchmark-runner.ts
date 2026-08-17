@@ -18,6 +18,7 @@ import { loadTaskSpec } from "./task-spec";
 import type {
 	AgentPatchCheckResult,
 	BenchmarkDefinition,
+	BenchmarkFailureClassification,
 	BenchmarkRepairCycleResult,
 	BenchmarkReport,
 	BenchmarkReportReference,
@@ -139,6 +140,45 @@ function classifyTask(result: AgentPatchCheckResult): BenchmarkTaskStatus {
 	return "passed";
 }
 
+function classifySemanticResult(result: AgentPatchCheckResult): BenchmarkFailureClassification["semantic"] {
+	if (result.commandVerification.status === "failed") return "public-verification-failed";
+	if (result.hiddenOracle?.status === "failed") return "hidden-oracle-failed";
+	if (result.hiddenOracle?.status === "timed-out" || result.hiddenOracle?.status === "error")
+		return "hidden-oracle-error";
+	if (result.commandVerification.status === "passed" || result.hiddenOracle?.status === "passed") return "passed";
+	if (result.assessment.report.verdict.status !== "pass") return "assessment-failed";
+	if (result.commandVerification.status === "not-run") return "not-evaluated";
+	return "passed";
+}
+
+function classifyFailure(result: AgentPatchCheckResult): BenchmarkFailureClassification {
+	const semantic = classifySemanticResult(result);
+	const runtime = result.agent.runtime;
+	const execution: BenchmarkFailureClassification["execution"] = result.agent.timedOut
+		? "timed-out"
+		: result.status === "succeeded"
+			? "completed"
+			: runtime?.providerFailure !== null && runtime?.providerFailure !== undefined
+				? "provider-failed"
+				: runtime?.terminationReason === "tool-limit"
+					? "tool-budget-exhausted"
+					: runtime?.terminationReason === "iteration-limit"
+						? "iteration-budget-exhausted"
+						: runtime?.terminationReason === "rejected-tool-limit"
+							? "rejected-tool-budget-exhausted"
+							: "agent-execution-failed";
+	return {
+		execution,
+		completion:
+			result.status === "succeeded"
+				? "completed"
+				: semantic === "passed"
+					? "completion-noncompliant"
+					: "not-reached",
+		semantic,
+	};
+}
+
 function createRepairCycle(
 	policy: Awaited<ReturnType<typeof validateTaskPolicy>>,
 	result: AgentPatchCheckResult,
@@ -203,6 +243,18 @@ function createNativeRuntimeSummary(result: AgentPatchCheckResult): BenchmarkTas
 function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"] {
 	const byStatus = Object.fromEntries(allStatuses.map((status) => [status, 0])) as Record<BenchmarkTaskStatus, number>;
 	for (const task of tasks) byStatus[task.status] += 1;
+	const countClassifications = <T extends string>(
+		selector: (classification: BenchmarkFailureClassification) => T,
+	): Partial<Record<T, number>> => {
+		const counts: Partial<Record<T, number>> = {};
+		for (const task of tasks) {
+			const classification = task.failureClassification;
+			if (classification === undefined) continue;
+			const value = selector(classification);
+			counts[value] = (counts[value] ?? 0) + 1;
+		}
+		return counts;
+	};
 	const failures = allStatuses
 		.filter((status) => status !== "passed" && byStatus[status] > 0)
 		.map((status) => `${status}=${byStatus[status]}`);
@@ -256,6 +308,11 @@ function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"]
 		passed: byStatus.passed,
 		failed: tasks.length - byStatus.passed,
 		byStatus,
+		failureClassification: {
+			byExecution: countClassifications((classification) => classification.execution),
+			byCompletion: countClassifications((classification) => classification.completion),
+			bySemantic: countClassifications((classification) => classification.semantic),
+		},
 		summaryText:
 			failures.length === 0
 				? `${byStatus.passed}/${tasks.length} tasks passed.`
@@ -303,6 +360,7 @@ export async function runBenchmark(
 				runId: input.runId ?? createTaskRunId(runId, task.id),
 			});
 			const result = await resolvedDependencies.execute(policy);
+			const failureClassification = classifyFailure(result);
 			const executionIdentity = await createTaskExecutionIdentity(
 				policy,
 				result,
@@ -347,6 +405,7 @@ export async function runBenchmark(
 				},
 				executionIdentity,
 				status: classifyTask(result),
+				failureClassification,
 				durationMs: Date.now() - startedAt,
 				evidence: result.evidence,
 				assessment: result.assessment.reference,
@@ -383,6 +442,11 @@ export async function runBenchmark(
 				},
 				executionIdentity: null,
 				status: "setup-failed",
+				failureClassification: {
+					execution: "setup-failed",
+					completion: "not-reached",
+					semantic: "not-evaluated",
+				},
 				durationMs: Date.now() - startedAt,
 				evidence: null,
 				assessment: null,
