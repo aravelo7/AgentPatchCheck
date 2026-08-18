@@ -6,6 +6,7 @@ import { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from
 
 import { runHiddenOracle } from "./hidden-oracle";
 import { collectPatchSnapshot, createIsolatedWorkspace } from "./isolated-workspace";
+import { selectPublicVerificationRepair } from "./public-verification-repair-policy";
 import type {
 	AgentExecution,
 	AgentExecutionAttempt,
@@ -120,32 +121,44 @@ export async function executeAgentPatchCheck(
 	let agent = initialAgent;
 	let commandVerification = await runVerificationSafely(resolvedDependencies.runVerification, policy, workspace.path);
 	const feedback = createPublicVerificationFeedback(commandVerification);
-	if (
-		policy.agentAdapter === "harness-native" &&
-		initialAgent.exitCode === 0 &&
-		!initialAgent.timedOut &&
-		feedback !== null
-	) {
+	if (policy.agentAdapter === "harness-native") {
+		const initialPatch =
+			initialAgent.exitCode === 0 && !initialAgent.timedOut && feedback !== null
+				? await resolvedDependencies.collectPatch(workspace.path)
+				: null;
 		const remainingAgentBudgetMs = policy.timeoutMs - (Date.now() - agentBudgetStartedAt);
-		const repairAgent =
-			remainingAgentBudgetMs > 0
-				? await runAgentSafely(
-						resolvedDependencies.runAgent,
-						{ ...policy, timeoutMs: remainingAgentBudgetMs },
-						workspace.path,
-						{
-							phase: "public-verification-repair",
-							publicVerificationFeedback: feedback,
-							repairInstruction: policy.publicVerificationRepairInstruction,
-						},
-					)
-				: failedAgentExecution(policy, "Harness-native public verification repair budget was exhausted.");
-		const attempts: AgentExecutionAttempt[] = [
-			{ phase: "initial", feedback: null, execution: initialAgent },
-			{ phase: "public-verification-repair", feedback, execution: repairAgent },
-		];
-		agent = { ...repairAgent, attempts };
-		commandVerification = await runVerificationSafely(resolvedDependencies.runVerification, policy, workspace.path);
+		const repairDecision = selectPublicVerificationRepair({
+			agentAdapter: policy.agentAdapter,
+			initialAgent,
+			verification: commandVerification,
+			remainingAgentBudgetMs,
+			initialPatch,
+		});
+		if (repairDecision.eligible && feedback !== null) {
+			const repairAgent = await runAgentSafely(
+				resolvedDependencies.runAgent,
+				{ ...policy, timeoutMs: remainingAgentBudgetMs },
+				workspace.path,
+				{
+					phase: "public-verification-repair",
+					publicVerificationFeedback: feedback,
+					initialChangedFiles: repairDecision.initialChangedFiles,
+					repairInstruction: policy.publicVerificationRepairInstruction,
+				},
+			);
+			const attempts: AgentExecutionAttempt[] = [
+				{ phase: "initial", feedback: null, execution: initialAgent },
+				{ phase: "public-verification-repair", feedback, execution: repairAgent },
+			];
+			agent = { ...repairAgent, attempts, publicVerificationRepair: repairDecision };
+			commandVerification = await runVerificationSafely(
+				resolvedDependencies.runVerification,
+				policy,
+				workspace.path,
+			);
+		} else {
+			agent = { ...initialAgent, publicVerificationRepair: repairDecision };
+		}
 	}
 	const patch = await resolvedDependencies.collectPatch(workspace.path);
 	const hiddenOracle = await runHiddenOracle(policy.hiddenOracle, workspace.path);

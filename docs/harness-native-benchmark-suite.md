@@ -106,6 +106,18 @@ HTTP failures, authentication failures, rate limits, and requests after the sess
 Recovered retries are recorded as `runtime.transportRetries` in Evidence and aggregated as
 `summary.nativeQuality.transportRetries`; they are not counted as Agent repair attempts.
 
+## Controlled public-verification repair
+
+Harness-native execution permits at most one separate repair attempt after the initial Agent execution. The decision
+is Harness-owned: it is eligible only when the initial Agent finished normally, the declared public verification
+failed, and shared task time remains. Provider failures, Agent timeouts, tool or iteration limits, successful or
+unavailable public verification, and exhausted shared time do not trigger a repair execution.
+
+The repair phase receives only the sanitized public-verification feedback, an optional TaskSpec-owned targeted repair
+instruction, and the initial changed-file paths. It does not receive raw verifier output, an initial patch body, or
+Hidden Oracle data. `Evidence.agent.publicVerificationRepair` and each Harness-native benchmark task's
+`repairCycle.decision` record whether repair was eligible, the stable reason, and the initial changed-file paths.
+
 ## Setup-only validation
 
 Use `--dry-run` to validate the versioned fixture/base identity, materialize the selected model into the disposable

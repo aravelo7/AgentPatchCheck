@@ -179,6 +179,11 @@ describe("Benchmark Runner", () => {
 		repaired.agent = {
 			...repaired.agent,
 			runtime,
+			publicVerificationRepair: {
+				eligible: true,
+				reason: "public-verification-failed",
+				initialChangedFiles: ["README.md"],
+			},
 			attempts: [
 				{
 					phase: "initial",
@@ -215,6 +220,11 @@ describe("Benchmark Runner", () => {
 
 		expect(result.report.tasks[0]?.repairCycle).toEqual({
 			attempted: true,
+			decision: {
+				eligible: true,
+				reason: "public-verification-failed",
+				initialChangedFiles: ["README.md"],
+			},
 			initialVerificationStatus: "failed",
 			finalVerificationStatus: "passed",
 			outcome: "repaired",

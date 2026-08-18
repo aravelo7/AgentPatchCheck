@@ -212,6 +212,11 @@ describe("Harness-native Headless Core E2E", () => {
 				status: "failed",
 				commands: [{ exitCode: 1 }],
 			});
+			expect(result.agent.publicVerificationRepair).toEqual({
+				eligible: true,
+				reason: "public-verification-failed",
+				initialChangedFiles: ["README.md"],
+			});
 			expect((await readFile(join(result.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
 				"after\n",
 			);
@@ -249,6 +254,7 @@ describe("Harness-native Headless Core E2E", () => {
 				initialVerificationStatus: "failed",
 				finalVerificationStatus: "passed",
 				outcome: "repaired",
+				decision: { reason: "public-verification-failed", initialChangedFiles: ["README.md"] },
 			});
 			expect(benchmark.report.summary.repairCycles).toMatchObject({
 				nativeTasks: 1,

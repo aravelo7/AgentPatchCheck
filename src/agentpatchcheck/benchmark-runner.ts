@@ -184,44 +184,48 @@ function createRepairCycle(
 	result: AgentPatchCheckResult,
 ): BenchmarkRepairCycleResult | null {
 	if (policy.agentAdapter !== "harness-native") return null;
+	const withDecision = (cycle: BenchmarkRepairCycleResult): BenchmarkRepairCycleResult =>
+		result.agent.publicVerificationRepair === undefined
+			? cycle
+			: { ...cycle, decision: result.agent.publicVerificationRepair };
 	const repairAttempt = result.agent.attempts?.find((attempt) => attempt.phase === "public-verification-repair");
 	const initialAgent =
 		result.agent.attempts?.find((attempt) => attempt.phase === "initial")?.execution ?? result.agent;
 	const initialVerificationStatus = repairAttempt?.feedback?.status ?? result.commandVerification.status;
 	if (initialAgent.timedOut)
-		return {
+		return withDecision({
 			attempted: false,
 			initialVerificationStatus,
 			finalVerificationStatus: result.commandVerification.status,
 			outcome: "initial-agent-timed-out",
-		};
+		});
 	if (initialAgent.exitCode !== 0)
-		return {
+		return withDecision({
 			attempted: false,
 			initialVerificationStatus,
 			finalVerificationStatus: result.commandVerification.status,
 			outcome: "initial-agent-failed",
-		};
+		});
 	if (repairAttempt === undefined)
-		return {
+		return withDecision({
 			attempted: false,
 			initialVerificationStatus,
 			finalVerificationStatus: result.commandVerification.status,
 			outcome: result.commandVerification.status === "passed" ? "initial-pass" : "initial-verification-not-run",
-		};
+		});
 	if (repairAttempt.execution.timedOut)
-		return {
+		return withDecision({
 			attempted: true,
 			initialVerificationStatus,
 			finalVerificationStatus: result.commandVerification.status,
 			outcome: "repair-timed-out",
-		};
-	return {
+		});
+	return withDecision({
 		attempted: true,
 		initialVerificationStatus,
 		finalVerificationStatus: result.commandVerification.status,
 		outcome: result.commandVerification.status === "passed" ? "repaired" : "repair-failed",
-	};
+	});
 }
 
 function createNativeRuntimeSummary(result: AgentPatchCheckResult): BenchmarkTaskResult["nativeRuntime"] {

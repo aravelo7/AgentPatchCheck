@@ -37,6 +37,15 @@ function argumentContainsPrompt(value: string, prompt: string): boolean {
 function redactAgentExecution(agent: AgentExecution, prompt: string): AgentExecution {
 	return {
 		...agent,
+		publicVerificationRepair:
+			agent.publicVerificationRepair === undefined
+				? undefined
+				: {
+						...agent.publicVerificationRepair,
+						initialChangedFiles: agent.publicVerificationRepair.initialChangedFiles.map((path) =>
+							redactSensitiveText(path, prompt),
+						),
+					},
 		attempts: agent.attempts?.map((attempt) => ({
 			...attempt,
 			execution: redactAgentExecution(attempt.execution, prompt),

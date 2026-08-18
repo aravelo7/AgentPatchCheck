@@ -152,6 +152,8 @@ export interface AgentExecution {
 	timedOut: boolean;
 	runtime?: HarnessNativeRuntimeResult;
 	attempts?: AgentExecutionAttempt[];
+	/** Harness-owned decision for the bounded public-verification repair path. */
+	publicVerificationRepair?: PublicVerificationRepairDecision;
 }
 
 export interface PublicVerificationFeedback {
@@ -166,12 +168,32 @@ export interface PublicVerificationFeedback {
 	}>;
 }
 
+export type PublicVerificationRepairDecisionReason =
+	| "public-verification-failed"
+	| "adapter-not-harness-native"
+	| "initial-agent-timed-out"
+	| "initial-agent-failed"
+	| "public-verification-not-failed"
+	| "agent-budget-exhausted";
+
+/**
+ * A bounded, Harness-owned decision. It contains no verifier output or
+ * Hidden Oracle information; `initialChangedFiles` is the only patch fact
+ * available to a repair execution.
+ */
+export interface PublicVerificationRepairDecision {
+	eligible: boolean;
+	reason: PublicVerificationRepairDecisionReason;
+	initialChangedFiles: string[];
+}
+
 /** Harness-owned phase contract for one Agent execution. Hidden Oracle data is never included. */
 export type RepairContext =
 	| { phase: "initial"; publicVerificationFeedback: null; repairInstruction?: null }
 	| {
 			phase: "public-verification-repair";
 			publicVerificationFeedback: PublicVerificationFeedback;
+			initialChangedFiles: string[];
 			repairInstruction?: string | null;
 	  };
 
@@ -764,6 +786,8 @@ export type BenchmarkRepairCycleOutcome =
 
 export interface BenchmarkRepairCycleResult {
 	attempted: boolean;
+	/** Present for executions produced after the controlled repair policy was introduced. */
+	decision?: PublicVerificationRepairDecision;
 	initialVerificationStatus: CommandVerificationStatus;
 	finalVerificationStatus: CommandVerificationStatus;
 	outcome: BenchmarkRepairCycleOutcome;

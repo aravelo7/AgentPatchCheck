@@ -43,6 +43,11 @@ describe("EvidenceBundle", () => {
 				stderr: "password=super-secret-value",
 				durationMs: 42,
 				timedOut: false,
+				publicVerificationRepair: {
+					eligible: false,
+					reason: "initial-agent-failed",
+					initialChangedFiles: [prompt],
+				},
 				runtime: {
 					version: 1,
 					provider: "openai:responses",
@@ -133,6 +138,7 @@ describe("EvidenceBundle", () => {
 		});
 		expect(serialized).toContain("[REDACTED_SECRET]");
 		expect(bundle.agent.runtime?.trajectory[0]?.arguments?.path).toBe("[REDACTED_PROMPT]");
+		expect(bundle.agent.publicVerificationRepair?.initialChangedFiles).toEqual(["[REDACTED_PROMPT]"]);
 	});
 
 	it("writes the bundle atomically outside the worktree", async () => {
