@@ -175,6 +175,13 @@ The first retained v3 quality sample is documented in
 [`harness-native-quality-baseline-v3.md`](./harness-native-quality-baseline-v3.md). Its three-run sample exercises
 the new feedback-repair and nested-configuration invariants, but is explicitly not a general 100% capability claim.
 
+The trusted single-run semantic baseline for the real-repository `real-001`
+task is documented in
+[`harness-native-real001-semantic-baseline.md`](./harness-native-real001-semantic-baseline.md).
+It pins the frozen run, TaskSpec, patch, Evidence, and corrected Hidden Oracle
+identities; it is a semantic acceptance record, not a repeated-run quality
+rate.
+
 OpenAI documents the Responses API as the API for multi-turn and tool-calling workflows; choose and compare models on
 representative tasks rather than treating a single result as a general capability claim.
 
