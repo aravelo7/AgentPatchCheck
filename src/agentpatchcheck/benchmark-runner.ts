@@ -331,8 +331,12 @@ function createSummary(tasks: BenchmarkTaskResult[]): BenchmarkReport["summary"]
 	};
 }
 
-export function getBenchmarkReportPath(sourcePath: string, runId: string): string {
-	return join(dirname(sourcePath), ".agentpatchcheck", "benchmarks", `${runId}.json`);
+export function getBenchmarkReportPath(worktreeRoot: string, runId: string): string {
+	return join(dirname(worktreeRoot), "benchmarks", `${runId}.json`);
+}
+
+function getBenchmarkWorktreeRoot(input: TaskPolicyInput): string {
+	return input.worktreeRoot ?? join(input.repositoryRoot, ".agentpatchcheck", "worktrees");
 }
 
 export async function writeBenchmarkReport(options: {
@@ -360,10 +364,12 @@ export async function runBenchmark(
 	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
 	const runId = resolvedDependencies.createRunId();
 	const tasks: BenchmarkTaskResult[] = [];
+	let benchmarkWorktreeRoot: string | null = null;
 	for (const task of definition.tasks) {
 		const startedAt = Date.now();
 		try {
 			const input = await resolvedDependencies.loadTaskSpec(task.taskSpecPath);
+			benchmarkWorktreeRoot ??= getBenchmarkWorktreeRoot(input);
 			const policy = await resolvedDependencies.validateTaskPolicy({
 				...input,
 				runId: input.runId ?? createTaskRunId(runId, task.id),
@@ -502,10 +508,13 @@ export async function runBenchmark(
 		tasks,
 		summary: createSummary(tasks),
 	};
+	if (benchmarkWorktreeRoot === null) {
+		throw new Error("Benchmark report output requires at least one valid task worktree root.");
+	}
 	return {
 		report,
 		reference: await resolvedDependencies.writeReport({
-			path: getBenchmarkReportPath(definition.sourcePath, runId),
+			path: getBenchmarkReportPath(benchmarkWorktreeRoot, runId),
 			report,
 		}),
 	};

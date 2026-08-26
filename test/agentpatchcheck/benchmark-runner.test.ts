@@ -1,10 +1,13 @@
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import { runBenchmark } from "../../src/agentpatchcheck/benchmark-runner";
+import { getBenchmarkReportPath, runBenchmark } from "../../src/agentpatchcheck/benchmark-runner";
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
 import type {
 	AgentPatchCheckResult,
 	BenchmarkDefinition,
+	BenchmarkReport,
 	HarnessNativeRuntimeResult,
 	PatchVerdictStatus,
 } from "../../src/agentpatchcheck/types";
@@ -84,6 +87,46 @@ function createResult(options: {
 }
 
 describe("Benchmark Runner", () => {
+	it("writes reports beside the runner-managed evidence and runtime roots, not below the BenchmarkSpec", () => {
+		expect(getBenchmarkReportPath("D:\\runtime\\b2-c01\\worktrees", "benchmark-output-boundary")).toBe(
+			"D:\\runtime\\b2-c01\\benchmarks\\benchmark-output-boundary.json",
+		);
+	});
+
+	it("writes a setup-failed report to the policy runtime root when no task validates", async () => {
+		const definition: BenchmarkDefinition = {
+			version: 1,
+			sourcePath: "D:\\frozen-assets\\b2-c01\\benchmark.json",
+			sourceSha256: "setup-failed-benchmark-sha",
+			name: "setup-failed",
+			suite: null,
+			tasks: [
+				{ id: "invalid", taskSpecPath: "invalid.json", taskSpecSha256: "invalid-task-sha", expectedStatus: null },
+			],
+		};
+		const repositoryRoot = "D:\\runner-managed\\b2-c01";
+		let writtenPath: string | undefined;
+		let writtenReport: BenchmarkReport | undefined;
+
+		const result = await runBenchmark(definition, {
+			loadTaskSpec: async () => ({ repositoryRoot, prompt: "invalid" }),
+			validateTaskPolicy: async () => {
+				throw new Error("invalid policy");
+			},
+			writeReport: async ({ path, report }) => {
+				writtenPath = path;
+				writtenReport = report;
+				return { path, createdAt: report.createdAt };
+			},
+			createRunId: () => "setup-failed-benchmark",
+		});
+
+		expect(writtenPath).toBe(join(repositoryRoot, ".agentpatchcheck", "benchmarks", "setup-failed-benchmark.json"));
+		expect(writtenPath).not.toContain("D:\\frozen-assets");
+		expect(writtenReport?.tasks).toMatchObject([{ status: "setup-failed" }]);
+		expect(result.reference.path).toBe(writtenPath);
+	});
+
 	it("accepts the Harness-native Adapter through the existing Benchmark policy path", async () => {
 		const definition: BenchmarkDefinition = {
 			version: 1,

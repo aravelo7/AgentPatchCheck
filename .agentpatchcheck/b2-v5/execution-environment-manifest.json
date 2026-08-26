@@ -1,0 +1,61 @@
+{
+  "benchmarkVersion": "b2-v5",
+  "parentVersion": "b2-v4",
+  "status": "FROZEN",
+  "FORMAL-EXECUTION-READY": true,
+  "frozenAt": "2026-08-26T20:30:00+08:00",
+  "tasksUnchangedFromParent": ["b2-c01", "b2-c02", "b2-c04", "b2-c05", "b2-c06", "b2-c08", "b2-c09", "b2-c10", "b2-c11", "b2-c18"],
+  "parentManifestSha256": "080206913E691A1175B1FFDE44F6FD6926120928E3D6E89F9D23301AC38EDF55",
+  "formalRunner": {
+    "identity": ".agentpatchcheck/formal-b2/formal-runner.mjs",
+    "sha256": "5F68054D791C92471BCA875C8C065733270267A097E0894D02B18E93C66E2F61",
+    "benchmarkRunner": {
+      "path": "src/agentpatchcheck/benchmark-runner.ts",
+      "sha256": "6905A5663F206CD997E5F6286F81D726A03031CD1A4BA772D332461E008C3EB0",
+      "reportOutputPolicy": "policy worktree root parent / benchmarks"
+    },
+    "scmContract": ".agentpatchcheck/b2-v4/scm-execution-contract.json",
+    "scmContractVersion": "scm-v1",
+    "topology": "exact checkout -> fixed runtime -> public verification -> behavioral Oracle",
+    "helper": {
+      "path": "${APC_FORMAL_B2_ROOT}/code-baseline/dist/native/windows/agentpatchcheck-job-helper.exe",
+      "sha256": "87DA71FBD17E0A18665B3CC172DD899C10ABF35E16792C5A432F4AF213ACD602"
+    }
+  },
+  "benchmarkOutputBoundary": {
+    "frozenBenchmarkAssets": "read-only input only",
+    "reportAndLockRoot": "dirname(policy.worktreeRoot)/benchmarks",
+    "preValidationRoot": "TaskPolicyInput.worktreeRoot, otherwise TaskPolicyInput.repositoryRoot/.agentpatchcheck/worktrees",
+    "allSetupFailedReports": true,
+    "agentWorktreeContainsBenchmarkReport": false
+  },
+  "scmExecutionContract": {
+    "inheritedFrom": "b2-v4",
+    "unchanged": true
+  },
+  "runtimeAndDependencies": "unchanged from b2-v4; reuse frozen Python environments and Maven cache",
+  "provisioningPolicy": {
+    "network": "disabled during formal execution",
+    "dependencies": "reuse fixed cache; provision only missing exact artifacts",
+    "upstreamSource": "canonical Git objects only"
+  },
+  "verifierIsolation": {
+    "agentCannotModify": true,
+    "agentWorkspaceExcludes": ["fix refs", "gold patch", "Oracle", "formal cache", "runtime evidence", "benchmark report and lock"]
+  },
+  "cachePolicy": {
+    "key": ["taskVersion", "baseRef", "candidateConfig", "patchOrArtifactIdentity", "verificationVersion"],
+    "failureClasses": ["agent", "verification", "environment", "runner", "invalid-task"]
+  },
+  "gitBoundary": {
+    "tracked": ["benchmark definitions", "TaskSpecs", "prompts", "Oracles", "public verifiers", "provenance", "manifest", "SCM contract"],
+    "excluded": ["runtime", "worktrees", "Maven cache", "Git object cache", "logs", "evidence", "benchmark reports", "benchmark locks"]
+  },
+  "leakagePolicy": {
+    "modelVisibleFixRefs": false,
+    "modelVisibleGoldDiff": false,
+    "absoluteLocalPathsInTaskAssets": false
+  },
+  "manifestHashAlgorithm": "SHA-256 of compact JSON excluding manifestHash",
+  "manifestHash": "0ECF5F1FAF2BFB3D01A34DB7DEE4941D822E5214CE9A5D4B49F2F050481054AD"
+}
