@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "repositoryRoot": "${AGENTPATCHCHECK_REPOSITORY_ROOT}",
+  "baseRef": "39f83765e12b0e5d260b7939fc3fe281d879b279",
+  "prompt": "Fix the Django floatformat template filter behavior for a zero-valued decimal string when precision is zero. The call floatformat(\"0.00\", 0) must return \"0\" without raising an exception. Preserve existing floatformat behavior outside this boundary case, keep the change minimal, and run the declared verification before finishing. Reproduction: from django.conf import settings; settings.configure(USE_I18N=False); from django.template.defaultfilters import floatformat; print(floatformat(\"0.00\", 0)).",
+  "agentAdapter": "harness-native",
+  "model": "deepseek-v4-pro",
+  "nativeAgent": {
+    "provider": "deepseek",
+    "protocol": "chat-completions",
+    "thinkingMode": "enabled",
+    "reasoningEffort": "high",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "credentialRef": "deepseek-primary",
+    "maxIterations": 12,
+    "maxToolCalls": 48,
+    "maxRejectedToolCalls": 4,
+    "maxObservationBytes": 16384,
+    "maxTransportRetries": 1,
+    "maxProtocolRecoveries": 2,
+    "maxCompletionDeferrals": 2,
+    "maxPlanRevisions": 4,
+    "plannerEnabled": false
+  },
+  "timeoutMs": 600000,
+  "verification": {
+    "commands": [
+      {
+        "command": "python",
+        "args": ["-c", "from django.conf import settings; settings.configure(USE_I18N=False); from django.template.defaultfilters import floatformat; assert floatformat('0.00', 0) == '0'"],
+        "timeoutMs": 30000
+      }
+    ]
+  },
+  "hiddenOracle": {
+    "script": "b1-t3-oracle.mjs",
+    "timeoutMs": 30000,
+    "isolation": "process",
+    "memoryLimitBytes": 268435456,
+    "cpuRatePercent": 50
+  },
+  "patchExpectation": "changes-required"
+}

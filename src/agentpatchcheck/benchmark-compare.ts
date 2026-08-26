@@ -29,12 +29,12 @@ const agentIdentitySchema = z.object({
 	version: z.string().nullable(),
 });
 const modelProviderIdentitySchema = z.object({
-	provider: z.enum(["openai", "openai-compatible"]),
-	protocol: z.enum(["responses", "chat-completions"]),
-	thinkingMode: z.enum(["default", "disabled"]),
+	provider: z.enum(["openai", "openai-compatible", "deepseek", "gemini"]),
+	protocol: z.enum(["responses", "chat-completions", "native"]),
+	thinkingMode: z.enum(["default", "enabled", "disabled"]),
 	endpointSha256: z.string(),
 	credentialRef: z.string(),
-	implementation: z.literal("openai-compatible-v1"),
+	implementation: z.enum(["openai-compatible-v1", "deepseek-official-chat-v1", "cline-llms-gemini-native-v1"]),
 	configuredModel: z.string(),
 	actualModel: z.string().nullable(),
 });

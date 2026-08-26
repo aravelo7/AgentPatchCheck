@@ -8,6 +8,11 @@ import { getAgentAdapter, SCRIPT_ADAPTER_WORKTREE_ENV } from "../../src/agentpat
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
 
 describe("AgentAdapter", () => {
+	it("registers the Cline control runtime without replacing Harness-native", () => {
+		expect(getAgentAdapter("cline-runtime").id).toBe("cline-runtime");
+		expect(getAgentAdapter("harness-native").id).toBe("harness-native");
+	});
+
 	it("runs the controlled external Script Adapter against the supplied worktree", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-script-adapter-"));
 		try {

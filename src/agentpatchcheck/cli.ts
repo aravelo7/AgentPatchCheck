@@ -16,6 +16,7 @@ import { manageEvidenceRetention } from "./evidence-retention";
 import { showEvidenceBundle } from "./evidence-show";
 import { executeAgentPatchCheck } from "./execute";
 import { readEvidenceBundle } from "./git-patch-verifier";
+import { initializeAgentPatchCheckEnvironment } from "./project-environment";
 import { validateTaskPolicy } from "./task-policy";
 import { loadTaskSpec } from "./task-spec";
 
@@ -370,4 +371,7 @@ export async function runHeadlessCli(argv: string[] = process.argv, io: Headless
 	}
 }
 
-if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]) void runHeadlessCli();
+if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]) {
+	initializeAgentPatchCheckEnvironment();
+	void runHeadlessCli();
+}

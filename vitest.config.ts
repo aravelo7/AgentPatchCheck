@@ -18,6 +18,7 @@ export default defineConfig({
 			"**/node_modules/**",
 			"**/dist/**",
 			".worktrees/**",
+			".agentpatchcheck/**",
 		],
 		testTimeout: 15_000,
 	},

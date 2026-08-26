@@ -19,7 +19,7 @@ export function selectPublicVerificationRepair(input: {
 	initialPatch: Pick<PatchSnapshot, "changedFiles"> | null;
 }): PublicVerificationRepairDecision {
 	const initialChangedFiles = input.initialPatch?.changedFiles ?? [];
-	if (input.agentAdapter !== "harness-native")
+	if (input.agentAdapter !== "harness-native" && input.agentAdapter !== "cline-runtime")
 		return { eligible: false, reason: "adapter-not-harness-native", initialChangedFiles };
 	if (input.initialAgent.timedOut) return { eligible: false, reason: "initial-agent-timed-out", initialChangedFiles };
 	if (input.initialAgent.exitCode !== 0)

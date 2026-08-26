@@ -174,6 +174,29 @@ describe("Benchmark Runner", () => {
 			},
 			usage: { inputTokens: 1, outputTokens: 1 },
 			trajectory: [],
+			convergenceCheckpoint: {
+				version: 1,
+				triggered: false,
+				triggerIteration: null,
+				discoveryActionsAtTrigger: null,
+				successfulFileReadsAtTrigger: null,
+				mutationActionsAtTrigger: null,
+				targetedRetrieval: null,
+				firstMutationIteration: null,
+				firstPublicVerificationIteration: null,
+				finishIteration: null,
+				outcome: "not-triggered",
+			},
+			workingContext: {
+				version: 1,
+				phase: "finished",
+				inspectedPaths: [],
+				candidatePaths: [],
+				retrieval: { successfulActions: 0, rejectedActions: 0, recent: [] },
+				mutation: { successfulActions: 0, paths: [], firstIteration: null },
+				publicVerification: { runs: 0, latestStatus: null, latestIteration: null },
+			},
+			planning: { version: 1, enabled: false, maxRevisions: 4, revisions: [], currentPlan: null },
 		};
 		const repaired = createResult({ verificationStatus: "passed" });
 		repaired.agent = {
@@ -243,6 +266,8 @@ describe("Benchmark Runner", () => {
 			toolCalls: 2,
 			rejectedToolCalls: 0,
 			transportRetries: 0,
+			protocolRecoveries: 0,
+			completionDeferrals: 0,
 			providerFailureKinds: [],
 		});
 		expect(result.report.summary.nativeQuality).toEqual({
@@ -416,6 +441,29 @@ describe("Benchmark Runner", () => {
 			},
 			usage: { inputTokens: 1, outputTokens: 1 },
 			trajectory: [],
+			convergenceCheckpoint: {
+				version: 1,
+				triggered: false,
+				triggerIteration: null,
+				discoveryActionsAtTrigger: null,
+				successfulFileReadsAtTrigger: null,
+				mutationActionsAtTrigger: null,
+				targetedRetrieval: null,
+				firstMutationIteration: null,
+				firstPublicVerificationIteration: null,
+				finishIteration: null,
+				outcome: "not-triggered",
+			},
+			workingContext: {
+				version: 1,
+				phase: "failed",
+				inspectedPaths: [],
+				candidatePaths: [],
+				retrieval: { successfulActions: 0, rejectedActions: 0, recent: [] },
+				mutation: { successfulActions: 0, paths: [], firstIteration: null },
+				publicVerification: { runs: 0, latestStatus: null, latestIteration: null },
+			},
+			planning: { version: 1, enabled: false, maxRevisions: 4, revisions: [], currentPlan: null },
 		};
 		bounded.agent = { ...bounded.agent, runtime };
 		const result = await runBenchmark(definition, {

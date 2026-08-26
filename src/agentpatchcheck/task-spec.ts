@@ -12,18 +12,28 @@ const taskSpecSchema = z
 		repositoryRoot: z.string(),
 		prompt: z.string().optional(),
 		promptFile: z.string().optional(),
+		executionBootstrap: z
+			.object({
+				nodeVersion: z.string().regex(/^v\d+\.\d+\.\d+$/u),
+				npmVersion: z.string().regex(/^\d+\.\d+\.\d+$/u),
+				npmInstall: z.object({ legacyPeerDeps: z.literal(true), packageLock: z.literal(false) }).strict(),
+				timeoutMs: z.number().int().positive().optional(),
+			})
+			.strict()
+			.optional(),
 		publicVerificationRepairInstruction: z.string().optional(),
 		baseRef: z.string().optional(),
 		worktreeRoot: z.string().optional(),
 		runId: z.string().optional(),
 		codexExecutable: z.string().optional(),
-		agentAdapter: z.enum(["codex", "script", "harness-native"]).optional(),
+		agentAdapter: z.enum(["codex", "script", "harness-native", "cline-runtime"]).optional(),
 		agentScript: z.string().optional(),
 		nativeAgent: z
 			.object({
-				provider: z.enum(["openai", "openai-compatible"]).optional(),
-				protocol: z.enum(["responses", "chat-completions"]).optional(),
-				thinkingMode: z.enum(["default", "disabled"]).optional(),
+				provider: z.enum(["openai", "openai-compatible", "deepseek", "gemini"]).optional(),
+				protocol: z.enum(["responses", "chat-completions", "native"]).optional(),
+				thinkingMode: z.enum(["default", "enabled", "disabled"]).optional(),
+				reasoningEffort: z.enum(["low", "high", "max"]).optional(),
 				baseUrl: z.string().optional(),
 				credentialRef: z.string().optional(),
 				maxIterations: z.number().int().optional(),
@@ -31,6 +41,12 @@ const taskSpecSchema = z
 				maxRejectedToolCalls: z.number().int().optional(),
 				maxObservationBytes: z.number().int().optional(),
 				maxTransportRetries: z.number().int().optional(),
+				maxProtocolRecoveries: z.number().int().optional(),
+				maxCompletionDeferrals: z.number().int().optional(),
+				maxPlanRevisions: z.number().int().optional(),
+				plannerEnabled: z.boolean().optional(),
+				toolPresentation: z.enum(["native", "code", "dsh-compatible"]).optional(),
+				clineProviderId: z.string().optional(),
 			})
 			.strict()
 			.optional(),
@@ -83,18 +99,32 @@ const taskSpecSchema = z
 				path: ["agentScript"],
 			});
 		}
-		if (spec.nativeAgent !== undefined && spec.agentAdapter !== "harness-native") {
+		if (
+			spec.nativeAgent !== undefined &&
+			spec.agentAdapter !== "harness-native" &&
+			spec.agentAdapter !== "cline-runtime"
+		) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: "nativeAgent requires the Harness-native Adapter.",
 				path: ["nativeAgent"],
 			});
 		}
-		if (spec.agentAdapter === "harness-native" && spec.nativeAgent?.credentialRef === undefined) {
+		if (
+			(spec.agentAdapter === "harness-native" || spec.agentAdapter === "cline-runtime") &&
+			spec.nativeAgent?.credentialRef === undefined
+		) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: "Harness-native TaskSpec requires nativeAgent.credentialRef.",
 				path: ["nativeAgent", "credentialRef"],
+			});
+		}
+		if (spec.agentAdapter === "cline-runtime" && spec.nativeAgent?.clineProviderId === undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Cline Runtime TaskSpec requires nativeAgent.clineProviderId.",
+				path: ["nativeAgent", "clineProviderId"],
 			});
 		}
 		if (spec.nativeAgent?.provider === "openai-compatible" && spec.nativeAgent.baseUrl === undefined) {
@@ -106,10 +136,19 @@ const taskSpecSchema = z
 		}
 	});
 
+const REPOSITORY_ROOT_PLACEHOLDER = "$" + "{AGENTPATCHCHECK_REPOSITORY_ROOT}";
+
 export type TaskSpec = z.infer<typeof taskSpecSchema>;
 
 function resolveFromSpecDirectory(specDirectory: string, value: string): string {
 	return resolve(specDirectory, value);
+}
+
+function resolveRepositoryRoot(specDirectory: string, value: string): string {
+	if (value !== REPOSITORY_ROOT_PLACEHOLDER) return resolveFromSpecDirectory(specDirectory, value);
+	const configured = process.env.AGENTPATCHCHECK_REPOSITORY_ROOT?.trim();
+	if (!configured) throw new Error("TaskSpec requires AGENTPATCHCHECK_REPOSITORY_ROOT.");
+	return resolve(configured);
 }
 
 function isPathWithinDirectory(directory: string, candidate: string): boolean {
@@ -180,7 +219,7 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 		throw new Error(`Invalid TaskSpec ${resolvedSpecPath}: ${parsed.error.message}`);
 	}
 	const specDirectory = dirname(resolvedSpecPath);
-	const repositoryRoot = resolveFromSpecDirectory(specDirectory, parsed.data.repositoryRoot);
+	const repositoryRoot = resolveRepositoryRoot(specDirectory, parsed.data.repositoryRoot);
 	const prompt = parsed.data.prompt ?? (await readPromptFile(specDirectory, parsed.data.promptFile ?? ""));
 	const loadedVerificationProfile =
 		parsed.data.verificationProfile === undefined
@@ -194,6 +233,7 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 	return {
 		repositoryRoot,
 		prompt,
+		executionBootstrap: parsed.data.executionBootstrap,
 		publicVerificationRepairInstruction: parsed.data.publicVerificationRepairInstruction,
 		baseRef: parsed.data.baseRef,
 		worktreeRoot:

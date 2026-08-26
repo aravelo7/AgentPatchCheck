@@ -188,9 +188,12 @@ function createRepairCycle(
 		result.agent.publicVerificationRepair === undefined
 			? cycle
 			: { ...cycle, decision: result.agent.publicVerificationRepair };
-	const repairAttempt = result.agent.attempts?.find((attempt) => attempt.phase === "public-verification-repair");
-	const initialAgent =
-		result.agent.attempts?.find((attempt) => attempt.phase === "initial")?.execution ?? result.agent;
+	const attempts = result.agent.attempts ?? [];
+	const repairAttemptIndex = attempts.findIndex((attempt) => attempt.phase === "public-verification-repair");
+	const repairAttempt = repairAttemptIndex < 0 ? undefined : attempts[repairAttemptIndex];
+	const initialAgent = repairAttemptIndex < 0 ? result.agent : attempts[repairAttemptIndex - 1]?.execution;
+	const repairFinalAgent = repairAttemptIndex < 0 ? undefined : attempts.at(-1)?.execution;
+	if (initialAgent === undefined) throw new Error("Public verification repair is missing its initial attempt.");
 	const initialVerificationStatus = repairAttempt?.feedback?.status ?? result.commandVerification.status;
 	if (initialAgent.timedOut)
 		return withDecision({
@@ -213,7 +216,7 @@ function createRepairCycle(
 			finalVerificationStatus: result.commandVerification.status,
 			outcome: result.commandVerification.status === "passed" ? "initial-pass" : "initial-verification-not-run",
 		});
-	if (repairAttempt.execution.timedOut)
+	if (repairFinalAgent?.timedOut)
 		return withDecision({
 			attempted: true,
 			initialVerificationStatus,
@@ -238,6 +241,8 @@ function createNativeRuntimeSummary(result: AgentPatchCheckResult): BenchmarkTas
 		toolCalls: runtimes.reduce((total, runtime) => total + runtime.toolCalls, 0),
 		rejectedToolCalls: runtimes.reduce((total, runtime) => total + runtime.rejectedToolCalls, 0),
 		transportRetries: runtimes.reduce((total, runtime) => total + runtime.transportRetries, 0),
+		protocolRecoveries: runtimes.reduce((total, runtime) => total + (runtime.protocolRecoveries ?? 0), 0),
+		completionDeferrals: runtimes.reduce((total, runtime) => total + (runtime.completionDeferrals ?? 0), 0),
 		providerFailureKinds: runtimes.flatMap((runtime) =>
 			runtime.providerFailure === null ? [] : [runtime.providerFailure.kind],
 		),

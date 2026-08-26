@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "repositoryRoot": "${AGENTPATCHCHECK_REPOSITORY_ROOT}",
+  "baseRef": "193e3825645d93c73e31cdceb6d742cc6919624d",
+  "prompt": "Fix SymPy polynomial ring expression conversion so that explicitly supplied symbols are used in the returned expression. When converting a polynomial with as_expr(U, V, W), the result must have exactly U, V, and W as its free symbols instead of retaining the ring's original symbols. Preserve existing behavior when explicit symbols are not supplied, keep the change minimal, and run the declared verification before finishing. Reproduction: from sympy import symbols; from sympy.polys.domains import ZZ; from sympy.polys.rings import ring; R, x, y, z = ring(\"x,y,z\", ZZ); f = 3*x**2*y - x*y*z + 7*z**3 + 1; U, V, W = symbols(\"u,v,w\"); result = f.as_expr(U, V, W); print(result); print(result.free_symbols == {U, V, W}).",
+  "agentAdapter": "harness-native",
+  "model": "deepseek-v4-pro",
+  "nativeAgent": {
+    "provider": "deepseek",
+    "protocol": "chat-completions",
+    "thinkingMode": "enabled",
+    "reasoningEffort": "high",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "credentialRef": "deepseek-primary",
+    "maxIterations": 12,
+    "maxToolCalls": 48,
+    "maxRejectedToolCalls": 4,
+    "maxObservationBytes": 16384,
+    "maxTransportRetries": 1,
+    "maxProtocolRecoveries": 2,
+    "maxCompletionDeferrals": 2,
+    "maxPlanRevisions": 4,
+    "plannerEnabled": false
+  },
+  "timeoutMs": 600000,
+  "verification": {
+    "commands": [
+      {
+        "command": "python",
+        "args": ["-c", "from sympy import symbols; from sympy.polys.domains import ZZ; from sympy.polys.rings import ring; R,x,y,z=ring('x,y,z',ZZ); f=3*x**2*y-x*y*z+7*z**3+1; U,V,W=symbols('u,v,w'); result=f.as_expr(U,V,W); assert result.free_symbols == {U,V,W}"],
+        "timeoutMs": 30000
+      }
+    ]
+  },
+  "hiddenOracle": {
+    "script": "b1-t4-oracle.mjs",
+    "timeoutMs": 30000,
+    "isolation": "process",
+    "memoryLimitBytes": 268435456,
+    "cpuRatePercent": 50
+  },
+  "patchExpectation": "changes-required"
+}

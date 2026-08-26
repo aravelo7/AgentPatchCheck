@@ -80,6 +80,7 @@ export async function showEvidenceBundle(
 
 	return {
 		evidence: { path: evidencePath, createdAt: bundle.createdAt },
+		taskDefinition: bundle.taskDefinition ?? null,
 		policy: bundle.policy,
 		workspace: bundle.workspace,
 		agent: {
@@ -92,6 +93,7 @@ export async function showEvidenceBundle(
 			stdoutBytes: Buffer.byteLength(bundle.agent.stdout, "utf8"),
 			stderrBytes: Buffer.byteLength(bundle.agent.stderr, "utf8"),
 			runtime: bundle.agent.runtime ?? null,
+			clineRuntime: bundle.agent.clineRuntime ?? null,
 		},
 		commandVerification: {
 			status: bundle.commandVerification.status,

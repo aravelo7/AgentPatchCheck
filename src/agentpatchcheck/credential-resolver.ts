@@ -2,6 +2,7 @@ const CREDENTIAL_ENVIRONMENT_VARIABLES = {
 	"openai-primary": "OPENAI_API_KEY",
 	"openai-secondary": "OPENAI_API_KEY_SECONDARY",
 	"deepseek-primary": "DEEPSEEK_API_KEY",
+	"gemini-primary": "GEMINI_API_KEY",
 	"provider-a-primary": "AGENTPATCHCHECK_KEY_PROVIDER_A",
 	"provider-b-primary": "AGENTPATCHCHECK_KEY_PROVIDER_B",
 } as const;

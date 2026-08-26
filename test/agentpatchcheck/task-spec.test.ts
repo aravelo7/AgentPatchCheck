@@ -156,6 +156,8 @@ describe("TaskSpec", () => {
 						thinkingMode: "disabled",
 						baseUrl: "https://gateway.example/v1",
 						credentialRef: "provider-a-primary",
+						maxProtocolRecoveries: 1,
+						maxCompletionDeferrals: 3,
 					},
 					patchExpectation: "changes-required",
 				}),
@@ -169,6 +171,45 @@ describe("TaskSpec", () => {
 					protocol: "chat-completions",
 					thinkingMode: "disabled",
 					credentialRef: "provider-a-primary",
+					maxProtocolRecoveries: 1,
+					maxCompletionDeferrals: 3,
+				},
+			});
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("loads the dedicated DeepSeek provider identity and reasoning controls", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "agentpatchcheck-task-spec-"));
+		try {
+			const taskSpecPath = join(directory, "deepseek.json");
+			await writeFile(
+				taskSpecPath,
+				JSON.stringify({
+					version: 1,
+					repositoryRoot: process.cwd(),
+					prompt: "Inspect.",
+					agentAdapter: "harness-native",
+					model: "deepseek-v4-pro",
+					nativeAgent: {
+						provider: "deepseek",
+						protocol: "chat-completions",
+						thinkingMode: "enabled",
+						reasoningEffort: "max",
+						credentialRef: "deepseek-primary",
+					},
+					patchExpectation: "changes-required",
+				}),
+				"utf8",
+			);
+			await expect(loadTaskSpec(taskSpecPath)).resolves.toMatchObject({
+				nativeAgent: {
+					provider: "deepseek",
+					protocol: "chat-completions",
+					thinkingMode: "enabled",
+					reasoningEffort: "max",
+					credentialRef: "deepseek-primary",
 				},
 			});
 		} finally {

@@ -25,6 +25,16 @@ describe("CommandVerifier", () => {
 		expect(result.commands[0]).toMatchObject({ exitCode: 0, timedOut: false, stdout: process.cwd() });
 	});
 
+	it.runIf(process.platform === "win32")("runs the bundled npm CLI without spawning npm.cmd directly", async () => {
+		const result = await runCommandVerification(
+			validateVerificationPolicy({ commands: [{ command: "npm", args: ["--version"] }] }),
+			process.cwd(),
+		);
+
+		expect(result).toMatchObject({ status: "passed", commands: [{ command: "npm", exitCode: 0 }] });
+		expect(result.commands[0]?.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/u);
+	});
+
 	it("stops after the first failed authorized command", async () => {
 		const policy = validateVerificationPolicy({
 			commands: [

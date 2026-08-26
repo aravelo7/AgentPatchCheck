@@ -43,6 +43,18 @@ describe("EvidenceBundle", () => {
 				stderr: "password=super-secret-value",
 				durationMs: 42,
 				timedOut: false,
+				attemptReview: {
+					version: 1,
+					attempt: 1,
+					decision: "stop",
+					reason: "terminal-termination",
+					successfulMutationCount: 1,
+					affectedPaths: [prompt],
+					latestVerificationOutcome: null,
+					executionCheckpoint: null,
+					remainingAttempts: 1,
+					remainingTimeMs: 1_000,
+				},
 				publicVerificationRepair: {
 					eligible: false,
 					reason: "initial-agent-failed",
@@ -65,11 +77,17 @@ describe("EvidenceBundle", () => {
 					status: "failed",
 					terminationReason: "model-failed",
 					providerFailure: {
-						kind: "rate-limited",
-						detail: null,
-						code: "rate_limit_exceeded",
-						httpStatus: 429,
+						kind: "malformed-response",
+						detail: "invalid-tool-arguments",
+						code: null,
+						httpStatus: null,
 						requestId: "req_test-123",
+						validationIssue: {
+							path: "$.plan[0].status",
+							issue: "invalid-enum",
+							receivedType: "string",
+							constraint: "plan-step-status",
+						},
 					},
 					iterations: 2,
 					toolCalls: 1,
@@ -91,8 +109,78 @@ describe("EvidenceBundle", () => {
 							arguments: { path: prompt },
 							toolStatus: "ok",
 							observationSummary: "Read a regular workspace file.",
+							facts: {
+								kind: "retrieval",
+								tool: "read-file",
+								path: prompt,
+								query: null,
+								inspectedPaths: [prompt],
+								candidatePaths: [],
+								search: null,
+							},
 						},
 					],
+					convergenceCheckpoint: {
+						version: 1,
+						triggered: false,
+						triggerIteration: null,
+						discoveryActionsAtTrigger: null,
+						successfulFileReadsAtTrigger: null,
+						mutationActionsAtTrigger: null,
+						targetedRetrieval: null,
+						firstMutationIteration: null,
+						firstPublicVerificationIteration: null,
+						finishIteration: null,
+						outcome: "not-triggered",
+					},
+					historyProjection: {
+						version: 1,
+						canonicalInteractionCount: 9,
+						projectedInteractionCount: 4,
+						elidedInteractionCount: 5,
+						canonicalObservationCount: 9,
+						projectedObservationCount: 4,
+						elidedObservationCount: 5,
+						retainedInteractionIterations: [4, 5, 6, 7],
+					},
+					workingContext: {
+						version: 1,
+						phase: "failed",
+						inspectedPaths: [prompt],
+						candidatePaths: [],
+						retrieval: { successfulActions: 1, rejectedActions: 0, recent: [] },
+						mutation: { successfulActions: 0, paths: [], firstIteration: null },
+						publicVerification: { runs: 0, latestStatus: null, latestIteration: null },
+					},
+					planning: {
+						version: 1,
+						enabled: true,
+						maxRevisions: 4,
+						revisions: [
+							{
+								version: 1,
+								revision: 1,
+								iteration: 1,
+								trigger: "initial-observation",
+								plan: {
+									version: 1,
+									objective: prompt,
+									steps: [
+										{ step: `Inspect ${prompt}`, kind: "diagnosis", status: "completed" },
+										{ step: "Implement repair", kind: "implementation", status: "in_progress" },
+									],
+								},
+							},
+						],
+						currentPlan: {
+							version: 1,
+							objective: prompt,
+							steps: [
+								{ step: `Inspect ${prompt}`, kind: "diagnosis", status: "completed" },
+								{ step: "Implement repair", kind: "implementation", status: "in_progress" },
+							],
+						},
+					},
 				},
 			},
 			patch: {
@@ -109,11 +197,21 @@ describe("EvidenceBundle", () => {
 		const bundle = createEvidenceBundle({
 			policy,
 			execution,
+			taskDefinition: {
+				version: 1,
+				path: "D:\\repo\\.agentpatchcheck\\task-definitions\\definition.json",
+				sha256: "c".repeat(64),
+			},
 			createdAt: new Date("2026-08-07T00:00:00.000Z"),
 		});
 		const serialized = JSON.stringify(bundle);
 
 		expect(bundle.policy.promptLength).toBe(prompt.length);
+		expect(bundle.taskDefinition).toEqual({
+			version: 1,
+			path: "D:\\repo\\.agentpatchcheck\\task-definitions\\definition.json",
+			sha256: "c".repeat(64),
+		});
 		expect(bundle.policy.promptSha256).toMatch(/^[a-f0-9]{64}$/u);
 		expect(bundle.policy.verificationProfile).toEqual({
 			path: "D:\\profiles\\node-version.json",
@@ -130,15 +228,32 @@ describe("EvidenceBundle", () => {
 		expect(serialized).not.toContain("https://api.openai.com/v1");
 		expect(serialized).toContain("[REDACTED_PROMPT]");
 		expect(bundle.agent.runtime?.providerFailure).toEqual({
-			kind: "rate-limited",
-			detail: null,
-			code: "rate_limit_exceeded",
-			httpStatus: 429,
+			kind: "malformed-response",
+			detail: "invalid-tool-arguments",
+			code: null,
+			httpStatus: null,
 			requestId: "req_test-123",
+			validationIssue: {
+				path: "$.plan[0].status",
+				issue: "invalid-enum",
+				receivedType: "string",
+				constraint: "plan-step-status",
+			},
 		});
 		expect(serialized).toContain("[REDACTED_SECRET]");
 		expect(bundle.agent.runtime?.trajectory[0]?.arguments?.path).toBe("[REDACTED_PROMPT]");
+		expect(bundle.agent.runtime?.historyProjection).toEqual({
+			version: 1,
+			canonicalInteractionCount: 9,
+			projectedInteractionCount: 4,
+			elidedInteractionCount: 5,
+			canonicalObservationCount: 9,
+			projectedObservationCount: 4,
+			elidedObservationCount: 5,
+			retainedInteractionIterations: [4, 5, 6, 7],
+		});
 		expect(bundle.agent.publicVerificationRepair?.initialChangedFiles).toEqual(["[REDACTED_PROMPT]"]);
+		expect(bundle.agent.attemptReview?.affectedPaths).toEqual(["[REDACTED_PROMPT]"]);
 	});
 
 	it("writes the bundle atomically outside the worktree", async () => {

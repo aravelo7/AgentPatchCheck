@@ -3,7 +3,10 @@ import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { getGitStdout } from "../workspace/git-utils";
+import { DEFAULT_MAX_COMPLETION_DEFERRALS, MAX_COMPLETION_DEFERRALS } from "./completion-controller";
 import { isCredentialRef } from "./credential-resolver";
+import { DEFAULT_MAX_PLAN_REVISIONS, MAX_PLAN_REVISIONS } from "./planner";
+import { DEFAULT_MAX_PROTOCOL_RECOVERIES, MAX_PROTOCOL_RECOVERIES } from "./protocol-recovery";
 import { DEFAULT_RISK_POLICY_CONFIGURATION } from "./risk-policy";
 import {
 	type AgentAdapterId,
@@ -15,6 +18,7 @@ import {
 	type ModelProviderConfiguration,
 	type ModelProviderKind,
 	type ModelProviderProtocol,
+	type ModelProviderReasoningEffort,
 	type ModelProviderThinkingMode,
 	type PatchExpectation,
 	type RiskPolicy,
@@ -23,6 +27,9 @@ import {
 	type TaskPolicyInput,
 } from "./types";
 import { validateVerificationPolicy } from "./verification-policy";
+
+const DEFAULT_EXECUTION_BOOTSTRAP_TIMEOUT_MS = 5 * 60 * 1_000;
+const MAX_EXECUTION_BOOTSTRAP_TIMEOUT_MS = 15 * 60 * 1_000;
 
 export const DEFAULT_TASK_TIMEOUT_MS = 15 * 60 * 1_000;
 export const MAX_TASK_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -33,17 +40,22 @@ const SANDBOXES = new Set<AgentPatchCheckSandbox>(["read-only", "workspace-write
 const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const PATCH_EXPECTATIONS = new Set<PatchExpectation>(["changes-required", "changes-optional"]);
-const AGENT_ADAPTERS = new Set<AgentAdapterId>(["codex", "script", "harness-native"]);
+const AGENT_ADAPTERS = new Set<AgentAdapterId>(["codex", "script", "harness-native", "cline-runtime"]);
 const HIDDEN_ORACLE_ISOLATION_LEVELS = new Set<HiddenOracleIsolationLevel>(["none", "network", "process", "strict"]);
 const DEFAULT_HIDDEN_ORACLE_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024;
 const DEFAULT_HIDDEN_ORACLE_CPU_RATE_PERCENT = 50;
 const DEFAULT_NATIVE_MAX_ITERATIONS = 12;
 const DEFAULT_NATIVE_MAX_TOOL_CALLS = 24;
 const DEFAULT_NATIVE_MAX_OBSERVATION_BYTES = 16 * 1024;
+const DEFAULT_NATIVE_MAX_ATTEMPTS = 2;
+const DEFAULT_NATIVE_MIN_CONTINUATION_TIME_MS = 30_000;
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
-const MODEL_PROVIDERS = new Set<ModelProviderKind>(["openai", "openai-compatible"]);
-const MODEL_PROVIDER_PROTOCOLS = new Set<ModelProviderProtocol>(["responses", "chat-completions"]);
-const MODEL_PROVIDER_THINKING_MODES = new Set<ModelProviderThinkingMode>(["default", "disabled"]);
+const DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
+const DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+const MODEL_PROVIDERS = new Set<ModelProviderKind>(["openai", "openai-compatible", "deepseek", "gemini"]);
+const MODEL_PROVIDER_PROTOCOLS = new Set<ModelProviderProtocol>(["responses", "chat-completions", "native"]);
+const MODEL_PROVIDER_THINKING_MODES = new Set<ModelProviderThinkingMode>(["default", "enabled", "disabled"]);
+const MODEL_PROVIDER_REASONING_EFFORTS = new Set<ModelProviderReasoningEffort>(["low", "high", "max"]);
 
 function assertNoNullBytes(value: string, label: string): void {
 	if (value.includes("\0")) {
@@ -195,7 +207,7 @@ async function normalizeAgentScript(
 	script: string | undefined,
 	repositoryRoot: string,
 ): Promise<string | null> {
-	if (adapter === "codex" || adapter === "harness-native") {
+	if (adapter === "codex" || adapter === "harness-native" || adapter === "cline-runtime") {
 		if (script !== undefined) throw new Error("Codex Adapter must not define an agent script.");
 		return null;
 	}
@@ -212,11 +224,11 @@ function normalizeNativeAgent(
 	input: TaskPolicyInput["nativeAgent"],
 	model: string | undefined,
 ): HarnessNativeAgentPolicy | null {
-	if (adapter !== "harness-native") {
+	if (adapter !== "harness-native" && adapter !== "cline-runtime") {
 		if (input !== undefined) throw new Error("nativeAgent requires the Harness-native Adapter.");
 		return null;
 	}
-	if (model === undefined) throw new Error("Harness-native Adapter requires a model.");
+	if (model === undefined) throw new Error("Managed Runtime Adapter requires a model.");
 	if (input?.credentialRef === undefined)
 		throw new Error("Harness-native Adapter requires an explicit credentialRef.");
 	const maxIterations = input?.maxIterations ?? DEFAULT_NATIVE_MAX_ITERATIONS;
@@ -224,6 +236,17 @@ function normalizeNativeAgent(
 	const maxRejectedToolCalls = input?.maxRejectedToolCalls ?? 4;
 	const maxObservationBytes = input?.maxObservationBytes ?? DEFAULT_NATIVE_MAX_OBSERVATION_BYTES;
 	const maxTransportRetries = input?.maxTransportRetries ?? 0;
+	const maxProtocolRecoveries = input?.maxProtocolRecoveries ?? DEFAULT_MAX_PROTOCOL_RECOVERIES;
+	const maxCompletionDeferrals = input?.maxCompletionDeferrals ?? DEFAULT_MAX_COMPLETION_DEFERRALS;
+	const maxPlanRevisions = input?.maxPlanRevisions ?? DEFAULT_MAX_PLAN_REVISIONS;
+	const toolPresentation = input?.toolPresentation ?? "native";
+	if (toolPresentation === "dsh-compatible" && input?.plannerEnabled === true)
+		throw new Error(
+			"The DSH-compatible execution path owns one continuous coding loop and requires plannerEnabled false.",
+		);
+	const plannerEnabled = toolPresentation === "dsh-compatible" ? false : (input?.plannerEnabled ?? true);
+	const maxAttempts = input?.maxAttempts ?? (adapter === "harness-native" ? DEFAULT_NATIVE_MAX_ATTEMPTS : 1);
+	const minContinuationTimeMs = input?.minContinuationTimeMs ?? DEFAULT_NATIVE_MIN_CONTINUATION_TIME_MS;
 	if (!Number.isSafeInteger(maxIterations) || maxIterations < 1 || maxIterations > 32)
 		throw new Error("Harness-native maxIterations must be an integer between 1 and 32.");
 	if (!Number.isSafeInteger(maxToolCalls) || maxToolCalls < 1 || maxToolCalls > 64)
@@ -234,6 +257,38 @@ function normalizeNativeAgent(
 		throw new Error("Harness-native maxObservationBytes must be an integer between 1024 and 65536.");
 	if (!Number.isSafeInteger(maxTransportRetries) || maxTransportRetries < 0 || maxTransportRetries > 1)
 		throw new Error("Harness-native maxTransportRetries must be an integer between 0 and 1.");
+	if (
+		!Number.isSafeInteger(maxProtocolRecoveries) ||
+		maxProtocolRecoveries < 0 ||
+		maxProtocolRecoveries > MAX_PROTOCOL_RECOVERIES
+	)
+		throw new Error(
+			`Harness-native maxProtocolRecoveries must be an integer between 0 and ${MAX_PROTOCOL_RECOVERIES}.`,
+		);
+	if (
+		!Number.isSafeInteger(maxCompletionDeferrals) ||
+		maxCompletionDeferrals < 1 ||
+		maxCompletionDeferrals > MAX_COMPLETION_DEFERRALS
+	)
+		throw new Error(
+			`Harness-native maxCompletionDeferrals must be an integer between 1 and ${MAX_COMPLETION_DEFERRALS}.`,
+		);
+	if (!Number.isSafeInteger(maxPlanRevisions) || maxPlanRevisions < 1 || maxPlanRevisions > MAX_PLAN_REVISIONS)
+		throw new Error(`Harness-native maxPlanRevisions must be an integer between 1 and ${MAX_PLAN_REVISIONS}.`);
+	if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 3)
+		throw new Error("Harness-native maxAttempts must be an integer between 1 and 3.");
+	if (!Number.isSafeInteger(minContinuationTimeMs) || minContinuationTimeMs < 1 || minContinuationTimeMs > 5 * 60_000)
+		throw new Error("Harness-native minContinuationTimeMs must be an integer between 1 and 300000.");
+	if (adapter === "cline-runtime" && (input?.maxAttempts !== undefined || input?.minContinuationTimeMs !== undefined))
+		throw new Error("Harness-native attempt continuation options require the Harness-native Adapter.");
+	const clineProviderId = input?.clineProviderId?.trim();
+	if (
+		adapter === "cline-runtime" &&
+		(clineProviderId === undefined || !/^[A-Za-z0-9_-]{1,64}$/u.test(clineProviderId))
+	)
+		throw new Error("Cline Runtime Adapter requires a valid nativeAgent.clineProviderId.");
+	if (adapter === "harness-native" && clineProviderId !== undefined)
+		throw new Error("nativeAgent.clineProviderId requires the Cline Runtime Adapter.");
 	return {
 		modelProvider: normalizeModelProvider(input),
 		maxIterations,
@@ -241,19 +296,47 @@ function normalizeNativeAgent(
 		maxRejectedToolCalls,
 		maxObservationBytes,
 		maxTransportRetries,
+		maxProtocolRecoveries,
+		maxCompletionDeferrals,
+		maxPlanRevisions,
+		plannerEnabled,
+		toolPresentation,
+		maxAttempts,
+		minContinuationTimeMs,
+		clineProviderId: clineProviderId ?? null,
 	};
 }
 
 function normalizeModelProvider(input: TaskPolicyInput["nativeAgent"]): ModelProviderConfiguration {
 	const provider = input?.provider ?? "openai";
 	if (!MODEL_PROVIDERS.has(provider)) throw new Error("Harness-native model provider is invalid.");
-	const protocol = input?.protocol ?? "responses";
+	const protocol =
+		input?.protocol ??
+		(provider === "gemini" ? "native" : provider === "deepseek" ? "chat-completions" : "responses");
 	if (!MODEL_PROVIDER_PROTOCOLS.has(protocol)) throw new Error("Harness-native model provider protocol is invalid.");
 	const thinkingMode = input?.thinkingMode ?? "default";
 	if (!MODEL_PROVIDER_THINKING_MODES.has(thinkingMode))
 		throw new Error("Harness-native model provider thinkingMode is invalid.");
-	if (thinkingMode !== "default" && (provider !== "openai-compatible" || protocol !== "chat-completions"))
-		throw new Error("Harness-native model provider thinkingMode requires OpenAI-compatible Chat Completions.");
+	const reasoningEffort = input?.reasoningEffort;
+	if (reasoningEffort !== undefined && !MODEL_PROVIDER_REASONING_EFFORTS.has(reasoningEffort))
+		throw new Error("Harness-native model provider reasoningEffort is invalid.");
+	if (thinkingMode === "enabled" && (provider !== "deepseek" || protocol !== "chat-completions"))
+		throw new Error("Enabled thinking requires the dedicated DeepSeek Chat Completions provider.");
+	if (
+		thinkingMode === "disabled" &&
+		!((provider === "openai-compatible" || provider === "deepseek") && protocol === "chat-completions")
+	)
+		throw new Error("Disabled thinking requires an OpenAI-compatible or DeepSeek Chat Completions provider.");
+	if (reasoningEffort !== undefined && (provider !== "deepseek" || protocol !== "chat-completions"))
+		throw new Error("Harness-native model provider reasoningEffort requires the dedicated DeepSeek provider.");
+	if (reasoningEffort !== undefined && thinkingMode === "disabled")
+		throw new Error("DeepSeek reasoningEffort cannot be used when thinking is disabled.");
+	if (provider === "deepseek" && protocol !== "chat-completions")
+		throw new Error("The DeepSeek provider requires the Chat Completions protocol.");
+	if (provider === "gemini" && protocol !== "native")
+		throw new Error("The Gemini provider requires the native protocol.");
+	if (provider !== "gemini" && protocol === "native")
+		throw new Error("The native protocol is reserved for the Gemini provider.");
 	const credentialRef = input?.credentialRef;
 	if (credentialRef === undefined) throw new Error("Harness-native Adapter requires an explicit credentialRef.");
 	if (!isCredentialRef(credentialRef)) throw new Error("Harness-native credentialRef is invalid.");
@@ -262,15 +345,32 @@ function normalizeModelProvider(input: TaskPolicyInput["nativeAgent"]): ModelPro
 		throw new Error("The official OpenAI provider must use its fixed API endpoint.");
 	if (provider === "openai-compatible" && requestedBaseUrl === undefined)
 		throw new Error("The OpenAI-compatible provider requires baseUrl.");
-	const baseUrl = normalizeProviderBaseUrl(requestedBaseUrl ?? DEFAULT_OPENAI_BASE_URL);
+	if (provider === "gemini" && requestedBaseUrl !== undefined && requestedBaseUrl !== DEFAULT_GEMINI_BASE_URL)
+		throw new Error("The Gemini provider must use its fixed native API endpoint.");
+	if (provider === "deepseek" && requestedBaseUrl !== undefined && requestedBaseUrl !== DEFAULT_DEEPSEEK_BASE_URL)
+		throw new Error("The DeepSeek provider must use its fixed official API endpoint.");
+	const baseUrl = normalizeProviderBaseUrl(
+		requestedBaseUrl ??
+			(provider === "gemini"
+				? DEFAULT_GEMINI_BASE_URL
+				: provider === "deepseek"
+					? DEFAULT_DEEPSEEK_BASE_URL
+					: DEFAULT_OPENAI_BASE_URL),
+	);
 	return {
 		provider,
 		protocol,
 		thinkingMode,
+		reasoningEffort: reasoningEffort ?? null,
 		baseUrl,
 		endpointSha256: createHash("sha256").update(baseUrl, "utf8").digest("hex"),
 		credentialRef,
-		implementation: "openai-compatible-v1",
+		implementation:
+			provider === "gemini"
+				? "cline-llms-gemini-native-v1"
+				: provider === "deepseek"
+					? "deepseek-official-chat-v1"
+					: "openai-compatible-v1",
 	};
 }
 
@@ -308,6 +408,25 @@ async function normalizeRiskPolicy(
 	return {
 		configuration: riskPolicy.configuration,
 		profile: { ...riskPolicy.profile, path: profilePath },
+	};
+}
+
+function normalizeExecutionBootstrap(input: TaskPolicyInput["executionBootstrap"]) {
+	if (input === undefined) return null;
+	if (!/^v\d+\.\d+\.\d+$/u.test(input.nodeVersion)) throw new Error("Bootstrap Node version is invalid.");
+	if (!/^\d+\.\d+\.\d+$/u.test(input.npmVersion)) throw new Error("Bootstrap npm version is invalid.");
+	if (input.npmInstall.legacyPeerDeps !== true || input.npmInstall.packageLock !== false)
+		throw new Error("Execution bootstrap supports only npm install --legacy-peer-deps --no-package-lock.");
+	const timeoutMs = input.timeoutMs ?? DEFAULT_EXECUTION_BOOTSTRAP_TIMEOUT_MS;
+	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_EXECUTION_BOOTSTRAP_TIMEOUT_MS)
+		throw new Error(
+			`Execution bootstrap timeout must be a positive integer no greater than ${MAX_EXECUTION_BOOTSTRAP_TIMEOUT_MS} milliseconds.`,
+		);
+	return {
+		nodeVersion: input.nodeVersion,
+		npmVersion: input.npmVersion,
+		npmInstall: { legacyPeerDeps: true as const, packageLock: false as const },
+		timeoutMs,
 	};
 }
 
@@ -355,7 +474,7 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 	}
 	const agentAdapter = input.agentAdapter ?? "codex";
 	if (!AGENT_ADAPTERS.has(agentAdapter))
-		throw new Error('Agent Adapter must be "codex", "script", or "harness-native".');
+		throw new Error('Agent Adapter must be "codex", "script", "harness-native", or "cline-runtime".');
 	const model = normalizeOptionalModel(input.model);
 
 	return {
@@ -365,6 +484,7 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 		baseCommit,
 		worktreeRoot,
 		prompt: normalizePrompt(input.prompt),
+		executionBootstrap: normalizeExecutionBootstrap(input.executionBootstrap),
 		publicVerificationRepairInstruction: normalizePublicVerificationRepairInstruction(
 			input.publicVerificationRepairInstruction,
 		),

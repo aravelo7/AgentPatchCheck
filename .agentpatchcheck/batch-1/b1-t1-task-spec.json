@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "repositoryRoot": "${AGENTPATCHCHECK_REPOSITORY_ROOT}",
+  "baseRef": "b1cb676cf92dd1a48365b731979833375b188bf2",
+  "prompt": "Fix the Rational string-construction bug demonstrated by the deterministic reproduction below. A decimal numerator supplied as a string together with a denominator supplied as a string must preserve the intended rational value. Keep the change minimal, preserve existing behavior outside this case, and run the declared verification before finishing. Reproduction: from sympy import Rational; x = Rational(\"0.5\", \"100\"); print(x); print(x == Rational(1, 200)).",
+  "agentAdapter": "harness-native",
+  "model": "deepseek-v4-pro",
+  "nativeAgent": {
+    "provider": "deepseek",
+    "protocol": "chat-completions",
+    "thinkingMode": "enabled",
+    "reasoningEffort": "high",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "credentialRef": "deepseek-primary",
+    "maxIterations": 12,
+    "maxToolCalls": 48,
+    "maxRejectedToolCalls": 4,
+    "maxObservationBytes": 16384,
+    "maxTransportRetries": 1,
+    "maxProtocolRecoveries": 2,
+    "maxCompletionDeferrals": 2,
+    "maxPlanRevisions": 4,
+    "plannerEnabled": false
+  },
+  "timeoutMs": 600000,
+  "verification": {
+    "commands": [
+      {
+        "command": "python",
+        "args": ["-c", "from sympy import Rational; x=Rational('0.5','100'); assert str(x)=='1/200'; assert x == Rational(1,200)"],
+        "timeoutMs": 30000
+      }
+    ]
+  },
+  "hiddenOracle": {
+    "script": "b1-t1-oracle.mjs",
+    "timeoutMs": 30000,
+    "isolation": "process",
+    "memoryLimitBytes": 268435456,
+    "cpuRatePercent": 50
+  },
+  "patchExpectation": "changes-required"
+}

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 import { appendBoundedOutput } from "./bounded-output";
+import { createClineRuntimeAdapter } from "./cline-runtime-adapter";
 import { runCodex, terminateCodexProcess } from "./codex-runner";
 import { createHarnessNativeRuntime, type HarnessNativeModelProvider } from "./harness-native-runtime";
 import type { AgentAdapterId, AgentExecution, RepairContext, TaskPolicy } from "./types";
@@ -85,11 +86,13 @@ export function createHarnessNativeAdapter(provider?: HarnessNativeModelProvider
 }
 
 const harnessNativeAdapter = createHarnessNativeAdapter();
+const clineRuntimeAdapter = createClineRuntimeAdapter();
 
 const adapters = new Map<AgentAdapterId, AgentAdapter>([
 	[codexAdapter.id, codexAdapter],
 	[scriptAdapter.id, scriptAdapter],
 	[harnessNativeAdapter.id, harnessNativeAdapter],
+	[clineRuntimeAdapter.id, clineRuntimeAdapter],
 ]);
 
 export function getAgentAdapter(id: AgentAdapterId): AgentAdapter {

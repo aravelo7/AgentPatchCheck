@@ -10,6 +10,7 @@ import {
 	ClineCore,
 	type ClineCoreStartInput,
 	type CoreSessionEvent,
+	createAgentRuntime,
 	createUserInstructionConfigService,
 	formatRulesForSystemPrompt,
 	getClineDefaultSystemPrompt,
@@ -44,6 +45,7 @@ export interface ClineSdkSlashCommand {
 }
 export type ClineSdkToolApprovalRequest = ToolApprovalRequest;
 export type ClineSdkToolApprovalResult = ToolApprovalResult;
+export { createAgentRuntime as createClineSdkAgentRuntime };
 
 export async function createClineSdkSessionHost(): Promise<ClineSdkSessionHost> {
 	return await ClineCore.create({

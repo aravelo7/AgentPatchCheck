@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { getGitStdout, runGit } from "../workspace/git-utils";
@@ -106,6 +106,41 @@ export async function createIsolatedWorkspace(options: {
 		baseRef,
 		baseCommit,
 	};
+}
+
+/** Reopens only the exact detached worktree named by a durable Runtime record. */
+export async function resumeIsolatedWorkspace(options: {
+	repositoryPath: string;
+	runId: string;
+	baseRef: string;
+	baseCommit: string;
+	worktreeRoot: string;
+}): Promise<IsolatedWorkspace> {
+	const repositoryPath = normalizeRepositoryPath(options.repositoryPath);
+	const runId = normalizeRunId(options.runId);
+	const baseRef = normalizeBaseRef(options.baseRef);
+	const baseCommit = options.baseCommit.trim();
+	const path = join(resolve(options.worktreeRoot), runId);
+	const metadata = await lstat(path);
+	if (!metadata.isDirectory() || metadata.isSymbolicLink())
+		throw new Error("Durable resume worktree is not a regular directory.");
+	if (resolve(await realpath(path)) !== resolve(path))
+		throw new Error("Durable resume worktree path resolves through an unexpected alias.");
+	const [topLevel, head, commonDirectory] = await Promise.all([
+		runGit(path, ["rev-parse", "--show-toplevel"]),
+		runGit(path, ["rev-parse", "HEAD"]),
+		runGit(path, ["rev-parse", "--git-common-dir"]),
+	]);
+	if (!topLevel.ok || resolve(topLevel.stdout.trim()) !== resolve(path))
+		throw new Error("Durable resume path is not the recorded Git worktree.");
+	if (!head.ok || head.stdout.trim() !== baseCommit)
+		throw new Error("Durable resume worktree HEAD does not match the task base commit.");
+	if (!commonDirectory.ok) throw new Error("Durable resume worktree Git ownership is unavailable.");
+	const resolvedCommonDirectory = resolve(path, commonDirectory.stdout.trim());
+	const expectedGitDirectory = resolve(repositoryPath, ".git");
+	if (resolvedCommonDirectory !== expectedGitDirectory)
+		throw new Error("Durable resume worktree belongs to a different repository.");
+	return { runId, repositoryPath, path, baseRef, baseCommit };
 }
 
 export async function collectPatchSnapshot(worktreePath: string): Promise<PatchSnapshot> {

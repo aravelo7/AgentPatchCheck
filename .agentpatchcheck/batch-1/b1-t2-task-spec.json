@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "repositoryRoot": "${AGENTPATCHCHECK_REPOSITORY_ROOT}",
+  "baseRef": "a36caf5c74fe654cedc488e8a8a05fad388f8406",
+  "prompt": "Fix the SymPy parser behavior for relational expressions so that parse_expr(..., evaluate=False) preserves the unevaluated relation instead of collapsing it to a Boolean singleton. Preserve normal evaluated parsing behavior, keep the change minimal, and run the declared verification before finishing. Reproduction: from sympy.parsing.sympy_parser import parse_expr; x = parse_expr(\"1 < 2\", evaluate=False); print(x); print(type(x)).",
+  "agentAdapter": "harness-native",
+  "model": "deepseek-v4-pro",
+  "nativeAgent": {
+    "provider": "deepseek",
+    "protocol": "chat-completions",
+    "thinkingMode": "enabled",
+    "reasoningEffort": "high",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "credentialRef": "deepseek-primary",
+    "maxIterations": 12,
+    "maxToolCalls": 48,
+    "maxRejectedToolCalls": 4,
+    "maxObservationBytes": 16384,
+    "maxTransportRetries": 1,
+    "maxProtocolRecoveries": 2,
+    "maxCompletionDeferrals": 2,
+    "maxPlanRevisions": 4,
+    "plannerEnabled": false
+  },
+  "timeoutMs": 600000,
+  "verification": {
+    "commands": [
+      {
+        "command": "python",
+        "args": ["-c", "from sympy.parsing.sympy_parser import parse_expr; x=parse_expr('1 < 2', evaluate=False); assert type(x).__name__=='StrictLessThan'; assert str(x)=='1 < 2'"],
+        "timeoutMs": 30000
+      }
+    ]
+  },
+  "hiddenOracle": {
+    "script": "b1-t2-oracle.mjs",
+    "timeoutMs": 30000,
+    "isolation": "process",
+    "memoryLimitBytes": 268435456,
+    "cpuRatePercent": 50
+  },
+  "patchExpectation": "changes-required"
+}

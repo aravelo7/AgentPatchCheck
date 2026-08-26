@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 
 import { appendBoundedOutput } from "./bounded-output";
+import { sanitizedChildEnvironment } from "./child-process-environment";
+import { terminateCodexProcess } from "./codex-runner";
+import { getWindowsNpmCliEntrypoint } from "./execution-bootstrap";
 import type {
 	CommandVerification,
 	CommandVerificationResult,
@@ -9,10 +12,14 @@ import type {
 	VerificationPolicy,
 } from "./types";
 
-const sensitiveEnvironmentName = /(?:api[_-]?key|token|secret|password|passwd|authorization)/iu;
+export { sanitizedChildEnvironment as sanitizedVerificationEnvironment } from "./child-process-environment";
 
-function sanitizedVerificationEnvironment(): NodeJS.ProcessEnv {
-	return Object.fromEntries(Object.entries(process.env).filter(([name]) => !sensitiveEnvironmentName.test(name)));
+function launchVerificationCommand(command: string, args: string[]) {
+	if (command.toLowerCase() === "npm") {
+		const npmCliEntrypoint = getWindowsNpmCliEntrypoint();
+		if (npmCliEntrypoint !== null) return { executable: process.execPath, args: [npmCliEntrypoint, ...args] };
+	}
+	return { executable: command, args };
 }
 
 /**
@@ -24,12 +31,16 @@ export async function runVerificationCommand(options: {
 	command: VerificationCommand;
 	cwd: string;
 	outputLimitBytes: number;
+	/** DSH Code Mode cancellation; ordinary Native verification leaves this unset. */
+	signal?: AbortSignal;
 }): Promise<CommandVerificationResult> {
 	const startedAt = Date.now();
 	return await new Promise<CommandVerificationResult>((resolve) => {
-		const child = spawn(options.command.command, options.command.args, {
+		const env = sanitizedChildEnvironment();
+		const launch = launchVerificationCommand(options.command.command, options.command.args);
+		const child = spawn(launch.executable, launch.args, {
 			cwd: options.cwd,
-			env: sanitizedVerificationEnvironment(),
+			env,
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
@@ -42,11 +53,14 @@ export async function runVerificationCommand(options: {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeout);
+			options.signal?.removeEventListener("abort", onAbort);
 			resolve(result);
 		};
+		const onAbort = (): void => terminateCodexProcess(child);
 		const timeout = setTimeout(() => {
 			timedOut = true;
-			child.kill();
+			if (options.signal === undefined) child.kill();
+			else terminateCodexProcess(child);
 		}, options.command.timeoutMs);
 
 		child.stdout?.on("data", (chunk: Buffer | string) => {
@@ -79,6 +93,8 @@ export async function runVerificationCommand(options: {
 				timedOut,
 			});
 		});
+		if (options.signal?.aborted) onAbort();
+		else options.signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 

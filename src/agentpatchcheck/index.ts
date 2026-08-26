@@ -11,11 +11,22 @@ export {
 	recordApprovalDecision,
 } from "./approval";
 export { assessEvidenceBundle, getAssessmentReportPath, writeAssessmentReport } from "./assessment-report";
+export {
+	createHarnessNativeAttemptContinuation,
+	reviewHarnessNativeAttempt,
+} from "./attempt-controller";
 export { getBenchmarkReportPath, runBenchmark, writeBenchmarkReport } from "./benchmark-runner";
 export { loadBenchmarkSpec } from "./benchmark-spec";
 export { cleanupEvidenceWorktree } from "./cleanup";
 export { buildCodexLaunchPlan, runCodex } from "./codex-runner";
 export { createPublicVerificationFeedback, runCommandVerification } from "./command-verifier";
+export {
+	DEFAULT_MAX_COMPLETION_DEFERRALS,
+	HarnessNativeCompletionController,
+	MAX_COMPLETION_DEFERRALS,
+} from "./completion-controller";
+export { deriveHarnessNativeContextViews } from "./context-view";
+export { deriveHarnessNativeContinuationContext } from "./continuation-context";
 export { isCredentialRef, resolveCredential } from "./credential-resolver";
 export { auditEvidenceBundles } from "./evidence-audit";
 export { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
@@ -42,8 +53,27 @@ export type {
 } from "./model-provider";
 export { createModelProvider, ModelProviderFailureError } from "./model-provider";
 export { decidePatchVerdict } from "./patch-verdict";
+export type { PlannerProvider, PlannerProviderContext, PlannerProviderResult, PlannerTrigger } from "./planner";
+export { DEFAULT_MAX_PLAN_REVISIONS, HarnessNativePlanner, MAX_PLAN_REVISIONS } from "./planner";
+export {
+	createProtocolRecoveryFeedback,
+	DEFAULT_MAX_PROTOCOL_RECOVERIES,
+	isRecoverableProtocolFailure,
+	MAX_PROTOCOL_RECOVERIES,
+} from "./protocol-recovery";
 export { DEFAULT_RISK_POLICY_CONFIGURATION, evaluateRiskPolicy } from "./risk-policy";
 export { loadRiskPolicyProfile } from "./risk-policy-profile";
+export { HarnessNativeRuntimeEventSpine } from "./runtime-events";
+export {
+	deriveHarnessNativeShadowControlPlane,
+	HarnessNativeShadowControlPlaneReducer,
+	replayHarnessNativeRuntimeMechanicalState,
+} from "./shadow-control-plane";
+export {
+	getTaskDefinitionSnapshotPath,
+	persistTaskDefinitionSnapshot,
+	readTaskDefinitionSnapshot,
+} from "./task-definition-snapshot";
 export {
 	DEFAULT_TASK_TIMEOUT_MS,
 	MAX_TASK_PROMPT_LENGTH,
@@ -95,7 +125,35 @@ export type {
 	EvidenceShowResult,
 	GitPatchVerification,
 	GitPatchVerificationStatus,
+	HarnessNativeAttemptContinuation,
+	HarnessNativeAttemptReview,
+	HarnessNativeAttemptReviewReason,
+	HarnessNativeCompletionDecision,
+	HarnessNativeCompletionReason,
+	HarnessNativeContextViews,
+	HarnessNativeContinuationContextView,
+	HarnessNativeContinuationEvidence,
+	HarnessNativeContinuationEvidenceKind,
+	HarnessNativeContinuationUnresolvedWork,
+	HarnessNativeExecutionPlan,
+	HarnessNativeExecutionPlanStep,
+	HarnessNativeExecutorContextView,
+	HarnessNativePlannerContextView,
+	HarnessNativePlanningResult,
+	HarnessNativePlanRevision,
+	HarnessNativePlanStepStatus,
+	HarnessNativeProtocolRecoveryFeedback,
+	HarnessNativeProtocolRecoveryOwner,
 	HarnessNativeProviderFailureDetail,
+	HarnessNativeProviderReceivedValueType,
+	HarnessNativeProviderValidationIssue,
+	HarnessNativeProviderValidationIssueType,
+	HarnessNativeRuntimeEvent,
+	HarnessNativeShadowControlPlaneDiagnostic,
+	HarnessNativeShadowControlState,
+	HarnessNativeShadowControlStateEvolution,
+	HarnessNativeShadowStallReason,
+	HarnessNativeToolResultFacts,
 	HiddenOracleInput,
 	HiddenOracleIsolationCapability,
 	HiddenOracleIsolationLevel,
@@ -104,6 +162,7 @@ export type {
 	ModelProviderConfiguration,
 	ModelProviderKind,
 	ModelProviderProtocol,
+	ModelProviderReasoningEffort,
 	ModelProviderThinkingMode,
 	PatchExpectation,
 	PatchSnapshot,
@@ -119,6 +178,9 @@ export type {
 	RiskPolicyInput,
 	RiskPolicyProfileReference,
 	RiskResult,
+	TaskDefinitionArtifactReference,
+	TaskDefinitionSnapshot,
+	TaskDefinitionSnapshotReference,
 	TaskPolicy,
 	TaskPolicyInput,
 	UntrackedFileSnapshot,

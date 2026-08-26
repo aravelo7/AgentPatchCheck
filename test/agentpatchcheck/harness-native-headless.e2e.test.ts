@@ -21,6 +21,20 @@ async function git(repository: string, args: string[]): Promise<void> {
 	await execFile("git", args, { cwd: repository, windowsHide: true });
 }
 
+function wholeFilePatch(path: string, before: string, after: string): string {
+	const beforeLines = before.replaceAll("\r\n", "\n").split("\n");
+	const afterLines = after.replaceAll("\r\n", "\n").split("\n");
+	return [
+		`diff --git a/${path} b/${path}`,
+		`--- a/${path}`,
+		`+++ b/${path}`,
+		`@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
+		...beforeLines.map((line) => `-${line}`),
+		...afterLines.map((line) => `+${line}`),
+		"",
+	].join("\n");
+}
+
 const provider: HarnessNativeModelProvider = {
 	id: "openai-responses",
 	decide: async ({ observations }) => {
@@ -33,7 +47,7 @@ const provider: HarnessNativeModelProvider = {
 				decision: {
 					kind: "tool",
 					tool: "apply-patch",
-					arguments: { path: "README.md", expectedText: "before", replacementText: "after" },
+					arguments: { patch: wholeFilePatch("README.md", "before", "after") },
 				},
 			};
 		return { decision: { kind: "finish" } };
@@ -123,6 +137,133 @@ describe("Harness-native Headless Core E2E", () => {
 		}
 	}, 30_000);
 
+	it("continues one exhausted inner attempt from an event-derived continuation view", async () => {
+		const repository = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-continuation-"));
+		try {
+			await writeFile(join(repository, "README.md"), "before\n", "utf8");
+			await git(repository, ["init"]);
+			await git(repository, ["config", "user.email", "fixture@example.invalid"]);
+			await git(repository, ["config", "user.name", "Fixture"]);
+			await git(repository, ["add", "."]);
+			await git(repository, ["commit", "-m", "base"]);
+			const policy = await validateTaskPolicy({
+				repositoryRoot: repository,
+				prompt: "Update the existing README.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: {
+					credentialRef: "openai-primary",
+					maxIterations: 2,
+					maxToolCalls: 2,
+					maxAttempts: 2,
+					minContinuationTimeMs: 1,
+				},
+				patchExpectation: "changes-required",
+				verification: {
+					commands: [
+						{
+							command: process.execPath,
+							args: [
+								"-e",
+								"const fs=require('node:fs');process.exit(fs.readFileSync('README.md','utf8').startsWith('after')?0:1)",
+							],
+						},
+					],
+				},
+			});
+			const continuationContexts: unknown[] = [];
+			const continuationObservationCounts: number[] = [];
+			let sessionsCreated = 0;
+			const decide: HarnessNativeModelProvider["decide"] = async () => ({ decision: { kind: "fail" } });
+			const continuationProvider: HarnessNativeModelProvider = {
+				id: "openai-responses",
+				decide,
+				createSession: () => {
+					sessionsCreated += 1;
+					const session = sessionsCreated;
+					let turn = 0;
+					return {
+						decide: async (context) => {
+							turn += 1;
+							if (session === 1)
+								return turn === 1
+									? {
+											decision: {
+												kind: "tool",
+												tool: "apply-patch",
+												arguments: { patch: wholeFilePatch("README.md", "before", "after") },
+											},
+										}
+									: { decision: { kind: "tool", tool: "git-status", arguments: {} } };
+							continuationContexts.push(context.contextView?.continuation ?? null);
+							continuationObservationCounts.push(context.contextView?.observations.length ?? -1);
+							return turn === 1
+								? {
+										decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } },
+									}
+								: { decision: { kind: "finish" } };
+						},
+						recordToolResults: () => undefined,
+					};
+				},
+			};
+
+			const result = await executeAgentPatchCheck(policy, {
+				runAgent: async (nativePolicy, worktreePath, repairContext) =>
+					await createHarnessNativeAdapter(continuationProvider).execute({
+						policy: nativePolicy,
+						worktreePath,
+						repairContext,
+					}),
+			});
+
+			expect(result.status).toBe("succeeded");
+			expect(result.agent.attempts).toHaveLength(2);
+			expect(result.agent.attempts?.map((attempt) => attempt.phase)).toEqual(["initial", "attempt-continuation"]);
+			expect(result.agent.attempts?.[0]?.review).toMatchObject({
+				decision: "continue",
+				reason: "iteration-limit-with-progress",
+				successfulMutationCount: 1,
+				affectedPaths: ["README.md"],
+			});
+			expect(result.agent.attempts?.[1]?.continuation).toMatchObject({
+				attempt: 2,
+				previousAttempt: 1,
+				affectedPaths: ["README.md"],
+			});
+			expect(result.agent.attempts?.[1]?.execution.runtime?.trajectory[0]?.tool).toBe("run-public-verification");
+			expect(continuationContexts).toHaveLength(2);
+			expect(continuationContexts[0]).toMatchObject({
+				version: 2,
+				previousAttempt: 1,
+				review: { decision: "continue" },
+				evidence: expect.arrayContaining([expect.objectContaining({ kind: "mutation", paths: ["README.md"] })]),
+			});
+			// Prior-attempt observations are condensed into the correlated checkpoint,
+			// not replayed as the fresh attempt's current conversation tail.
+			expect(continuationObservationCounts[0]).toBe(0);
+			expect(sessionsCreated).toBe(2);
+			expect(result.agent.runtimeEvents?.filter((event) => event.type === "attempt-started")).toHaveLength(2);
+			const evidence = await readEvidenceBundle(result.evidence.path);
+			expect(evidence).toMatchObject({
+				agent: {
+					attempts: [
+						{ review: { decision: "continue" } },
+						{ continuation: { previousAttempt: 1 }, review: { decision: "stop", reason: "completed" } },
+					],
+				},
+			});
+			expect(evidence.agent.runtimeEvents?.find((event) => event.type === "tool-result")).toMatchObject({
+				observation: "[REDACTED_RUNTIME_OBSERVATION]",
+			});
+			expect((await readFile(join(result.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
+				"after\n",
+			);
+		} finally {
+			await rm(repository, { recursive: true, force: true });
+		}
+	}, 30_000);
+
 	it("repairs a public verification failure once before the Hidden Oracle runs", async () => {
 		const repository = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-repair-"));
 		const oracleDirectory = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-oracle-"));
@@ -168,11 +309,7 @@ describe("Harness-native Headless Core E2E", () => {
 								decision: {
 									kind: "tool",
 									tool: "apply-patch",
-									arguments: {
-										path: "README.md",
-										expectedText: "before",
-										replacementText: "invalid",
-									},
+									arguments: { patch: wholeFilePatch("README.md", "before", "invalid") },
 								},
 							};
 						repairDecisions += 1;
@@ -180,11 +317,7 @@ describe("Harness-native Headless Core E2E", () => {
 							decision: {
 								kind: "tool",
 								tool: "apply-patch",
-								arguments: {
-									path: "README.md",
-									expectedText: "invalid",
-									replacementText: "after",
-								},
+								arguments: { patch: wholeFilePatch("README.md", "invalid", "after") },
 							},
 						};
 					}
@@ -304,7 +437,7 @@ describe("Harness-native Headless Core E2E", () => {
 							decision: {
 								kind: "tool",
 								tool: "apply-patch",
-								arguments: { path: "README.md", expectedText: "before", replacementText: "invalid" },
+								arguments: { patch: wholeFilePatch("README.md", "before", "invalid") },
 							},
 						};
 					repairDecisions += 1;
@@ -312,7 +445,7 @@ describe("Harness-native Headless Core E2E", () => {
 						decision: {
 							kind: "tool",
 							tool: "apply-patch",
-							arguments: { path: "README.md", expectedText: "invalid", replacementText: "still-invalid" },
+							arguments: { patch: wholeFilePatch("README.md", "invalid", "still-invalid") },
 						},
 					};
 				},

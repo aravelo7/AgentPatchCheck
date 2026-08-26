@@ -137,6 +137,7 @@ describe("showEvidenceBundle", () => {
 		});
 		expect(JSON.stringify(result)).not.toContain('"stdout"');
 		expect(JSON.stringify(result)).not.toContain('"trackedPatch"');
+		expect(result.taskDefinition).toBeNull();
 	});
 
 	it("marks a missing assessment without rejecting valid evidence", async () => {

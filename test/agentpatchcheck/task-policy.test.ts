@@ -71,6 +71,13 @@ describe("validateTaskPolicy", () => {
 			nativeAgent: { credentialRef: "openai-primary" },
 		});
 		expect(defaultPolicy.nativeAgent?.maxTransportRetries).toBe(0);
+		expect(defaultPolicy.nativeAgent?.maxProtocolRecoveries).toBe(2);
+		expect(defaultPolicy.nativeAgent?.maxCompletionDeferrals).toBe(2);
+		expect(defaultPolicy.nativeAgent?.maxPlanRevisions).toBe(4);
+		expect(defaultPolicy.nativeAgent?.plannerEnabled).toBe(true);
+		expect(defaultPolicy.nativeAgent?.toolPresentation).toBe("native");
+		expect(defaultPolicy.nativeAgent?.maxAttempts).toBe(2);
+		expect(defaultPolicy.nativeAgent?.minContinuationTimeMs).toBe(30_000);
 		const retriedPolicy = await validateTaskPolicy({
 			repositoryRoot: process.cwd(),
 			prompt: "Inspect the change.",
@@ -79,6 +86,15 @@ describe("validateTaskPolicy", () => {
 			nativeAgent: { credentialRef: "openai-primary", maxTransportRetries: 1 },
 		});
 		expect(retriedPolicy.nativeAgent?.maxTransportRetries).toBe(1);
+		const singleAgentPolicy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Inspect the change.",
+			agentAdapter: "harness-native",
+			model: "test-model",
+			nativeAgent: { credentialRef: "openai-primary", plannerEnabled: false, toolPresentation: "code" },
+		});
+		expect(singleAgentPolicy.nativeAgent?.plannerEnabled).toBe(false);
+		expect(singleAgentPolicy.nativeAgent?.toolPresentation).toBe("code");
 		await expect(
 			validateTaskPolicy({
 				repositoryRoot: process.cwd(),
@@ -88,6 +104,125 @@ describe("validateTaskPolicy", () => {
 				nativeAgent: { credentialRef: "openai-primary", maxTransportRetries: 2 },
 			}),
 		).rejects.toThrow("maxTransportRetries must be an integer between 0 and 1");
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: { credentialRef: "openai-primary", maxProtocolRecoveries: 4 },
+			}),
+		).rejects.toThrow("maxProtocolRecoveries must be an integer between 0 and 3");
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: { credentialRef: "openai-primary", maxCompletionDeferrals: 0 },
+			}),
+		).rejects.toThrow("maxCompletionDeferrals must be an integer between 1 and 4");
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: { credentialRef: "openai-primary", maxPlanRevisions: 9 },
+			}),
+		).rejects.toThrow("maxPlanRevisions must be an integer between 1 and 8");
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: { credentialRef: "openai-primary", maxAttempts: 4 },
+			}),
+		).rejects.toThrow("maxAttempts must be an integer between 1 and 3");
+	});
+
+	it("selects the SDK-backed native Gemini provider without an OpenAI-compatible endpoint", async () => {
+		const policy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Inspect the change.",
+			agentAdapter: "harness-native",
+			model: "models/gemini-3.1-flash-lite",
+			nativeAgent: { provider: "gemini", credentialRef: "gemini-primary" },
+		});
+		expect(policy.nativeAgent?.modelProvider).toMatchObject({
+			provider: "gemini",
+			protocol: "native",
+			baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+			credentialRef: "gemini-primary",
+			implementation: "cline-llms-gemini-native-v1",
+		});
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				agentAdapter: "harness-native",
+				model: "models/gemini-3.1-flash-lite",
+				nativeAgent: { provider: "gemini", protocol: "chat-completions", credentialRef: "gemini-primary" },
+			}),
+		).rejects.toThrow("requires the native protocol");
+	});
+
+	it("selects the dedicated official DeepSeek adapter and validates thinking controls", async () => {
+		const policy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Inspect the change.",
+			agentAdapter: "harness-native",
+			model: "deepseek-v4-pro",
+			nativeAgent: {
+				provider: "deepseek",
+				thinkingMode: "enabled",
+				reasoningEffort: "max",
+				credentialRef: "deepseek-primary",
+			},
+		});
+		expect(policy.nativeAgent?.modelProvider).toMatchObject({
+			provider: "deepseek",
+			protocol: "chat-completions",
+			thinkingMode: "enabled",
+			reasoningEffort: "max",
+			baseUrl: "https://api.deepseek.com/v1",
+			implementation: "deepseek-official-chat-v1",
+		});
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				agentAdapter: "harness-native",
+				model: "deepseek-v4-pro",
+				nativeAgent: {
+					provider: "deepseek",
+					thinkingMode: "disabled",
+					reasoningEffort: "high",
+					credentialRef: "deepseek-primary",
+				},
+			}),
+		).rejects.toThrow("cannot be used when thinking is disabled");
+	});
+
+	it("requires an explicit Cline provider identity for the Cline control adapter", async () => {
+		await expect(
+			validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Inspect the change.",
+				agentAdapter: "cline-runtime",
+				model: "test-model",
+				nativeAgent: { credentialRef: "openai-primary" },
+			}),
+		).rejects.toThrow("clineProviderId");
+		const policy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Inspect the change.",
+			agentAdapter: "cline-runtime",
+			model: "test-model",
+			nativeAgent: { credentialRef: "openai-primary", clineProviderId: "openai-native" },
+		});
+		expect(policy.nativeAgent?.clineProviderId).toBe("openai-native");
 	});
 
 	it("defaults rejected calls to a separate bounded budget", async () => {

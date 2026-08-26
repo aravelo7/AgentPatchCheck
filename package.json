@@ -40,6 +40,7 @@
     "dist",
     "man",
     "README.md",
+    "THIRD_PARTY_NOTICES.md",
     "LICENSE"
   ],
   "engines": {
@@ -113,6 +114,7 @@
   },
   "dependencies": {
     "@clinebot/core": "^0.0.38",
+    "@clinebot/llms": "0.0.38",
     "@clinebot/shared": "^0.0.38",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@sentry/node": "^10.45.0",
