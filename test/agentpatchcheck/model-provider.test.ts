@@ -807,7 +807,11 @@ describe("Model Provider Registry", () => {
 		expect(responsesRequest).toContain("Harness-owned current working context");
 		expect(responsesRequest).toContain("Harness-owned task contract");
 		expect(JSON.parse(responsesRequest).input).toContain('"patchExpectation":"changes-required"');
-		expect(responsesRequest).toContain("Successful completion requires task-relevant repository changes.");
+		expect(responsesRequest).toContain("Successful completion requires actual, task-relevant repository changes.");
+		expect(responsesRequest).toContain("analysis alone cannot substitute for implementation");
+		expect(responsesRequest).toContain(
+			"After implementing the change, complete the existing verification obligations before finishing.",
+		);
 		expect(responsesRequest).toContain("Harness-owned active-step execution state");
 		expect(responsesRequest).toContain("Modify the observed implementation");
 		expect(JSON.parse(responsesRequest).input).toContain('"executionCheckpoint":"verification-due"');

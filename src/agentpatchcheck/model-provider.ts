@@ -510,7 +510,7 @@ function patchExpectationContract(patchExpectation: PatchExpectation): {
 		patchExpectation,
 		requirement:
 			patchExpectation === "changes-required"
-				? "Successful completion requires task-relevant repository changes."
+				? "Successful completion requires actual, task-relevant repository changes. Investigation and diagnosis are work toward the repair, not the final deliverable, and analysis alone cannot substitute for implementation. After implementing the change, complete the existing verification obligations before finishing."
 				: "Successful completion may be valid without repository changes when the task requirements are already satisfied.",
 	};
 }
