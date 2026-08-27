@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RunIdentity } from "../../src/agentpatchcheck/run-identity";
 import {
-	AGENTPATCHCHECK_BASELINE_COMMIT,
+	SWE_BENCH_STANDARD_BASELINE_TAG,
 	type SWEbenchAdapterResult,
 } from "../../src/agentpatchcheck/swebench-adapter";
 import { runSWEbenchCli, type SWEbenchGradingResult } from "../../src/agentpatchcheck/swebench-cli";
@@ -111,6 +111,21 @@ function resolvedGrading(normalizedStatus: SWEbenchGradingResult["normalizedStat
 	};
 }
 
+function baselineGitStdout(options: { currentCommit?: string; trackedChanges?: string } = {}) {
+	const expectedCommit = "e7fa37e1e9af8ace2c6b4ff13d99eb94e80c6854";
+	const currentCommit = options.currentCommit ?? expectedCommit;
+	const trackedChanges = options.trackedChanges ?? "";
+	return async (args: string[]): Promise<string> => {
+		if (args[0] === "rev-parse" && args[1] === "--verify") {
+			expect(args[2]).toBe(`${SWE_BENCH_STANDARD_BASELINE_TAG}^{commit}`);
+			return expectedCommit;
+		}
+		if (args[0] === "rev-parse" && args[1] === "HEAD") return currentCommit;
+		if (args[0] === "status") return trackedChanges;
+		throw new Error(`Unexpected Git command: ${args.join(" ")}`);
+	};
+}
+
 describe("SWE-bench CLI post-run orchestration", () => {
 	it("executes Agent, writes a standard prediction, then evaluates a timeout with a valid patch", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
@@ -125,7 +140,7 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		await runSWEbenchCli(argumentsFor(root, outputPath), {
 			initializeEnvironment: () => "already-loaded",
 			findProjectRoot: () => root,
-			getGitStdout: async () => AGENTPATCHCHECK_BASELINE_COMMIT,
+			getGitStdout: baselineGitStdout(),
 			loadInstance: async () => instance,
 			runInstance: async (options) => {
 				order.push("executeAgent", "collectPatch");
@@ -170,7 +185,7 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		await runSWEbenchCli(argumentsFor(root, outputPath), {
 			initializeEnvironment: () => "already-loaded",
 			findProjectRoot: () => root,
-			getGitStdout: async () => AGENTPATCHCHECK_BASELINE_COMMIT,
+			getGitStdout: baselineGitStdout(),
 			loadInstance: async () => instance,
 			runInstance: async () => adapterResult(root, null, null, execution(), "prediction_export_failed"),
 			runPostRunEvaluator: async () => {
@@ -206,7 +221,7 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			await runSWEbenchCli(argumentsFor(root, outputPath), {
 				initializeEnvironment: () => "already-loaded",
 				findProjectRoot: () => root,
-				getGitStdout: async () => AGENTPATCHCHECK_BASELINE_COMMIT,
+				getGitStdout: baselineGitStdout(),
 				loadInstance: async () => instance,
 				runInstance: async () => adapterResult(root, outputPath, prediction, agent),
 				runPostRunEvaluator: async () => resolvedGrading(normalizedStatus),
@@ -219,5 +234,33 @@ describe("SWE-bench CLI post-run orchestration", () => {
 				grading: { normalizedStatus },
 			});
 		}
+	});
+
+	it("rejects a HEAD that differs from the resolved baseline tag", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		await expect(
+			runSWEbenchCli(argumentsFor(root, join(root, "predictions.jsonl")), {
+				initializeEnvironment: () => "already-loaded",
+				findProjectRoot: () => root,
+				getGitStdout: baselineGitStdout({ currentCommit: "f".repeat(40) }),
+				loadInstance: async () => {
+					throw new Error("Agent execution must not start after baseline rejection.");
+				},
+			}),
+		).rejects.toThrow(`baseline tag ${SWE_BENCH_STANDARD_BASELINE_TAG}`);
+	});
+
+	it("rejects tracked source changes after the baseline tag resolves to HEAD", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		await expect(
+			runSWEbenchCli(argumentsFor(root, join(root, "predictions.jsonl")), {
+				initializeEnvironment: () => "already-loaded",
+				findProjectRoot: () => root,
+				getGitStdout: baselineGitStdout({ trackedChanges: " M src/agentpatchcheck/swebench-cli.ts" }),
+				loadInstance: async () => {
+					throw new Error("Agent execution must not start after dirty-source rejection.");
+				},
+			}),
+		).rejects.toThrow("clean tracked source worktree");
 	});
 });

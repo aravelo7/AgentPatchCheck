@@ -14,7 +14,7 @@ const REPOSITORY_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 
 export const SWE_BENCH_MULTILINGUAL_DATASET = "swe-bench/SWE-Bench_Multilingual";
-export const AGENTPATCHCHECK_BASELINE_COMMIT = "d0b139ea56d1249c149a833f17ec802aa2018974";
+export const SWE_BENCH_STANDARD_BASELINE_TAG = "v0.2-swebench-standard-baseline";
 export const AGENTPATCHCHECK_BASELINE_MODEL = "deepseek-v4-pro";
 
 /**

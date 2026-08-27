@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 import { getGitStdout } from "../workspace/git-utils";
 import { findAgentPatchCheckProjectRoot, initializeAgentPatchCheckEnvironment } from "./project-environment";
 import {
-	AGENTPATCHCHECK_BASELINE_COMMIT,
 	loadSWEbenchInstance,
 	runSWEbenchInstance,
 	SWE_BENCH_MULTILINGUAL_DATASET,
+	SWE_BENCH_STANDARD_BASELINE_TAG,
 	type SWEbenchAdapterResult,
 } from "./swebench-adapter";
 
@@ -105,7 +105,7 @@ function parseOptions(argv: string[]): CliOptions {
 		output: optionValue(argv, "--output") as string,
 		modelNameOrPath:
 			optionValue(argv, "--model-name-or-path", false) ??
-			`agentpatchcheck/${AGENTPATCHCHECK_BASELINE_COMMIT}/deepseek-v4-pro`,
+			`agentpatchcheck/${SWE_BENCH_STANDARD_BASELINE_TAG}/deepseek-v4-pro`,
 		runId: optionValue(argv, "--run-id", false),
 		variant: optionValue(argv, "--variant", false),
 		attempt: (() => {
@@ -180,6 +180,27 @@ function createNotRunGradingResult(result: SWEbenchAdapterResult): SWEbenchGradi
 	};
 }
 
+async function assertSWEbenchBaselineSource(
+	projectRoot: string,
+	getStdout: SWEbenchCliDependencies["getGitStdout"],
+): Promise<string> {
+	const expectedCommit = await getStdout(
+		["rev-parse", "--verify", `${SWE_BENCH_STANDARD_BASELINE_TAG}^{commit}`],
+		projectRoot,
+	);
+	const currentCommit = await getStdout(["rev-parse", "HEAD"], projectRoot);
+	if (currentCommit !== expectedCommit) {
+		throw new Error(
+			`SWE-bench standard mode must run from baseline tag ${SWE_BENCH_STANDARD_BASELINE_TAG} (${expectedCommit}); current HEAD is ${currentCommit}.`,
+		);
+	}
+	const trackedChanges = await getStdout(["status", "--porcelain", "--untracked-files=no"], projectRoot);
+	if (trackedChanges) {
+		throw new Error("SWE-bench standard mode requires a clean tracked source worktree.");
+	}
+	return currentCommit;
+}
+
 export async function runSWEbenchPostRunEvaluator(
 	input: SWEbenchPostRunEvaluatorInput,
 ): Promise<SWEbenchGradingResult> {
@@ -232,12 +253,7 @@ export async function runSWEbenchCli(
 	resolvedDependencies.initializeEnvironment();
 	const options = parseOptions(argv);
 	const projectRoot = resolvedDependencies.findProjectRoot();
-	const sourceCommit = await resolvedDependencies.getGitStdout(["rev-parse", "HEAD"], projectRoot);
-	if (sourceCommit !== AGENTPATCHCHECK_BASELINE_COMMIT) {
-		throw new Error(
-			`SWE-bench smoke must run from APC baseline ${AGENTPATCHCHECK_BASELINE_COMMIT}; current HEAD is ${sourceCommit}.`,
-		);
-	}
+	const sourceCommit = await assertSWEbenchBaselineSource(projectRoot, resolvedDependencies.getGitStdout);
 	const instance = await resolvedDependencies.loadInstance(options.dataset, options.instance);
 	const result = await resolvedDependencies.runInstance({
 		instance,
