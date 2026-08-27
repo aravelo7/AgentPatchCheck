@@ -48,6 +48,7 @@ interface SWEbenchEvaluatorConfiguration {
 
 interface CliOptions {
 	dataset: string;
+	evaluatorDataset: string;
 	instance: string;
 	repository: string;
 	output: string;
@@ -108,6 +109,7 @@ function parseOptions(argv: string[]): CliOptions {
 	}
 	return {
 		dataset: optionValue(argv, "--dataset") as string,
+		evaluatorDataset: optionValue(argv, "--evaluator-dataset") as string,
 		instance: optionValue(argv, "--instance") as string,
 		repository: optionValue(argv, "--repository") as string,
 		output: optionValue(argv, "--output") as string,
@@ -278,7 +280,7 @@ export async function runSWEbenchCli(
 		try {
 			grading = await resolvedDependencies.runPostRunEvaluator({
 				predictionPath: result.predictionPath,
-				datasetPath: options.dataset,
+				datasetPath: options.evaluatorDataset,
 				instanceId: result.instance.instance_id,
 				configuration: options.evaluator,
 			});

@@ -77,7 +77,9 @@ function adapterResult(
 function argumentsFor(root: string, outputPath: string): string[] {
 	return [
 		"--dataset",
-		join(root, "dataset.jsonl"),
+		join(root, "agent-safe-dataset.jsonl"),
+		"--evaluator-dataset",
+		join(root, "official-dataset.jsonl"),
 		"--instance",
 		instance.instance_id,
 		"--repository",
@@ -139,12 +141,22 @@ describe("SWE-bench CLI post-run orchestration", () => {
 	it("executes Agent, writes a standard prediction, then evaluates a timeout with a valid patch", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
 		const outputPath = join(root, "predictions.jsonl");
+		const officialDatasetPath = join(root, "official-dataset.jsonl");
 		const order: string[] = [];
 		const prediction = {
 			instance_id: instance.instance_id,
 			model_name_or_path: `agentpatchcheck/${SWE_BENCH_STANDARD_BASELINE_TAG}/deepseek-v4-pro`,
 			model_patch: "diff --git a/gin.go b/gin.go\n",
 		};
+		await writeFile(
+			officialDatasetPath,
+			`${JSON.stringify({
+				...instance,
+				test_patch: "evaluator-only test patch",
+				FAIL_TO_PASS: ["hidden_failure"],
+				PASS_TO_PASS: ["hidden_success"],
+			})}\n`,
+		);
 
 		await runSWEbenchCli(argumentsFor(root, outputPath), {
 			initializeEnvironment: () => "already-loaded",
@@ -169,8 +181,13 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			},
 			runPostRunEvaluator: async (input) => {
 				order.push("evaluator");
-				expect(input.datasetPath).toBe(join(root, "dataset.jsonl"));
+				expect(input.datasetPath).toBe(officialDatasetPath);
 				expect(input.instanceId).toBe(instance.instance_id);
+				expect(JSON.parse((await readFile(input.datasetPath, "utf8")).trim())).toMatchObject({
+					FAIL_TO_PASS: ["hidden_failure"],
+					PASS_TO_PASS: ["hidden_success"],
+					test_patch: "evaluator-only test patch",
+				});
 				expect(JSON.parse((await readFile(input.predictionPath, "utf8")).trim())).toEqual(prediction);
 				return resolvedGrading("resolved");
 			},
