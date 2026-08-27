@@ -13,7 +13,7 @@ import { executeAgentPatchCheck } from "../../src/agentpatchcheck/execute";
 import { readEvidenceBundle } from "../../src/agentpatchcheck/git-patch-verifier";
 import type { HarnessNativeModelProvider } from "../../src/agentpatchcheck/harness-native-runtime";
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
-import type { BenchmarkDefinition, TaskPolicyInput } from "../../src/agentpatchcheck/types";
+import type { BenchmarkDefinition, CommandVerification, TaskPolicyInput } from "../../src/agentpatchcheck/types";
 
 const execFile = promisify(execFileCallback);
 
@@ -35,6 +35,25 @@ function wholeFilePatch(path: string, before: string, after: string): string {
 	].join("\n");
 }
 
+function commandVerification(cwd: string, status: "passed" | "failed"): CommandVerification {
+	return {
+		status,
+		cwd,
+		commands: [
+			{
+				command: process.execPath,
+				args: [],
+				exitCode: status === "passed" ? 0 : 1,
+				signal: null,
+				stdout: "",
+				stderr: "",
+				durationMs: 1,
+				timedOut: false,
+			},
+		],
+	};
+}
+
 const provider: HarnessNativeModelProvider = {
 	id: "openai-responses",
 	decide: async ({ observations }) => {
@@ -50,6 +69,8 @@ const provider: HarnessNativeModelProvider = {
 					arguments: { patch: wholeFilePatch("README.md", "before", "after") },
 				},
 			};
+		if (observations.length === 3)
+			return { decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } } };
 		return { decision: { kind: "finish" } };
 	},
 };
@@ -126,9 +147,10 @@ describe("Harness-native Headless Core E2E", () => {
 				"read-file",
 				"search-text",
 				"apply-patch",
+				"run-public-verification",
 				null,
 			]);
-			expect(shown.agent.runtime).toMatchObject({ terminationReason: "finished", toolCalls: 3 });
+			expect(shown.agent.runtime).toMatchObject({ terminationReason: "finished", toolCalls: 4 });
 			expect((await readFile(join(evidence.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
 				"after\n",
 			);
@@ -153,8 +175,8 @@ describe("Harness-native Headless Core E2E", () => {
 				model: "test-model",
 				nativeAgent: {
 					credentialRef: "openai-primary",
-					maxIterations: 2,
-					maxToolCalls: 2,
+					maxIterations: 3,
+					maxToolCalls: 3,
 					maxAttempts: 2,
 					minContinuationTimeMs: 1,
 				},
@@ -187,21 +209,23 @@ describe("Harness-native Headless Core E2E", () => {
 							turn += 1;
 							if (session === 1)
 								return turn === 1
-									? {
-											decision: {
-												kind: "tool",
-												tool: "apply-patch",
-												arguments: { patch: wholeFilePatch("README.md", "before", "after") },
-											},
-										}
-									: { decision: { kind: "tool", tool: "git-status", arguments: {} } };
+									? { decision: { kind: "tool", tool: "read-file", arguments: { path: "README.md" } } }
+									: turn === 2
+										? { decision: { kind: "tool", tool: "git-status", arguments: {} } }
+										: { decision: { kind: "tool", tool: "read-file", arguments: { path: "README.md" } } };
 							continuationContexts.push(context.contextView?.continuation ?? null);
 							continuationObservationCounts.push(context.contextView?.observations.length ?? -1);
 							return turn === 1
 								? {
-										decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } },
+										decision: {
+											kind: "tool",
+											tool: "apply-patch",
+											arguments: { patch: wholeFilePatch("README.md", "before", "after") },
+										},
 									}
-								: { decision: { kind: "finish" } };
+								: turn === 2
+									? { decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } } }
+									: { decision: { kind: "finish" } };
 						},
 						recordToolResults: () => undefined,
 					};
@@ -223,21 +247,21 @@ describe("Harness-native Headless Core E2E", () => {
 			expect(result.agent.attempts?.[0]?.review).toMatchObject({
 				decision: "continue",
 				reason: "iteration-limit-with-progress",
-				successfulMutationCount: 1,
-				affectedPaths: ["README.md"],
+				successfulMutationCount: 0,
+				affectedPaths: [],
 			});
 			expect(result.agent.attempts?.[1]?.continuation).toMatchObject({
 				attempt: 2,
 				previousAttempt: 1,
-				affectedPaths: ["README.md"],
+				affectedPaths: [],
 			});
-			expect(result.agent.attempts?.[1]?.execution.runtime?.trajectory[0]?.tool).toBe("run-public-verification");
-			expect(continuationContexts).toHaveLength(2);
+			expect(result.agent.attempts?.[1]?.execution.runtime?.trajectory[0]?.tool).toBe("apply-patch");
+			expect(continuationContexts).toHaveLength(3);
 			expect(continuationContexts[0]).toMatchObject({
 				version: 2,
 				previousAttempt: 1,
 				review: { decision: "continue" },
-				evidence: expect.arrayContaining([expect.objectContaining({ kind: "mutation", paths: ["README.md"] })]),
+				evidence: expect.arrayContaining([expect.objectContaining({ kind: "repository", paths: ["README.md"] })]),
 			});
 			// Prior-attempt observations are condensed into the correlated checkpoint,
 			// not replayed as the fresh attempt's current conversation tail.
@@ -256,6 +280,234 @@ describe("Harness-native Headless Core E2E", () => {
 			expect(evidence.agent.runtimeEvents?.find((event) => event.type === "tool-result")).toMatchObject({
 				observation: "[REDACTED_RUNTIME_OBSERVATION]",
 			});
+			expect((await readFile(join(result.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
+				"after\n",
+			);
+		} finally {
+			await rm(repository, { recursive: true, force: true });
+		}
+	}, 30_000);
+
+	it("rejects direct finish after a mutation in the previous attempt until verification passes", async () => {
+		const repository = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-cross-attempt-verification-"));
+		try {
+			await writeFile(join(repository, "README.md"), "before\n", "utf8");
+			await git(repository, ["init"]);
+			await git(repository, ["config", "user.email", "fixture@example.invalid"]);
+			await git(repository, ["config", "user.name", "Fixture"]);
+			await git(repository, ["add", "."]);
+			await git(repository, ["commit", "-m", "base"]);
+			const policy = await validateTaskPolicy({
+				repositoryRoot: repository,
+				prompt: "Update the existing README.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: {
+					credentialRef: "openai-primary",
+					maxIterations: 3,
+					maxToolCalls: 3,
+					maxAttempts: 2,
+					minContinuationTimeMs: 1,
+				},
+				patchExpectation: "changes-required",
+				verification: {
+					commands: [
+						{
+							command: process.execPath,
+							args: [
+								"-e",
+								"const fs=require('node:fs');process.exit(fs.readFileSync('README.md','utf8').startsWith('after')?0:1)",
+							],
+						},
+					],
+				},
+			});
+			let sessionsCreated = 0;
+			const crossAttemptProvider: HarnessNativeModelProvider = {
+				id: "openai-responses",
+				decide: async () => ({ decision: { kind: "fail" } }),
+				createSession: () => {
+					sessionsCreated += 1;
+					const session = sessionsCreated;
+					let turn = 0;
+					return {
+						decide: async () => {
+							turn += 1;
+							if (session === 1) {
+								if (turn === 1)
+									return {
+										decision: {
+											kind: "tool",
+											tool: "apply-patch",
+											arguments: { patch: wholeFilePatch("README.md", "before", "after") },
+										},
+									};
+								if (turn === 2) return { decision: { kind: "tool", tool: "git-status", arguments: {} } };
+								return { decision: { kind: "tool", tool: "read-file", arguments: { path: "README.md" } } };
+							}
+							if (turn === 1) return { decision: { kind: "finish" } };
+							if (turn === 2)
+								return {
+									decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } },
+								};
+							return { decision: { kind: "finish" } };
+						},
+						recordToolResults: () => undefined,
+					};
+				},
+			};
+
+			const result = await executeAgentPatchCheck(policy, {
+				runAgent: async (nativePolicy, worktreePath, repairContext) =>
+					await createHarnessNativeAdapter(crossAttemptProvider).execute({
+						policy: nativePolicy,
+						worktreePath,
+						repairContext,
+					}),
+			});
+
+			expect(result.status).toBe("succeeded");
+			expect(result.commandVerification.status).toBe("passed");
+			expect(result.agent.attempts?.[0]?.review).toMatchObject({
+				decision: "continue",
+				successfulMutationCount: 1,
+				latestVerificationOutcome: null,
+			});
+			const completions = result.agent.runtimeEvents?.filter(
+				(event) => event.attempt === 2 && event.type === "completion-evaluated",
+			);
+			expect(completions).toMatchObject([
+				{ disposition: "continue", reason: "verification-due" },
+				{ disposition: "accept", reason: "complete" },
+			]);
+			expect(
+				result.agent.runtimeEvents?.some(
+					(event) =>
+						event.attempt === 2 &&
+						event.type === "tool-result" &&
+						event.facts.kind === "verification" &&
+						event.facts.outcome === "passed",
+				),
+			).toBe(true);
+		} finally {
+			await rm(repository, { recursive: true, force: true });
+		}
+	}, 30_000);
+
+	it("requires repair and reverification after a failed verification in the previous attempt", async () => {
+		const repository = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-cross-attempt-repair-"));
+		try {
+			await writeFile(join(repository, "README.md"), "before\n", "utf8");
+			await git(repository, ["init"]);
+			await git(repository, ["config", "user.email", "fixture@example.invalid"]);
+			await git(repository, ["config", "user.name", "Fixture"]);
+			await git(repository, ["add", "."]);
+			await git(repository, ["commit", "-m", "base"]);
+			const policy = await validateTaskPolicy({
+				repositoryRoot: repository,
+				prompt: "Update the existing README.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: {
+					credentialRef: "openai-primary",
+					maxIterations: 5,
+					maxToolCalls: 5,
+					maxAttempts: 2,
+					minContinuationTimeMs: 1,
+				},
+				patchExpectation: "changes-required",
+				verification: {
+					commands: [
+						{
+							command: process.execPath,
+							args: [
+								"-e",
+								"const fs=require('node:fs');process.exit(fs.readFileSync('README.md','utf8').startsWith('after')?0:1)",
+							],
+						},
+					],
+				},
+			});
+			let sessionsCreated = 0;
+			const repairContinuationProvider: HarnessNativeModelProvider = {
+				id: "openai-responses",
+				decide: async () => ({ decision: { kind: "fail" } }),
+				createSession: () => {
+					sessionsCreated += 1;
+					const session = sessionsCreated;
+					let turn = 0;
+					return {
+						decide: async () => {
+							turn += 1;
+							if (session === 1) {
+								if (turn === 1)
+									return {
+										decision: {
+											kind: "tool",
+											tool: "apply-patch",
+											arguments: { patch: wholeFilePatch("README.md", "before", "invalid") },
+										},
+									};
+								if (turn === 2)
+									return {
+										decision: {
+											kind: "tool",
+											tool: "run-public-verification",
+											arguments: { index: 0 },
+										},
+									};
+								if (turn === 3) return { decision: { kind: "tool", tool: "git-status", arguments: {} } };
+								if (turn === 4)
+									return { decision: { kind: "tool", tool: "read-file", arguments: { path: "README.md" } } };
+								return { decision: { kind: "tool", tool: "git-diff", arguments: {} } };
+							}
+							if (turn === 1 || turn === 3) return { decision: { kind: "finish" } };
+							if (turn === 2)
+								return {
+									decision: {
+										kind: "tool",
+										tool: "apply-patch",
+										arguments: { patch: wholeFilePatch("README.md", "invalid", "after") },
+									},
+								};
+							if (turn === 4)
+								return {
+									decision: {
+										kind: "tool",
+										tool: "run-public-verification",
+										arguments: { index: 0 },
+									},
+								};
+							return { decision: { kind: "finish" } };
+						},
+						recordToolResults: () => undefined,
+					};
+				},
+			};
+
+			const result = await executeAgentPatchCheck(policy, {
+				runAgent: async (nativePolicy, worktreePath, repairContext) =>
+					await createHarnessNativeAdapter(repairContinuationProvider).execute({
+						policy: nativePolicy,
+						worktreePath,
+						repairContext,
+					}),
+			});
+
+			expect(result.status).toBe("succeeded");
+			expect(result.commandVerification.status).toBe("passed");
+			expect(result.agent.attempts?.[0]?.review).toMatchObject({
+				decision: "continue",
+				latestVerificationOutcome: "failed",
+			});
+			const completions = result.agent.runtimeEvents?.filter(
+				(event) => event.attempt === 2 && event.type === "completion-evaluated",
+			);
+			expect(completions).toMatchObject([
+				{ disposition: "continue", reason: "repair-due" },
+				{ disposition: "continue", reason: "verification-due" },
+				{ disposition: "accept", reason: "complete" },
+			]);
 			expect((await readFile(join(result.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
 				"after\n",
 			);
@@ -284,22 +536,20 @@ describe("Harness-native Headless Core E2E", () => {
 				prompt: "Update the existing README.",
 				agentAdapter: "harness-native",
 				model: "test-model",
-				nativeAgent: { credentialRef: "openai-primary", maxIterations: 3, maxToolCalls: 1 },
+				nativeAgent: { credentialRef: "openai-primary", maxIterations: 4, maxToolCalls: 2 },
 				patchExpectation: "changes-required",
 				verification: {
 					commands: [
 						{
 							command: process.execPath,
-							args: [
-								"-e",
-								"const fs=require('node:fs');process.exit(fs.readFileSync('README.md','utf8').startsWith('after')?0:1)",
-							],
+							args: ["-e", "process.exit(0)"],
 						},
 					],
 				},
 				hiddenOracle: { scriptPath: join(oracleDirectory, "oracle.mjs") },
 			});
 			let repairDecisions = 0;
+			let prematureRepairFinishes = 0;
 			const repairProvider: HarnessNativeModelProvider = {
 				id: "openai-responses",
 				decide: async ({ observations, repairContext }) => {
@@ -312,6 +562,10 @@ describe("Harness-native Headless Core E2E", () => {
 									arguments: { patch: wholeFilePatch("README.md", "before", "invalid") },
 								},
 							};
+						if (prematureRepairFinishes === 0) {
+							prematureRepairFinishes += 1;
+							return { decision: { kind: "finish" } };
+						}
 						repairDecisions += 1;
 						return {
 							decision: {
@@ -321,9 +575,12 @@ describe("Harness-native Headless Core E2E", () => {
 							},
 						};
 					}
-					return { decision: { kind: "finish" } };
+					return observations.length === 1
+						? { decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } } }
+						: { decision: { kind: "finish" } };
 				},
 			};
+			let outerVerificationRuns = 0;
 			const result = await executeAgentPatchCheck(policy, {
 				runAgent: async (nativePolicy, worktreePath, repairContext) =>
 					await createHarnessNativeAdapter(repairProvider).execute({
@@ -331,9 +588,14 @@ describe("Harness-native Headless Core E2E", () => {
 						worktreePath,
 						repairContext,
 					}),
+				runVerification: async (_verification, cwd) => {
+					outerVerificationRuns += 1;
+					return commandVerification(cwd, outerVerificationRuns === 1 ? "failed" : "passed");
+				},
 			});
 
 			expect(repairDecisions).toBe(1);
+			expect(prematureRepairFinishes).toBe(1);
 			expect(result.commandVerification.status).toBe("passed");
 			expect(result.hiddenOracle).toMatchObject({ status: "passed" });
 			expect(result.agent.attempts).toHaveLength(2);
@@ -350,6 +612,11 @@ describe("Harness-native Headless Core E2E", () => {
 				reason: "public-verification-failed",
 				initialChangedFiles: ["README.md"],
 			});
+			expect(
+				result.agent.runtimeEvents?.find(
+					(event) => event.type === "completion-evaluated" && event.disposition === "continue",
+				),
+			).toMatchObject({ reason: "repair-due" });
 			expect((await readFile(join(result.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
 				"after\n",
 			);
@@ -414,15 +681,12 @@ describe("Harness-native Headless Core E2E", () => {
 				prompt: "Update the existing README.",
 				agentAdapter: "harness-native",
 				model: "test-model",
-				nativeAgent: { credentialRef: "openai-primary", maxIterations: 3, maxToolCalls: 1 },
+				nativeAgent: { credentialRef: "openai-primary", maxIterations: 3, maxToolCalls: 2 },
 				verification: {
 					commands: [
 						{
 							command: process.execPath,
-							args: [
-								"-e",
-								"const fs=require('node:fs');process.exit(fs.readFileSync('README.md','utf8').startsWith('after')?0:1)",
-							],
+							args: ["-e", "process.exit(0)"],
 						},
 					],
 				},
@@ -431,7 +695,11 @@ describe("Harness-native Headless Core E2E", () => {
 			const provider: HarnessNativeModelProvider = {
 				id: "openai-responses",
 				decide: async ({ observations, repairContext }) => {
-					if (observations.length > 0) return { decision: { kind: "finish" } };
+					if (observations.length === 1)
+						return {
+							decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } },
+						};
+					if (observations.length > 1) return { decision: { kind: "finish" } };
 					if (repairContext.phase === "initial")
 						return {
 							decision: {
@@ -457,6 +725,7 @@ describe("Harness-native Headless Core E2E", () => {
 						worktreePath,
 						repairContext,
 					}),
+				runVerification: async (_verification, cwd) => commandVerification(cwd, "failed"),
 			});
 
 			expect(repairDecisions).toBe(1);

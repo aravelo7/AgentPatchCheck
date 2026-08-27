@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { HarnessNativeCompletionController } from "../../src/agentpatchcheck/completion-controller";
+import {
+	deriveHarnessNativeCompletionCheckpoint,
+	HarnessNativeCompletionController,
+} from "../../src/agentpatchcheck/completion-controller";
 import {
 	createProtocolRecoveryFeedback,
 	isRecoverableProtocolFailure,
@@ -9,6 +12,7 @@ import type {
 	HarnessNativePlanExecutionResult,
 	HarnessNativePlanningResult,
 	HarnessNativeProviderFailure,
+	HarnessNativeRuntimeEvent,
 } from "../../src/agentpatchcheck/types";
 
 function planning(status: "pending" | "in_progress" | "completed"): HarnessNativePlanningResult {
@@ -44,6 +48,63 @@ function execution(checkpoint: "verification-due" | "repair-due" | null): Harnes
 }
 
 describe("Harness-native Runtime control", () => {
+	it("derives cross-attempt verification and repair obligations from canonical tool facts", () => {
+		const events: HarnessNativeRuntimeEvent[] = [];
+		const appendToolResult = (facts: Extract<HarnessNativeRuntimeEvent, { type: "tool-result" }>["facts"]): void => {
+			const sequence = events.length + 1;
+			events.push({
+				version: 1,
+				sequence,
+				attempt: sequence < 3 ? 1 : 2,
+				iteration: sequence,
+				type: "tool-result",
+				actionId: `action-${sequence}`,
+				tool: facts.kind === "mutation" ? "apply-patch" : "run-public-verification",
+				arguments: {},
+				status: "ok",
+				observation: "observed",
+				observationSummary: "observed",
+				facts,
+			});
+		};
+
+		appendToolResult({ kind: "mutation", tool: "apply-patch", affectedPaths: ["src/index.ts"] });
+		expect(deriveHarnessNativeCompletionCheckpoint(events, true)).toBe("verification-due");
+		appendToolResult({
+			kind: "verification",
+			tool: "run-public-verification",
+			commandIndex: 0,
+			outcome: "failed",
+			exitCode: 1,
+			timedOut: false,
+			durationMs: 10,
+		});
+		expect(deriveHarnessNativeCompletionCheckpoint(events, true)).toBe("repair-due");
+		appendToolResult({ kind: "mutation", tool: "apply-patch", affectedPaths: ["src/index.ts"] });
+		expect(deriveHarnessNativeCompletionCheckpoint(events, true)).toBe("verification-due");
+		appendToolResult({
+			kind: "verification",
+			tool: "run-public-verification",
+			commandIndex: 0,
+			outcome: "passed",
+			exitCode: 0,
+			timedOut: false,
+			durationMs: 10,
+		});
+		expect(deriveHarnessNativeCompletionCheckpoint(events, true)).toBeNull();
+		expect(deriveHarnessNativeCompletionCheckpoint(events.slice(0, 1), false)).toBeNull();
+		events.push({
+			version: 1,
+			sequence: events.length + 1,
+			attempt: 3,
+			iteration: null,
+			type: "attempt-started",
+			phase: "public-verification-repair",
+			continuationFromAttempt: null,
+		});
+		expect(deriveHarnessNativeCompletionCheckpoint(events, true)).toBe("repair-due");
+	});
+
 	it("gives execution checkpoints priority over generic plan incompleteness", () => {
 		const verification = new HarnessNativeCompletionController().evaluate({
 			planning: planning("in_progress"),
@@ -55,6 +116,12 @@ describe("Harness-native Runtime control", () => {
 		});
 		expect(verification).toMatchObject({ disposition: "continue", reason: "verification-due" });
 		expect(repair).toMatchObject({ disposition: "continue", reason: "repair-due" });
+		const crossAttempt = new HarnessNativeCompletionController().evaluate({
+			planning: planning("completed"),
+			planExecution: { version: 1, activeStep: null, events: [] },
+			runtimeCheckpoint: "verification-due",
+		});
+		expect(crossAttempt).toMatchObject({ disposition: "continue", reason: "verification-due" });
 	});
 
 	it("accepts a completed lifecycle and bounds consecutive premature finish requests", () => {

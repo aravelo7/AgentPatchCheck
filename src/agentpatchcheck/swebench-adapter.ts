@@ -17,12 +17,19 @@ export const SWE_BENCH_MULTILINGUAL_DATASET = "swe-bench/SWE-Bench_Multilingual"
 export const AGENTPATCHCHECK_BASELINE_COMMIT = "d0b139ea56d1249c149a833f17ec802aa2018974";
 export const AGENTPATCHCHECK_BASELINE_MODEL = "deepseek-v4-pro";
 
-export interface SWEbenchInstance {
+/**
+ * The only SWE-bench instance data permitted to cross into Agent execution.
+ * Evaluator-only fields stay owned by the Benchmark Runner.
+ */
+export interface SWEbenchAgentSafeInstance {
 	instance_id: string;
 	repo: string;
 	base_commit: string;
 	problem_statement: string;
 }
+
+/** @deprecated Use SWEbenchAgentSafeInstance to make the boundary explicit. */
+export type SWEbenchInstance = SWEbenchAgentSafeInstance;
 
 export interface SWEbenchPrediction {
 	instance_id: string;
@@ -37,8 +44,7 @@ export interface SWEbenchRuntimeConfiguration {
 }
 
 export interface SWEbenchAdapterOptions {
-	datasetPath: string;
-	instanceId: string;
+	instance: SWEbenchAgentSafeInstance;
 	repositoryRoot: string;
 	outputPath: string;
 	modelNameOrPath: string;
@@ -56,8 +62,9 @@ export interface SWEbenchAdapterResult {
 	agent: AgentExecution;
 	mutationOccurred: boolean;
 	changedFiles: string[];
-	prediction: SWEbenchPrediction;
-	predictionPath: string;
+	prediction: SWEbenchPrediction | null;
+	predictionPath: string | null;
+	predictionError: "prediction_export_failed" | null;
 	runtimeRecordPath: string;
 }
 
@@ -90,12 +97,12 @@ const defaultRuntime: SWEbenchRuntimeConfiguration = {
 	timeoutMs: 600_000,
 };
 
-function requireString(value: unknown, field: keyof SWEbenchInstance): string {
+function requireString(value: unknown, field: keyof SWEbenchAgentSafeInstance): string {
 	if (typeof value !== "string" || !value.trim()) throw new Error(`SWE-bench instance field ${field} is required.`);
 	return value;
 }
 
-function parseInstance(value: unknown): SWEbenchInstance {
+function parseInstance(value: unknown): SWEbenchAgentSafeInstance {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
 		throw new Error("SWE-bench dataset row must be an object.");
 	}
@@ -112,11 +119,14 @@ function parseInstance(value: unknown): SWEbenchInstance {
 	return instance;
 }
 
-export async function loadSWEbenchInstance(datasetPath: string, instanceId: string): Promise<SWEbenchInstance> {
+export async function loadSWEbenchInstance(
+	datasetPath: string,
+	instanceId: string,
+): Promise<SWEbenchAgentSafeInstance> {
 	const requestedId = instanceId.trim();
 	if (!INSTANCE_ID_PATTERN.test(requestedId)) throw new Error("Requested SWE-bench instance_id is invalid.");
 	const lines = (await readFile(resolve(datasetPath), "utf8")).split(/\r?\n/u).filter((line) => line.trim());
-	let match: SWEbenchInstance | null = null;
+	let match: SWEbenchAgentSafeInstance | null = null;
 	for (const line of lines) {
 		const raw: unknown = JSON.parse(line);
 		if (
@@ -178,7 +188,7 @@ export async function runSWEbenchInstance(
 	dependencies: Partial<SWEbenchAdapterDependencies> = {},
 ): Promise<SWEbenchAdapterResult> {
 	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
-	const instance = await loadSWEbenchInstance(options.datasetPath, options.instanceId);
+	const instance = options.instance;
 	const repositoryRoot = resolve(options.repositoryRoot);
 	const runtime = options.runtime ?? defaultRuntime;
 	const runIdentity = {
@@ -217,14 +227,20 @@ export async function runSWEbenchInstance(
 		worktreeRoot: policy.worktreeRoot,
 	});
 	const agent = await resolvedDependencies.executeAgent(policy, workspace.path);
-	const { modelPatch, changedFiles } = await resolvedDependencies.collectModelPatch(
-		workspace.path,
-		instance.base_commit,
-	);
-	const prediction = createSWEbenchPrediction(instance.instance_id, modelPatch, options.modelNameOrPath);
-	const predictionPath = resolve(options.outputPath);
-	await mkdir(dirname(predictionPath), { recursive: true });
-	await writeFile(predictionPath, `${JSON.stringify(prediction)}\n`, "utf8");
+	let prediction: SWEbenchPrediction | null = null;
+	let predictionPath: string | null = null;
+	let changedFiles: string[] = [];
+	let predictionError: SWEbenchAdapterResult["predictionError"] = null;
+	try {
+		const collected = await resolvedDependencies.collectModelPatch(workspace.path, instance.base_commit);
+		changedFiles = collected.changedFiles;
+		prediction = createSWEbenchPrediction(instance.instance_id, collected.modelPatch, options.modelNameOrPath);
+		predictionPath = resolve(options.outputPath);
+		await mkdir(dirname(predictionPath), { recursive: true });
+		await writeFile(predictionPath, `${JSON.stringify(prediction)}\n`, "utf8");
+	} catch {
+		predictionError = "prediction_export_failed";
+	}
 	return {
 		instance,
 		runId,
@@ -235,6 +251,7 @@ export async function runSWEbenchInstance(
 		changedFiles,
 		prediction,
 		predictionPath,
+		predictionError,
 		runtimeRecordPath: getHarnessNativeRuntimeRecordPath(policy.worktreeRoot, runId),
 	};
 }

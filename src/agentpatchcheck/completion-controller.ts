@@ -1,8 +1,10 @@
 import type {
 	HarnessNativeCompletionDecision,
 	HarnessNativeCompletionReason,
+	HarnessNativePlanExecutionCheckpoint,
 	HarnessNativePlanExecutionResult,
 	HarnessNativePlanningResult,
+	HarnessNativeRuntimeEvent,
 } from "./types";
 
 export const DEFAULT_MAX_COMPLETION_DEFERRALS = 2;
@@ -11,11 +13,35 @@ export const MAX_COMPLETION_DEFERRALS = 4;
 export interface HarnessNativeCompletionInput {
 	planning: HarnessNativePlanningResult;
 	planExecution: HarnessNativePlanExecutionResult;
+	/** Canonical cross-attempt verification obligation, derived at the finish boundary. */
+	runtimeCheckpoint?: HarnessNativePlanExecutionCheckpoint | null;
+}
+
+/** Folds existing Runtime facts into the verification obligation that can veto finish. */
+export function deriveHarnessNativeCompletionCheckpoint(
+	events: readonly HarnessNativeRuntimeEvent[],
+	verificationRequired: boolean,
+): HarnessNativePlanExecutionCheckpoint | null {
+	if (!verificationRequired) return null;
+	let checkpoint: HarnessNativePlanExecutionCheckpoint | null = null;
+	for (const event of events) {
+		if (event.type === "attempt-started" && event.phase === "public-verification-repair") {
+			checkpoint = "repair-due";
+			continue;
+		}
+		if (event.type !== "tool-result" || event.status !== "ok") continue;
+		if (event.facts.kind === "mutation") checkpoint = "verification-due";
+		else if (event.facts.kind === "verification" && event.facts.outcome !== "not-run")
+			checkpoint = event.facts.outcome === "failed" ? "repair-due" : null;
+	}
+	return checkpoint;
 }
 
 function incompleteReason(
 	input: HarnessNativeCompletionInput,
 ): Exclude<HarnessNativeCompletionReason, "complete" | "deferral-limit"> | null {
+	if (input.runtimeCheckpoint === "verification-due") return "verification-due";
+	if (input.runtimeCheckpoint === "repair-due") return "repair-due";
 	const checkpoint = input.planExecution.activeStep?.executionCheckpoint;
 	if (checkpoint === "verification-due") return "verification-due";
 	if (checkpoint === "repair-due") return "repair-due";

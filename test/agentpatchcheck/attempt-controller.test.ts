@@ -119,7 +119,7 @@ describe("Harness-native attempt controller", () => {
 		});
 	});
 
-	it("does not retry retrieval-only or deterministic terminal failures", () => {
+	it("continues an exhausted retrieval-only attempt but not deterministic terminal failures", () => {
 		const retrieval: HarnessNativeTrajectoryStep = {
 			iteration: 1,
 			decision: "tool",
@@ -145,7 +145,7 @@ describe("Harness-native attempt controller", () => {
 				remainingTimeMs: 60_000,
 				minContinuationTimeMs: 30_000,
 			}),
-		).toMatchObject({ decision: "stop", reason: "no-partial-progress" });
+		).toMatchObject({ decision: "continue", reason: "iteration-limit-with-progress" });
 		expect(
 			reviewHarnessNativeAttempt({
 				runtime: runtime("model-failed", [mutation]),

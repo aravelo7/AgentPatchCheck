@@ -6,7 +6,7 @@ import { runGit } from "../workspace/git-utils";
 import type { AgentRuntime } from "./agent-runtime";
 import { createHarnessNativeAttemptContinuation, reviewHarnessNativeAttempt } from "./attempt-controller";
 import { runVerificationCommand } from "./command-verifier";
-import { HarnessNativeCompletionController } from "./completion-controller";
+import { deriveHarnessNativeCompletionCheckpoint, HarnessNativeCompletionController } from "./completion-controller";
 import { deriveHarnessNativeContextViews } from "./context-view";
 import { type DshCodeJsonValue, runDshCompatibleCode } from "./dsh-compatible-code-runtime";
 import {
@@ -1679,6 +1679,10 @@ export async function runHarnessNativeRuntime(options: {
 			const completion = completionController.evaluate({
 				planning: planner.snapshot(),
 				planExecution: planExecutor.snapshot(),
+				runtimeCheckpoint: deriveHarnessNativeCompletionCheckpoint(
+					eventSpine.snapshot(),
+					(options.verification?.commands.length ?? 0) > 0,
+				),
 			});
 			const activeStep = planExecutor.activeStep;
 			eventSpine.append({

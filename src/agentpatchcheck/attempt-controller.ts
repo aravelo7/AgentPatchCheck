@@ -32,8 +32,10 @@ function latestVerificationOutcome(
 
 /**
  * Reviews a completed inner-loop attempt without choosing any coding action.
- * Only iteration exhaustion with canonical mutation progress or a pending
- * implementation checkpoint is eligible for bounded continuation.
+ * Iteration exhaustion is eligible for bounded continuation while the existing
+ * attempt and shared-time boundaries remain available. Mutation progress and a
+ * pending implementation checkpoint are recorded for the continuation context,
+ * but neither is a prerequisite for starting the next attempt.
  */
 export function reviewHarnessNativeAttempt(input: HarnessNativeAttemptReviewInput): HarnessNativeAttemptReview {
 	const progress = mutationProgress(input.runtime);
@@ -46,7 +48,6 @@ export function reviewHarnessNativeAttempt(input: HarnessNativeAttemptReviewInpu
 	else if (input.runtime.terminationReason !== "iteration-limit") reason = "terminal-termination";
 	else if (remainingAttempts === 0) reason = "max-attempts";
 	else if (input.remainingTimeMs < input.minContinuationTimeMs) reason = "insufficient-time";
-	else if (progress.count === 0 && executionCheckpoint === null) reason = "no-partial-progress";
 	else {
 		decision = "continue";
 		reason = "iteration-limit-with-progress";
