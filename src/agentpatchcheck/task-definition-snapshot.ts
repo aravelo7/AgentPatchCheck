@@ -40,6 +40,7 @@ async function createTaskDefinitionSnapshot(policy: TaskPolicy): Promise<TaskDef
 			baseRef: policy.baseRef,
 			baseCommit: policy.baseCommit,
 			worktreeRoot: policy.worktreeRoot,
+			runIdentity: policy.runIdentity,
 			prompt: policy.prompt,
 			executionBootstrap: policy.executionBootstrap,
 			publicVerificationRepairInstruction: policy.publicVerificationRepairInstruction,

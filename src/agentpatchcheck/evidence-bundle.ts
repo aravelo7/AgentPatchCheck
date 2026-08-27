@@ -353,6 +353,7 @@ export function createEvidenceBundle(options: {
 			baseRef: options.policy.baseRef,
 			baseCommit: options.policy.baseCommit,
 			worktreeRoot: options.policy.worktreeRoot,
+			runIdentity: options.policy.runIdentity,
 			promptLength: options.policy.prompt.length,
 			promptSha256,
 			executionBootstrap: options.policy.executionBootstrap,

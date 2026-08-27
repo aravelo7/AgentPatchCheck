@@ -25,6 +25,19 @@ const taskSpecSchema = z
 		baseRef: z.string().optional(),
 		worktreeRoot: z.string().optional(),
 		runId: z.string().optional(),
+		runIdentity: z
+			.object({
+				experiment: z.string(),
+				task: z.string(),
+				variant: z.string(),
+				attempt: z.number().int(),
+				repository: z.string().nullable().optional(),
+				baseCommit: z.string().nullable().optional(),
+				model: z.string().nullable().optional(),
+				benchmark: z.string().nullable().optional(),
+			})
+			.strict()
+			.optional(),
 		codexExecutable: z.string().optional(),
 		agentAdapter: z.enum(["codex", "script", "harness-native", "cline-runtime"]).optional(),
 		agentScript: z.string().optional(),
@@ -241,6 +254,7 @@ export async function loadTaskSpec(specPath: string): Promise<TaskPolicyInput> {
 				? undefined
 				: resolveFromSpecDirectory(specDirectory, parsed.data.worktreeRoot),
 		runId: parsed.data.runId,
+		runIdentity: parsed.data.runIdentity,
 		codexExecutable: resolveExecutable(specDirectory, parsed.data.codexExecutable),
 		agentAdapter: parsed.data.agentAdapter,
 		agentScript: resolveAgentScript(specDirectory, parsed.data.agentScript),

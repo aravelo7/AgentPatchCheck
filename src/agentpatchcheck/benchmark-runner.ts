@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -13,6 +13,7 @@ import { HEADLESS_CLI_VERSION } from "./cli-version";
 import { executeAgentPatchCheck } from "./execute";
 import { readEvidenceBundle } from "./git-patch-verifier";
 import { evaluateRiskPolicy } from "./risk-policy";
+import { createRunId as createCompactRunId, type RunIdentityInput } from "./run-identity";
 import { validateTaskPolicy } from "./task-policy";
 import { loadTaskSpec } from "./task-spec";
 import type {
@@ -33,7 +34,7 @@ interface BenchmarkDependencies {
 	validateTaskPolicy: typeof validateTaskPolicy;
 	execute: typeof executeAgentPatchCheck;
 	writeReport: typeof writeBenchmarkReport;
-	createRunId: () => string;
+	createRunId: (identity: RunIdentityInput) => string;
 	readEvidence: typeof readEvidenceBundle;
 	readAgentVersion: (executable: string) => Promise<string | null>;
 }
@@ -48,14 +49,6 @@ const allStatuses: BenchmarkTaskStatus[] = [
 	"assessment-failed",
 	"setup-failed",
 ];
-
-function createRunId(): string {
-	return `benchmark-${randomUUID().slice(0, 12)}`;
-}
-
-function createTaskRunId(benchmarkRunId: string, taskId: string): string {
-	return `${benchmarkRunId}-${taskId}`;
-}
 
 async function readAgentVersion(executable: string): Promise<string | null> {
 	return await new Promise((resolveVersion) => {
@@ -352,7 +345,7 @@ const defaultDependencies: BenchmarkDependencies = {
 	validateTaskPolicy,
 	execute: executeAgentPatchCheck,
 	writeReport: writeBenchmarkReport,
-	createRunId,
+	createRunId: (identity) => createCompactRunId(identity, "bm"),
 	readEvidence: readEvidenceBundle,
 	readAgentVersion,
 };
@@ -362,7 +355,14 @@ export async function runBenchmark(
 	dependencies: Partial<BenchmarkDependencies> = {},
 ): Promise<BenchmarkResult> {
 	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
-	const runId = resolvedDependencies.createRunId();
+	const benchmarkIdentity: RunIdentityInput = {
+		experiment: definition.suite?.id ?? definition.name ?? "benchmark",
+		task: definition.sourceSha256,
+		variant: definition.variant ?? "suite",
+		attempt: definition.attempt ?? 1,
+		benchmark: definition.sourcePath,
+	};
+	const runId = resolvedDependencies.createRunId(benchmarkIdentity);
 	const tasks: BenchmarkTaskResult[] = [];
 	let benchmarkWorktreeRoot: string | null = null;
 	for (const task of definition.tasks) {
@@ -370,9 +370,19 @@ export async function runBenchmark(
 		try {
 			const input = await resolvedDependencies.loadTaskSpec(task.taskSpecPath);
 			benchmarkWorktreeRoot ??= getBenchmarkWorktreeRoot(input);
+			const taskIdentity: RunIdentityInput = {
+				experiment: definition.suite?.id ?? definition.name ?? "benchmark",
+				task: task.id,
+				variant: definition.variant ?? input.model ?? input.agentAdapter ?? "default",
+				attempt: definition.attempt ?? 1,
+				repository: input.repositoryRoot,
+				benchmark: definition.sourcePath,
+			};
+			const taskRunId = input.runId ?? createCompactRunId(taskIdentity, "bm");
 			const policy = await resolvedDependencies.validateTaskPolicy({
 				...input,
-				runId: input.runId ?? createTaskRunId(runId, task.id),
+				runId: taskRunId,
+				runIdentity: input.runIdentity ?? taskIdentity,
 			});
 			const result = await resolvedDependencies.execute(policy);
 			const failureClassification = classifyFailure(result);
@@ -397,6 +407,7 @@ export async function runBenchmark(
 			}
 			tasks.push({
 				taskId: task.id,
+				runId: policy.runId,
 				taskSpecPath: task.taskSpecPath,
 				configuration: {
 					taskSpecSha256: task.taskSpecSha256,

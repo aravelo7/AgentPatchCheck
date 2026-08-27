@@ -8,6 +8,7 @@ import { isCredentialRef } from "./credential-resolver";
 import { DEFAULT_MAX_PLAN_REVISIONS, MAX_PLAN_REVISIONS } from "./planner";
 import { DEFAULT_MAX_PROTOCOL_RECOVERIES, MAX_PROTOCOL_RECOVERIES } from "./protocol-recovery";
 import { DEFAULT_RISK_POLICY_CONFIGURATION } from "./risk-policy";
+import { normalizeRunIdentity } from "./run-identity";
 import {
 	type AgentAdapterId,
 	type AgentPatchCheckSandbox,
@@ -489,6 +490,17 @@ export async function validateTaskPolicy(input: TaskPolicyInput): Promise<TaskPo
 			input.publicVerificationRepairInstruction,
 		),
 		runId: normalizeOptionalRunId(input.runId),
+		runIdentity: normalizeRunIdentity(
+			input.runIdentity ?? {
+				experiment: "task",
+				task: createHash("sha256").update(input.prompt, "utf8").digest("hex"),
+				variant: model ?? agentAdapter,
+				attempt: 1,
+				repository: repositoryRoot,
+				baseCommit,
+				model: model ?? null,
+			},
+		),
 		codexExecutable: normalizeOptionalExecutable(input.codexExecutable),
 		agentAdapter,
 		agentScript: await normalizeAgentScript(agentAdapter, input.agentScript, repositoryRoot),

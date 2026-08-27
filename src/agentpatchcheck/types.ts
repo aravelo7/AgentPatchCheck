@@ -1,3 +1,5 @@
+import type { RunIdentity, RunIdentityInput } from "./run-identity";
+
 export type AgentPatchCheckSandbox = "read-only" | "workspace-write";
 export type AgentAdapterId = "codex" | "script" | "harness-native" | "cline-runtime";
 export const TASK_POLICY_BRAND: unique symbol = Symbol("TaskPolicy");
@@ -10,6 +12,7 @@ export interface TaskPolicyInput {
 	baseRef?: string;
 	worktreeRoot?: string;
 	runId?: string;
+	runIdentity?: RunIdentityInput;
 	codexExecutable?: string;
 	agentAdapter?: AgentAdapterId;
 	agentScript?: string;
@@ -163,6 +166,7 @@ export interface TaskPolicy {
 	executionBootstrap: ExecutionBootstrapPolicy | null;
 	publicVerificationRepairInstruction: string | null;
 	runId?: string;
+	runIdentity: RunIdentity;
 	codexExecutable?: string;
 	agentAdapter: AgentAdapterId;
 	agentScript: string | null;
@@ -1159,6 +1163,7 @@ export interface TaskDefinitionSnapshot {
 		baseRef: string;
 		baseCommit: string;
 		worktreeRoot: string;
+		runIdentity: RunIdentity;
 		prompt: string;
 		executionBootstrap: ExecutionBootstrapPolicy | null;
 		publicVerificationRepairInstruction: string | null;
@@ -1190,6 +1195,7 @@ export interface TaskPolicyEvidenceSnapshot {
 	baseRef: string;
 	baseCommit: string;
 	worktreeRoot: string;
+	runIdentity?: RunIdentity;
 	promptLength: number;
 	promptSha256: string;
 	/** Absent only in Evidence created before worktree bootstrap support. */
@@ -1570,6 +1576,10 @@ export interface BenchmarkDefinition {
 	sourceSha256: string;
 	name: string | null;
 	suite: { id: string; fixtureVersion: string } | null;
+	/** Explicit experiment arm for compact Run Identity generation. */
+	variant?: string;
+	/** Explicit formal retry number for compact Run Identity generation. */
+	attempt?: number;
 	tasks: BenchmarkTaskDefinition[];
 }
 
@@ -1639,6 +1649,8 @@ export interface BenchmarkExecutionIdentity {
 
 export interface BenchmarkTaskResult {
 	taskId: string;
+	/** Compact filesystem identity; full task semantics remain in this report and Evidence. */
+	runId?: string;
 	taskSpecPath: string;
 	configuration: BenchmarkTaskConfiguration;
 	executionIdentity: BenchmarkTaskExecutionIdentity | null;

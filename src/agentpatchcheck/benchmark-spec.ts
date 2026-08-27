@@ -22,6 +22,8 @@ const benchmarkSpecSchema = z
 	.object({
 		version: z.literal(1),
 		name: z.string().min(1).max(128).optional(),
+		variant: z.string().min(1).max(128).optional(),
+		attempt: z.number().int().min(1).max(9_999).optional(),
 		suite: z
 			.object({ id: z.string().regex(TASK_ID_PATTERN), fixtureVersion: z.string().min(1).max(128) })
 			.strict()
@@ -84,6 +86,8 @@ export async function loadBenchmarkSpec(specPath: string): Promise<BenchmarkDefi
 		sourceSha256: createHash("sha256").update(sourceJson, "utf8").digest("hex"),
 		name: parsed.data.name ?? null,
 		suite: parsed.data.suite ?? null,
+		variant: parsed.data.variant,
+		attempt: parsed.data.attempt,
 		tasks: await Promise.all(
 			parsed.data.tasks.map(async (task) => {
 				if (isAbsolute(task.taskSpec))

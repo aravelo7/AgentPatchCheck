@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { getAgentAdapter } from "./agent-adapter";
 import { assessEvidenceBundle } from "./assessment-report";
 import { createPublicVerificationFeedback, runCommandVerification } from "./command-verifier";
@@ -9,6 +8,7 @@ import { runExecutionBootstrap } from "./execution-bootstrap";
 import { runHiddenOracle } from "./hidden-oracle";
 import { collectPatchSnapshot, createIsolatedWorkspace, resumeIsolatedWorkspace } from "./isolated-workspace";
 import { selectPublicVerificationRepair } from "./public-verification-repair-policy";
+import { createRunId } from "./run-identity";
 import { getHarnessNativeRuntimeRecordPath, harnessNativeRuntimeRecordExists } from "./runtime-record";
 import { persistTaskDefinitionSnapshot } from "./task-definition-snapshot";
 import {
@@ -60,10 +60,6 @@ const defaultDependencies: HeadlessCoreDependencies = {
 	writeTaskFinalization: writeCompletedTaskFinalization,
 	withTaskFinalizationLock,
 };
-
-function createRunId(): string {
-	return `run-${randomUUID().slice(0, 12)}`;
-}
 
 function failedAgentExecution(policy: TaskPolicy, message: string): AgentExecution {
 	return {
@@ -273,7 +269,7 @@ export async function executeAgentPatchCheck(
 ): Promise<AgentPatchCheckResult> {
 	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
 	const taskDefinition = await resolvedDependencies.persistTaskDefinition(policy);
-	const runId = policy.runId ?? createRunId();
+	const runId = policy.runId ?? createRunId(policy.runIdentity);
 	const finalizationPath = getTaskFinalizationPath(policy.worktreeRoot, runId);
 	return await resolvedDependencies.withTaskFinalizationLock(finalizationPath, async () => {
 		const completed = await resolvedDependencies.readTaskFinalization({ policy, runId, taskDefinition });
