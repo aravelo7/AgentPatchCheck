@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
+const projectEnvironmentPath = join(projectRoot, ".env");
+if (existsSync(projectEnvironmentPath)) process.loadEnvFile(projectEnvironmentPath);
 const fixtureRoot = join(projectRoot, "test", "fixtures", "agentpatchcheck");
 const cliPath = join(projectRoot, "src", "agentpatchcheck", "cli.ts");
 const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/u;

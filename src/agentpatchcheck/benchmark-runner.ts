@@ -10,6 +10,7 @@ import {
 import { lockedFileSystem } from "../fs/locked-file-system";
 import { getApprovalRecordPath, getApprovalState, readApprovalRecord } from "./approval";
 import { HEADLESS_CLI_VERSION } from "./cli-version";
+import { applyDeepSeekV4ModelSelection, type DeepSeekV4Model } from "./deepseek-v4-model";
 import { executeAgentPatchCheck } from "./execute";
 import { readEvidenceBundle } from "./git-patch-verifier";
 import { evaluateRiskPolicy } from "./risk-policy";
@@ -37,6 +38,10 @@ interface BenchmarkDependencies {
 	createRunId: (identity: RunIdentityInput) => string;
 	readEvidence: typeof readEvidenceBundle;
 	readAgentVersion: (executable: string) => Promise<string | null>;
+}
+
+export interface BenchmarkRunConfiguration {
+	deepseekModel?: DeepSeekV4Model;
 }
 
 const allStatuses: BenchmarkTaskStatus[] = [
@@ -353,6 +358,7 @@ const defaultDependencies: BenchmarkDependencies = {
 export async function runBenchmark(
 	definition: BenchmarkDefinition,
 	dependencies: Partial<BenchmarkDependencies> = {},
+	configuration: BenchmarkRunConfiguration = {},
 ): Promise<BenchmarkResult> {
 	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
 	const benchmarkIdentity: RunIdentityInput = {
@@ -368,7 +374,10 @@ export async function runBenchmark(
 	for (const task of definition.tasks) {
 		const startedAt = Date.now();
 		try {
-			const input = await resolvedDependencies.loadTaskSpec(task.taskSpecPath);
+			const input = applyDeepSeekV4ModelSelection(
+				await resolvedDependencies.loadTaskSpec(task.taskSpecPath),
+				configuration.deepseekModel,
+			);
 			benchmarkWorktreeRoot ??= getBenchmarkWorktreeRoot(input);
 			const taskIdentity: RunIdentityInput = {
 				experiment: definition.suite?.id ?? definition.name ?? "benchmark",

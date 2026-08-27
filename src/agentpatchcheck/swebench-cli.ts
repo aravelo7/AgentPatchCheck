@@ -4,8 +4,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getGitStdout } from "../workspace/git-utils";
+import { type DeepSeekV4Model, parseDeepSeekV4Model } from "./deepseek-v4-model";
 import { findAgentPatchCheckProjectRoot, initializeAgentPatchCheckEnvironment } from "./project-environment";
 import {
+	createSWEbenchModelNameOrPath,
+	createSWEbenchRuntimeConfiguration,
 	loadSWEbenchInstance,
 	runSWEbenchInstance,
 	SWE_BENCH_MULTILINGUAL_DATASET,
@@ -48,7 +51,7 @@ interface CliOptions {
 	instance: string;
 	repository: string;
 	output: string;
-	modelNameOrPath: string;
+	deepseekModel: DeepSeekV4Model;
 	runId?: string;
 	variant?: string;
 	attempt?: number;
@@ -98,14 +101,17 @@ function positiveIntegerOption(argv: string[], name: string): number {
 }
 
 function parseOptions(argv: string[]): CliOptions {
+	if (optionValue(argv, "--model-name-or-path", false) !== undefined) {
+		throw new Error(
+			"--model-name-or-path is no longer accepted; use --deepseek-model so prediction identity matches execution.",
+		);
+	}
 	return {
 		dataset: optionValue(argv, "--dataset") as string,
 		instance: optionValue(argv, "--instance") as string,
 		repository: optionValue(argv, "--repository") as string,
 		output: optionValue(argv, "--output") as string,
-		modelNameOrPath:
-			optionValue(argv, "--model-name-or-path", false) ??
-			`agentpatchcheck/${SWE_BENCH_STANDARD_BASELINE_TAG}/deepseek-v4-pro`,
+		deepseekModel: parseDeepSeekV4Model(optionValue(argv, "--deepseek-model", false) ?? "deepseek-v4-pro"),
 		runId: optionValue(argv, "--run-id", false),
 		variant: optionValue(argv, "--variant", false),
 		attempt: (() => {
@@ -259,7 +265,8 @@ export async function runSWEbenchCli(
 		instance,
 		repositoryRoot: options.repository,
 		outputPath: options.output,
-		modelNameOrPath: options.modelNameOrPath,
+		modelNameOrPath: createSWEbenchModelNameOrPath(options.deepseekModel),
+		runtime: createSWEbenchRuntimeConfiguration(options.deepseekModel),
 		runId: options.runId,
 		variant: options.variant,
 		attempt: options.attempt,

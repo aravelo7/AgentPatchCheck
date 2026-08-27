@@ -84,8 +84,8 @@ function argumentsFor(root: string, outputPath: string): string[] {
 		join(root, "repository"),
 		"--output",
 		outputPath,
-		"--model-name-or-path",
-		"apc/test-model",
+		"--deepseek-model",
+		"deepseek-v4-pro",
 		"--run-id",
 		"swebench-cli-test",
 		"--evaluator-python",
@@ -127,13 +127,22 @@ function baselineGitStdout(options: { currentCommit?: string; trackedChanges?: s
 }
 
 describe("SWE-bench CLI post-run orchestration", () => {
+	it("rejects an independently supplied prediction model label", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		await expect(
+			runSWEbenchCli([...argumentsFor(root, join(root, "predictions.jsonl")), "--model-name-or-path", "apc/stale"], {
+				initializeEnvironment: () => "already-loaded",
+			}),
+		).rejects.toThrow("--model-name-or-path is no longer accepted");
+	});
+
 	it("executes Agent, writes a standard prediction, then evaluates a timeout with a valid patch", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
 		const outputPath = join(root, "predictions.jsonl");
 		const order: string[] = [];
 		const prediction = {
 			instance_id: instance.instance_id,
-			model_name_or_path: "apc/test-model",
+			model_name_or_path: `agentpatchcheck/${SWE_BENCH_STANDARD_BASELINE_TAG}/deepseek-v4-pro`,
 			model_patch: "diff --git a/gin.go b/gin.go\n",
 		};
 
@@ -148,7 +157,8 @@ describe("SWE-bench CLI post-run orchestration", () => {
 					instance,
 					repositoryRoot: join(root, "repository"),
 					outputPath,
-					modelNameOrPath: "apc/test-model",
+					modelNameOrPath: `agentpatchcheck/${SWE_BENCH_STANDARD_BASELINE_TAG}/deepseek-v4-pro`,
+					runtime: expect.objectContaining({ model: "deepseek-v4-pro" }),
 					runId: "swebench-cli-test",
 					variant: undefined,
 					attempt: undefined,

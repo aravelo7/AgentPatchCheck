@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { getGitStdout, runGit } from "../workspace/git-utils";
 import { getAgentAdapter } from "./agent-adapter";
+import { type DeepSeekV4Model, parseDeepSeekV4Model } from "./deepseek-v4-model";
 import { createIsolatedWorkspace } from "./isolated-workspace";
 import { createRunId, type RunIdentity } from "./run-identity";
 import { getHarnessNativeRuntimeRecordPath } from "./runtime-record";
@@ -14,7 +15,7 @@ const REPOSITORY_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 
 export const SWE_BENCH_MULTILINGUAL_DATASET = "swe-bench/SWE-Bench_Multilingual";
-export const SWE_BENCH_STANDARD_BASELINE_TAG = "v0.2-swebench-standard-baseline";
+export const SWE_BENCH_STANDARD_BASELINE_TAG = "v0.3-swebench-deepseek-v4-baseline";
 export const AGENTPATCHCHECK_BASELINE_MODEL = "deepseek-v4-pro";
 
 /**
@@ -47,7 +48,7 @@ export interface SWEbenchAdapterOptions {
 	instance: SWEbenchAgentSafeInstance;
 	repositoryRoot: string;
 	outputPath: string;
-	modelNameOrPath: string;
+	modelNameOrPath?: string;
 	runId?: string;
 	variant?: string;
 	attempt?: number;
@@ -96,6 +97,14 @@ const defaultRuntime: SWEbenchRuntimeConfiguration = {
 	},
 	timeoutMs: 600_000,
 };
+
+export function createSWEbenchRuntimeConfiguration(model: DeepSeekV4Model): SWEbenchRuntimeConfiguration {
+	return { ...defaultRuntime, model };
+}
+
+export function createSWEbenchModelNameOrPath(model: DeepSeekV4Model): string {
+	return `agentpatchcheck/${SWE_BENCH_STANDARD_BASELINE_TAG}/${model}`;
+}
 
 function requireString(value: unknown, field: keyof SWEbenchAgentSafeInstance): string {
 	if (typeof value !== "string" || !value.trim()) throw new Error(`SWE-bench instance field ${field} is required.`);
@@ -191,14 +200,19 @@ export async function runSWEbenchInstance(
 	const instance = options.instance;
 	const repositoryRoot = resolve(options.repositoryRoot);
 	const runtime = options.runtime ?? defaultRuntime;
+	const model = parseDeepSeekV4Model(runtime.model);
+	const modelNameOrPath = createSWEbenchModelNameOrPath(model);
+	if (options.modelNameOrPath !== undefined && options.modelNameOrPath !== modelNameOrPath) {
+		throw new Error("SWE-bench model_name_or_path is derived from the selected DeepSeek runtime model.");
+	}
 	const runIdentity = {
 		experiment: SWE_BENCH_MULTILINGUAL_DATASET,
 		task: instance.instance_id,
-		variant: options.variant ?? options.modelNameOrPath,
+		variant: options.variant ?? modelNameOrPath,
 		attempt: options.attempt ?? 1,
 		repository: instance.repo,
 		baseCommit: instance.base_commit,
-		model: runtime.model,
+		model,
 		benchmark: SWE_BENCH_MULTILINGUAL_DATASET,
 	};
 	const runId = options.runId?.trim() || createRunId(runIdentity, "sb");
@@ -211,7 +225,7 @@ export async function runSWEbenchInstance(
 		runIdentity,
 		prompt: instance.problem_statement,
 		agentAdapter: "harness-native",
-		model: runtime.model,
+		model,
 		nativeAgent: runtime.nativeAgent,
 		timeoutMs: runtime.timeoutMs,
 		sandbox: "workspace-write",
@@ -234,7 +248,7 @@ export async function runSWEbenchInstance(
 	try {
 		const collected = await resolvedDependencies.collectModelPatch(workspace.path, instance.base_commit);
 		changedFiles = collected.changedFiles;
-		prediction = createSWEbenchPrediction(instance.instance_id, collected.modelPatch, options.modelNameOrPath);
+		prediction = createSWEbenchPrediction(instance.instance_id, collected.modelPatch, modelNameOrPath);
 		predictionPath = resolve(options.outputPath);
 		await mkdir(dirname(predictionPath), { recursive: true });
 		await writeFile(predictionPath, `${JSON.stringify(prediction)}\n`, "utf8");

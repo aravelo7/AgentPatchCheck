@@ -7,11 +7,14 @@ import { describe, expect, it } from "vitest";
 import { createHarnessNativeAdapter } from "../../src/agentpatchcheck/agent-adapter";
 import {
 	collectSWEbenchModelPatch,
+	createSWEbenchModelNameOrPath,
 	createSWEbenchPrediction,
+	createSWEbenchRuntimeConfiguration,
 	loadSWEbenchInstance,
 	runSWEbenchInstance,
 } from "../../src/agentpatchcheck/swebench-adapter";
-import type { IsolatedWorkspace, TaskPolicy } from "../../src/agentpatchcheck/types";
+import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
+import type { AgentExecution, IsolatedWorkspace, TaskPolicy } from "../../src/agentpatchcheck/types";
 import { runGit } from "../../src/workspace/git-utils";
 
 const instance = {
@@ -80,7 +83,7 @@ describe("SWE-bench Multilingual adapter", () => {
 				instance: safeInstance,
 				repositoryRoot,
 				outputPath,
-				modelNameOrPath: "apc/baseline",
+				modelNameOrPath: createSWEbenchModelNameOrPath("deepseek-v4-pro"),
 				runId: "swebench-test",
 			},
 			{
@@ -145,5 +148,58 @@ describe("SWE-bench Multilingual adapter", () => {
 			baseCommit: safeInstance.base_commit,
 		});
 		expect(JSON.parse((await readFile(outputPath, "utf8")).trim())).toEqual(result.prediction);
+	});
+
+	it("uses a Flash runtime and matching prediction identity without changing provider settings", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-adapter-"));
+		const repositoryRoot = join(root, "repository");
+		const outputPath = join(root, "prediction.jsonl");
+		await mkdir(repositoryRoot, { recursive: true });
+		expect((await runGit(repositoryRoot, ["init"])).ok).toBe(true);
+		expect((await runGit(repositoryRoot, ["config", "user.email", "test@example.com"])).ok).toBe(true);
+		expect((await runGit(repositoryRoot, ["config", "user.name", "Test"])).ok).toBe(true);
+		await writeFile(join(repositoryRoot, "README.md"), "base\n");
+		expect((await runGit(repositoryRoot, ["add", "README.md"])).ok).toBe(true);
+		expect((await runGit(repositoryRoot, ["commit", "-m", "base"])).ok).toBe(true);
+		const safeInstance = {
+			...instance,
+			base_commit: (await runGit(repositoryRoot, ["rev-parse", "HEAD"])).stdout.trim(),
+		};
+		const runtime = createSWEbenchRuntimeConfiguration("deepseek-v4-flash");
+		const result = await runSWEbenchInstance(
+			{
+				instance: safeInstance,
+				repositoryRoot,
+				outputPath,
+				runtime,
+			},
+			{
+				validatePolicy: async (input) => {
+					expect(input.model).toBe("deepseek-v4-flash");
+					expect(input.nativeAgent).toEqual(runtime.nativeAgent);
+					return await validateTaskPolicy(input);
+				},
+				createWorkspace: async (options): Promise<IsolatedWorkspace> => ({
+					runId: options.runId,
+					repositoryPath: options.repositoryPath,
+					path: join(root, "worktree"),
+					baseRef: options.baseRef,
+					baseCommit: options.baseCommit,
+				}),
+				executeAgent: async (): Promise<AgentExecution> => ({
+					executable: "agent",
+					args: [],
+					exitCode: 0,
+					signal: null,
+					stdout: "",
+					stderr: "",
+					durationMs: 1,
+					timedOut: false,
+				}),
+				collectModelPatch: async () => ({ modelPatch: "diff --git a/file b/file\n", changedFiles: ["file"] }),
+			},
+		);
+		expect(result.runIdentity.model).toBe("deepseek-v4-flash");
+		expect(result.prediction?.model_name_or_path).toBe(createSWEbenchModelNameOrPath("deepseek-v4-flash"));
 	});
 });

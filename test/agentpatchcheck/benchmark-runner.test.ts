@@ -171,6 +171,50 @@ describe("Benchmark Runner", () => {
 		});
 	});
 
+	it("applies a Flash selection before task identity and policy resolution", async () => {
+		const definition: BenchmarkDefinition = {
+			version: 1,
+			sourcePath: "D:\\benchmarks\\deepseek.json",
+			sourceSha256: "deepseek-benchmark-sha",
+			name: "deepseek",
+			suite: null,
+			tasks: [
+				{
+					id: "deepseek",
+					taskSpecPath: "deepseek.json",
+					taskSpecSha256: "deepseek-task-sha",
+					expectedStatus: "passed",
+				},
+			],
+		};
+		const result = await runBenchmark(
+			definition,
+			{
+				loadTaskSpec: async () => ({
+					repositoryRoot: process.cwd(),
+					prompt: "Update the fixture.",
+					agentAdapter: "harness-native",
+					model: "deepseek-v4-pro",
+					nativeAgent: { provider: "deepseek", credentialRef: "deepseek-primary" },
+					patchExpectation: "changes-required",
+				}),
+				validateTaskPolicy,
+				execute: async () => createResult({}),
+				writeReport: async ({ path, report }) => ({ path, createdAt: report.createdAt }),
+				createRunId: () => "deepseek-benchmark",
+				readAgentVersion: async () => null,
+			},
+			{ deepseekModel: "deepseek-v4-flash" },
+		);
+		expect(result.report.tasks[0]?.configuration).toMatchObject({
+			model: "deepseek-v4-flash",
+			modelProvider: { provider: "deepseek", protocol: "chat-completions" },
+		});
+		expect(result.report.tasks[0]?.executionIdentity?.modelProvider).toMatchObject({
+			configuredModel: "deepseek-v4-flash",
+		});
+	});
+
 	it("records the bounded Harness-native public-verification repair cycle in task and aggregate results", async () => {
 		const definition: BenchmarkDefinition = {
 			version: 1,

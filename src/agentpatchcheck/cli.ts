@@ -10,6 +10,7 @@ import { runBenchmark } from "./benchmark-runner";
 import { loadBenchmarkSpec } from "./benchmark-spec";
 import { cleanupEvidenceWorktree } from "./cleanup";
 import { HEADLESS_CLI_VERSION } from "./cli-version";
+import { applyDeepSeekV4ModelSelection, parseDeepSeekV4Model } from "./deepseek-v4-model";
 import { auditEvidenceBundles } from "./evidence-audit";
 import { listEvidenceBundles } from "./evidence-list";
 import { manageEvidenceRetention } from "./evidence-retention";
@@ -146,8 +147,16 @@ export function createHeadlessCliProgram(io: HeadlessCliIo = defaultIo): Command
 		.command("run")
 		.description("Run a controlled Codex patch task in an isolated Git worktree.")
 		.requiredOption("--task-spec <path>", "Strict JSON TaskSpec containing the controlled task configuration.")
-		.action(async (options: { taskSpec: string }) => {
-			const result = await executeAgentPatchCheck(await validateTaskPolicy(await loadTaskSpec(options.taskSpec)));
+		.option(
+			"--deepseek-model <model>",
+			"Run with deepseek-v4-flash or deepseek-v4-pro using the existing DeepSeek provider.",
+		)
+		.action(async (options: { taskSpec: string; deepseekModel?: string }) => {
+			const input = applyDeepSeekV4ModelSelection(
+				await loadTaskSpec(options.taskSpec),
+				options.deepseekModel === undefined ? undefined : parseDeepSeekV4Model(options.deepseekModel),
+			);
+			const result = await executeAgentPatchCheck(await validateTaskPolicy(input));
 			if (result.status !== "succeeded")
 				return failure(io, "run", result, "execution-failed", "Agent execution did not succeed.");
 			if (result.assessment.report.verdict.status !== "pass")
@@ -284,8 +293,16 @@ export function createHeadlessCliProgram(io: HeadlessCliIo = defaultIo): Command
 		.command("benchmark")
 		.description("Run a strict BenchmarkSpec by orchestrating existing Headless Core task runs.")
 		.requiredOption("--spec <path>", "Path to a strict BenchmarkSpec JSON file.")
-		.action(async (options: { spec: string }) => {
-			const result = await runBenchmark(await loadBenchmarkSpec(options.spec));
+		.option("--deepseek-model <model>", "Run DeepSeek tasks with deepseek-v4-flash or deepseek-v4-pro.")
+		.action(async (options: { spec: string; deepseekModel?: string }) => {
+			const result = await runBenchmark(
+				await loadBenchmarkSpec(options.spec),
+				{},
+				{
+					deepseekModel:
+						options.deepseekModel === undefined ? undefined : parseDeepSeekV4Model(options.deepseekModel),
+				},
+			);
 			if (result.report.summary.failed > 0)
 				return failure(io, "benchmark", result, "benchmark-failed", "One or more benchmark tasks did not pass.");
 			success(io, "benchmark", result);
