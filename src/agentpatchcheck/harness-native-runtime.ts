@@ -1,4 +1,3 @@
-import { createReadStream } from "node:fs";
 import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -35,6 +34,7 @@ import {
 	getHarnessNativeRuntimeRecordPath,
 	HarnessNativeRuntimeRecord,
 	hashHarnessNativeTaskIdentity,
+	type HarnessNativeRuntimeRecordWorktree,
 	withHarnessNativeRuntimeRecordLock,
 } from "./runtime-record";
 import { redactSensitiveText } from "./sensitive-text";
@@ -75,6 +75,7 @@ const registeredTools: HarnessNativeToolName[] = [
 	"apply-patch-batch",
 	"apply-edit-batch",
 	"create-file",
+	"dsh-shell",
 ];
 
 export function getHarnessNativeAvailableTools(verification: VerificationPolicy | undefined): HarnessNativeToolName[] {
@@ -195,6 +196,109 @@ type RuntimeToolResult = {
 	affectedPaths?: string[];
 };
 
+/** Repository-bound operations. The default preserves the Host worktree path. */
+export interface HarnessNativeRepositoryMetadata {
+	isFile(): boolean;
+	isDirectory(): boolean;
+	isSymbolicLink(): boolean;
+	size: number;
+}
+
+export interface HarnessNativeRepositoryDirectoryEntry {
+	name: string;
+	isFile(): boolean;
+	isDirectory(): boolean;
+	isSymbolicLink(): boolean;
+}
+
+/**
+ * Location-dependent repository I/O only. Tool validation, mutation rules,
+ * observations, and canonical facts stay in this module and are shared by all
+ * implementations.
+ */
+export interface HarnessNativeRepositoryPrimitives {
+	resolvePath(root: string, relativePath: string): string;
+	joinPath(...parts: string[]): string;
+	relativePath(root: string, path: string): string;
+	parentPath(path: string): string;
+	baseName(path: string): string;
+	stat(path: string): Promise<HarnessNativeRepositoryMetadata>;
+	listDirectory(path: string): Promise<HarnessNativeRepositoryDirectoryEntry[]>;
+	readText(path: string): Promise<string>;
+	readWindow(input: {
+		path: string;
+		displayPath: string;
+		input: ReturnType<typeof parseReadFileArguments>;
+		maxObservationBytes: number;
+	}): Promise<ReadFileResult>;
+	writeText(path: string, content: string, options?: { exclusive?: boolean }): Promise<void>;
+	git(root: string, args: string[], options?: { trimStdout?: boolean }): ReturnType<typeof runGit>;
+	runCommand(input: {
+		command: VerificationPolicy["commands"][number];
+		cwd: string;
+		outputLimitBytes: number;
+		signal?: AbortSignal;
+	}): ReturnType<typeof runVerificationCommand>;
+	applyPatch(input: {
+		root: string;
+		patch: unknown;
+		validateTarget: (relativePath: string) => Promise<void>;
+	}): ReturnType<typeof applyManagedMutationPatch>;
+	fingerprint(root: string): Promise<string>;
+	captureMutationSurface(root: string): ReturnType<typeof captureHarnessNativeWorktreeMutationSurface>;
+}
+
+export function createHostRepositoryPrimitives(): HarnessNativeRepositoryPrimitives {
+	return {
+		resolvePath: (root, relativePath) => resolve(root, relativePath),
+		joinPath: (...parts) => join(...parts),
+		relativePath: (root, path) => relative(root, path).replaceAll("\\", "/"),
+		parentPath: (path) => dirname(path),
+		baseName: (path) => basename(path),
+		stat: async (path) => await lstat(path),
+		listDirectory: async (path) => await readdir(path, { withFileTypes: true }),
+		readText: async (path) => await readFile(path, "utf8"),
+		readWindow: async (input) =>
+			await readBoundedFileWindow({
+				absolutePath: input.path,
+				displayPath: input.displayPath,
+				input: input.input,
+				maxObservationBytes: input.maxObservationBytes,
+			}),
+		writeText: async (path, content, options) =>
+			await writeFile(path, content, options?.exclusive ? { encoding: "utf8", flag: "wx" } : "utf8"),
+		git: async (root, args, options) => await runGit(root, args, options),
+		runCommand: async (input) => await runVerificationCommand(input),
+		applyPatch: async (input) => await applyManagedMutationPatch(input),
+		fingerprint: async (root) => await fingerprintHarnessNativeWorktree(root),
+		captureMutationSurface: async (root) => await captureHarnessNativeWorktreeMutationSurface(root),
+	};
+}
+
+export function createHarnessNativeRuntimeRecordWorktree(
+	repository: HarnessNativeRepositoryPrimitives,
+	worktreePath: string,
+	baseCommit: string,
+): HarnessNativeRuntimeRecordWorktree {
+	return {
+		fingerprint: async () => await repository.fingerprint(worktreePath),
+		assertRepositoryState: async () => {
+			const metadata = await repository.stat(worktreePath);
+			if (!metadata.isDirectory() || metadata.isSymbolicLink())
+				throw new Error("Runtime worktree is not a regular directory.");
+			const [topLevel, head] = await Promise.all([
+				repository.git(worktreePath, ["rev-parse", "--show-toplevel"]),
+				repository.git(worktreePath, ["rev-parse", "HEAD"]),
+			]);
+			const expectedRoot = repository.resolvePath(worktreePath, ".");
+			if (!topLevel.ok || repository.relativePath(expectedRoot, topLevel.stdout.trim()) !== "")
+				throw new Error("Runtime worktree no longer resolves to its recorded Git worktree.");
+			if (!head.ok || head.stdout.trim() !== baseCommit)
+				throw new Error("Runtime worktree HEAD no longer matches the recorded base commit.");
+		},
+	};
+}
+
 function dshProgrammaticValue(value: DshCodeJsonValue): DshCodeJsonValue {
 	return value;
 }
@@ -209,8 +313,8 @@ function toolPath(argumentsValue: Record<string, unknown>): string | null {
 	}
 }
 
-function normalizedWorkspacePath(root: string, path: string): string {
-	return relative(root, path).replaceAll("\\", "/");
+function normalizedWorkspacePath(repository: HarnessNativeRepositoryPrimitives, root: string, path: string): string {
+	return repository.relativePath(root, path);
 }
 
 function retrievalFacts(
@@ -281,6 +385,10 @@ function rejectedToolFacts(request: Extract<ModelDecision, { kind: "tool" }>): H
 	return { kind: "other" };
 }
 
+function isNotFoundError(error: unknown): boolean {
+	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
 const RECURSIVE_SEARCH_MAX_DEPTH = 4;
 const RECURSIVE_SEARCH_MAX_DIRECTORIES = 64;
 const RECURSIVE_SEARCH_MAX_FILES = 256;
@@ -316,9 +424,10 @@ export function createHarnessNativeRuntime(
 ): AgentRuntime {
 	return {
 		id: "harness-native",
-		execute: async ({ policy, worktreePath, repairContext }) => {
+		execute: async ({ policy, worktreePath, repairContext, repository }) => {
 			if (policy.nativeAgent === null || policy.model === undefined)
 				throw new Error("Harness-native Runtime requires validated native policy and model.");
+			const repositoryPrimitives = repository ?? createHostRepositoryPrimitives();
 			const nativePolicy = policy.nativeAgent;
 			const model = policy.model;
 			const provider =
@@ -432,6 +541,7 @@ export function createHarnessNativeRuntime(
 						repairContext,
 						attemptContinuation,
 						verification: policy.verification,
+						repository: repositoryPrimitives,
 						attempt,
 						phase: attempt === 1 ? repairContext.phase : "attempt-continuation",
 						eventSpine,
@@ -489,6 +599,11 @@ export function createHarnessNativeRuntime(
 			const durable = options.durable ?? providerOverride === undefined;
 			if (!durable) return await executeWithRecord({ initialEvents: [], append: () => undefined }, false);
 			return await withHarnessNativeRuntimeRecordLock(recordPath, async () => {
+				const runtimeWorktree = createHarnessNativeRuntimeRecordWorktree(
+					repositoryPrimitives,
+					worktreePath,
+					policy.baseCommit,
+				);
 				const record = await HarnessNativeRuntimeRecord.open({
 					path: recordPath,
 					identity: {
@@ -505,6 +620,7 @@ export function createHarnessNativeRuntime(
 						repositoryRoot: resolve(policy.repositoryRoot),
 						baseCommit: policy.baseCommit,
 					},
+					worktree: runtimeWorktree,
 				});
 				return await executeWithRecord(record, true);
 			});
@@ -527,31 +643,31 @@ function validateRelativeToolPath(value: unknown): string {
 	return value;
 }
 
-async function safePath(root: string, value: unknown): Promise<string> {
+async function safePath(repository: HarnessNativeRepositoryPrimitives, root: string, value: unknown): Promise<string> {
 	const relativeValue = validateRelativeToolPath(value);
 	if (relativeValue === ".") return root;
-	const candidate = resolve(root, relativeValue);
-	const relativePath = relative(root, candidate);
+	const candidate = repository.resolvePath(root, relativeValue);
+	const relativePath = repository.relativePath(root, candidate);
 	if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath))
 		throw new Error("Tool path is outside the managed workspace.");
 	let currentPath = root;
 	for (const segment of relativePath.split(/[\\/]/u)) {
-		currentPath = join(currentPath, segment);
-		if ((await lstat(currentPath)).isSymbolicLink()) throw new Error("Tool path must not traverse a symbolic link.");
+		currentPath = repository.joinPath(currentPath, segment);
+		if ((await repository.stat(currentPath)).isSymbolicLink()) throw new Error("Tool path must not traverse a symbolic link.");
 	}
 	return candidate;
 }
 
-async function safeNewFile(root: string, value: unknown): Promise<string> {
+async function safeNewFile(repository: HarnessNativeRepositoryPrimitives, root: string, value: unknown): Promise<string> {
 	const relativeValue = validateRelativeToolPath(value);
 	if (relativeValue === ".") throw new Error("New file path is invalid.");
-	const parentPath = await safePath(root, dirname(relativeValue));
-	const parentMetadata = await lstat(parentPath);
+	const parentPath = await safePath(repository, root, repository.parentPath(relativeValue));
+	const parentMetadata = await repository.stat(parentPath);
 	if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink())
 		throw new Error("New file parent is not a regular directory.");
-	const path = join(parentPath, basename(relativeValue));
+	const path = repository.joinPath(parentPath, repository.baseName(relativeValue));
 	try {
-		await lstat(path);
+		await repository.stat(path);
 		throw new Error("New file target already exists.");
 	} catch (error) {
 		if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return path;
@@ -559,19 +675,19 @@ async function safeNewFile(root: string, value: unknown): Promise<string> {
 	}
 }
 
-async function regularFile(root: string, value: unknown): Promise<string> {
-	const path = await safePath(root, value);
-	const metadata = await lstat(path);
+async function regularFile(repository: HarnessNativeRepositoryPrimitives, root: string, value: unknown): Promise<string> {
+	const path = await safePath(repository, root, value);
+	const metadata = await repository.stat(path);
 	if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("Tool path is not a regular file.");
 	return path;
 }
 
-async function safePatchTarget(root: string, value: string): Promise<void> {
+async function safePatchTarget(repository: HarnessNativeRepositoryPrimitives, root: string, value: string): Promise<void> {
 	try {
-		await regularFile(root, value);
+		await regularFile(repository, root, value);
 	} catch (error) {
 		if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "ENOENT") throw error;
-		await safeNewFile(root, value);
+		await safeNewFile(repository, root, value);
 	}
 }
 
@@ -614,6 +730,7 @@ function replaceExactText(
 }
 
 async function preparePatches(
+	repository: HarnessNativeRepositoryPrimitives,
 	root: string,
 	value: unknown,
 	options: { minimum: number; maximum: number; failureMessage: string; matchFailureMessage?: string },
@@ -634,40 +751,58 @@ async function preparePatches(
 		)
 			throw new Error("Patch batch entry content is invalid.");
 		patches.push({
-			path: await regularFile(root, patch.path),
+			path: await regularFile(repository, root, patch.path),
 			expectedText: patch.expectedText,
 			replacementText: patch.replacementText,
 		});
 	}
-	if (new Set(patches.map((patch) => patch.path)).size !== patches.length)
-		throw new Error("Patch batch must not target the same file twice.");
-	const prepared = await Promise.all(
-		patches.map(async (patch) => {
-			const content = await readFile(patch.path, "utf8");
-			return {
-				path: patch.path,
-				content,
-				replacement: replaceExactText(
-					content,
-					patch.expectedText,
-					patch.replacementText,
-					options.matchFailureMessage ?? "Patch batch expectedText must match each target exactly once.",
-				),
-			};
-		}),
-	);
-	return prepared;
+	const prepared = new Map<string, { path: string; content: string; replacement: string }>();
+	const originalContents = new Map<string, string>();
+	const appliedTargets = new Map<string, Array<{ expectedText: string; start: number; end: number }>>();
+	for (const patch of patches) {
+		let item = prepared.get(patch.path);
+		if (item === undefined) {
+			const content = await repository.readText(patch.path);
+			item = { path: patch.path, content, replacement: content };
+			prepared.set(patch.path, item);
+			originalContents.set(patch.path, content);
+			appliedTargets.set(patch.path, []);
+		}
+		const targets = appliedTargets.get(patch.path);
+		const original = originalContents.get(patch.path);
+		if (targets === undefined || original === undefined) throw new Error("Patch batch preflight state is unavailable.");
+		if (targets.some((target) => target.expectedText === patch.expectedText))
+			throw new Error("Patch batch must not target the same text twice.");
+		const originalStart = original.indexOf(patch.expectedText);
+		if (exactOccurrenceCount(original, patch.expectedText) === 1) {
+			const originalEnd = originalStart + patch.expectedText.length;
+			if (targets.some((target) => originalStart < target.end && target.start < originalEnd))
+				throw new Error("Patch batch replacements must not overlap.");
+			targets.push({ expectedText: patch.expectedText, start: originalStart, end: originalEnd });
+		}
+		item.replacement = replaceExactText(
+			item.replacement,
+			patch.expectedText,
+			patch.replacementText,
+			options.matchFailureMessage ?? "Patch batch expectedText must match each target exactly once.",
+		);
+	}
+	return [...prepared.values()];
 }
 
-async function preparePatchBatch(root: string, value: unknown) {
-	return await preparePatches(root, value, {
+async function preparePatchBatch(repository: HarnessNativeRepositoryPrimitives, root: string, value: unknown) {
+	return await preparePatches(repository, root, value, {
 		minimum: 2,
 		maximum: 8,
 		failureMessage: "Patch batch must contain 2-8 patches.",
 	});
 }
 
-async function prepareNewFiles(root: string, value: unknown): Promise<ConstrainedNewFile[]> {
+async function prepareNewFiles(
+	repository: HarnessNativeRepositoryPrimitives,
+	root: string,
+	value: unknown,
+): Promise<ConstrainedNewFile[]> {
 	if (!Array.isArray(value) || value.length > 8) throw new Error("New-file batch is invalid.");
 	const files: ConstrainedNewFile[] = [];
 	for (const item of value) {
@@ -675,25 +810,25 @@ async function prepareNewFiles(root: string, value: unknown): Promise<Constraine
 		const file = item as Partial<ConstrainedNewFile>;
 		if (typeof file.content !== "string" || file.content.length > 32_768 || file.content.includes("\0"))
 			throw new Error("New-file batch entry content is invalid.");
-		files.push({ path: await safeNewFile(root, file.path), content: file.content });
+		files.push({ path: await safeNewFile(repository, root, file.path), content: file.content });
 	}
 	if (new Set(files.map((file) => file.path)).size !== files.length)
 		throw new Error("New-file batch must not target the same file twice.");
 	return files;
 }
 
-async function prepareEditBatch(root: string, value: unknown) {
+async function prepareEditBatch(repository: HarnessNativeRepositoryPrimitives, root: string, value: unknown) {
 	if (value === null || typeof value !== "object") throw new Error("Edit batch is invalid.");
 	const batch = value as { patches?: unknown; creates?: unknown };
-	const patches = await preparePatches(root, batch.patches, {
+	const patches = await preparePatches(repository, root, batch.patches, {
 		minimum: 0,
 		maximum: 8,
 		failureMessage: "Edit batch patches are invalid.",
 	});
-	const creates = await prepareNewFiles(root, batch.creates);
-	const editCount = patches.length + creates.length;
+	const creates = await prepareNewFiles(repository, root, batch.creates);
+	const editCount = (batch.patches as unknown[]).length + creates.length;
 	if (editCount < 2 || editCount > 8) throw new Error("Edit batch must contain 2-8 edits.");
-	if (new Set([...patches.map((patch) => patch.path), ...creates.map((file) => file.path)]).size !== editCount)
+	if (creates.some((file) => patches.some((patch) => patch.path === file.path)))
 		throw new Error("Edit batch must not mix a patch and creation for the same file.");
 	return { patches, creates };
 }
@@ -738,6 +873,7 @@ function createSearchMetadata(query: string): SearchMetadata {
 
 function searchObservation(
 	matches: readonly SearchMatch[],
+	repository: HarnessNativeRepositoryPrimitives,
 	workspaceRoot: string,
 	displayRoot: string,
 	coverage: HarnessNativeSearchCoverage,
@@ -749,7 +885,7 @@ function searchObservation(
 			`Search coverage=${coverage}; matches=${matches.length}; skipped=${skippedCount}.`,
 			...matches.map(
 				(match) =>
-					`${relative(displayRoot, join(workspaceRoot, match.path)).replaceAll("\\", "/")}:${match.line}:${match.text}`,
+					`${repository.relativePath(displayRoot, repository.joinPath(workspaceRoot, match.path))}:${match.line}:${match.text}`,
 			),
 		].join("\n"),
 		limit,
@@ -757,14 +893,15 @@ function searchObservation(
 }
 
 async function scanTextFile(options: {
+	repository: HarnessNativeRepositoryPrimitives;
 	path: string;
 	workspaceRoot: string;
 	query: string;
 	maxBytes: number;
 	metadata: SearchMetadata;
 }): Promise<{ scannedBytes: number; stoppedForMatchLimit: boolean }> {
-	const metadata = await lstat(options.path);
-	const displayPath = relative(options.workspaceRoot, options.path).replaceAll("\\", "/");
+	const metadata = await options.repository.stat(options.path);
+	const displayPath = options.repository.relativePath(options.workspaceRoot, options.path);
 	if (!metadata.isFile() || metadata.isSymbolicLink()) {
 		recordSearchSkip(options.metadata, displayPath, "unreadable");
 		return { scannedBytes: 0, stoppedForMatchLimit: false };
@@ -780,9 +917,8 @@ async function scanTextFile(options: {
 	let lineNumber = 0;
 	let stoppedForMatchLimit = false;
 	try {
-		const stream = createReadStream(options.path, { encoding: "utf8", end: scanBytes - 1 });
-		for await (const chunk of stream) {
-			const text = String(chunk);
+		const content = await options.repository.readText(options.path);
+		for (const text of [Buffer.from(content, "utf8").subarray(0, scanBytes).toString("utf8")]) {
 			scannedBytes += Buffer.byteLength(text, "utf8");
 			if (text.includes("\0")) {
 				recordSearchSkip(options.metadata, displayPath, "binary");
@@ -814,9 +950,15 @@ async function scanTextFile(options: {
 	return { scannedBytes, stoppedForMatchLimit };
 }
 
-async function searchTextRecursively(root: string, value: unknown, query: string, limit: number) {
-	const searchRoot = await safePath(root, value);
-	const searchRootMetadata = await lstat(searchRoot);
+async function searchTextRecursively(
+	repository: HarnessNativeRepositoryPrimitives,
+	root: string,
+	value: unknown,
+	query: string,
+	limit: number,
+) {
+	const searchRoot = await safePath(repository, root, value);
+	const searchRootMetadata = await repository.stat(searchRoot);
 	if (!searchRootMetadata.isDirectory() || searchRootMetadata.isSymbolicLink())
 		throw new Error("Recursive search path is not a regular directory.");
 	const search = createSearchMetadata(query);
@@ -829,36 +971,37 @@ async function searchTextRecursively(root: string, value: unknown, query: string
 		const directory = pendingDirectories.pop();
 		if (directory === undefined) break;
 		if (visitedDirectories >= RECURSIVE_SEARCH_MAX_DIRECTORIES) {
-			recordSearchSkip(search, relative(root, directory.path), "directory-limit");
+			recordSearchSkip(search, repository.relativePath(root, directory.path), "directory-limit");
 			break;
 		}
-		const directoryMetadata = await lstat(directory.path);
+		const directoryMetadata = await repository.stat(directory.path);
 		if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) continue;
 		visitedDirectories += 1;
-		const entries = await readdir(directory.path, { withFileTypes: true });
+		const entries = await repository.listDirectory(directory.path);
 		for (const entry of entries) {
 			if (visitedFiles >= RECURSIVE_SEARCH_MAX_FILES) {
-				recordSearchSkip(search, relative(root, join(directory.path, entry.name)), "file-limit");
+				recordSearchSkip(search, repository.relativePath(root, repository.joinPath(directory.path, entry.name)), "file-limit");
 				stop = true;
 				break;
 			}
-			const path = join(directory.path, entry.name);
+			const path = repository.joinPath(directory.path, entry.name);
 			if (entry.isSymbolicLink()) continue;
 			if (entry.isDirectory()) {
 				if (excludedRecursiveSearchDirectories.has(entry.name.toLowerCase()))
-					recordSearchSkip(search, relative(root, path), "excluded-path");
+					recordSearchSkip(search, repository.relativePath(root, path), "excluded-path");
 				else if (directory.depth >= RECURSIVE_SEARCH_MAX_DEPTH)
-					recordSearchSkip(search, relative(root, path), "max-depth");
+					recordSearchSkip(search, repository.relativePath(root, path), "max-depth");
 				else pendingDirectories.push({ path, depth: directory.depth + 1 });
 				continue;
 			}
 			if (!entry.isFile()) continue;
 			if (isExcludedRecursiveSearchFile(entry.name)) {
-				recordSearchSkip(search, relative(root, path), "excluded-path");
+				recordSearchSkip(search, repository.relativePath(root, path), "excluded-path");
 				continue;
 			}
 			visitedFiles += 1;
 			const scanned = await scanTextFile({
+				repository,
 				path,
 				workspaceRoot: root,
 				query,
@@ -867,37 +1010,44 @@ async function searchTextRecursively(root: string, value: unknown, query: string
 			});
 			readBytes += scanned.scannedBytes;
 			if (scanned.stoppedForMatchLimit) {
-				recordSearchSkip(search, relative(root, path), "match-limit");
+				recordSearchSkip(search, repository.relativePath(root, path), "match-limit");
 				stop = true;
 			}
 		}
 	}
 	return {
-		observation: searchObservation(search.matches, root, searchRoot, search.coverage, search.skippedCount, limit),
+		observation: searchObservation(search.matches, repository, root, searchRoot, search.coverage, search.skippedCount, limit),
 		evidence: `Recursive search coverage=${search.coverage}; files=${visitedFiles}; matches=${search.matchCount}; skipped=${search.skippedCount}.`,
 		search,
 	};
 }
 
-async function searchTextDirectly(root: string, value: unknown, query: string, limit: number) {
-	const searchRoot = await safePath(root, value);
-	const searchRootMetadata = await lstat(searchRoot);
+async function searchTextDirectly(
+	repository: HarnessNativeRepositoryPrimitives,
+	root: string,
+	value: unknown,
+	query: string,
+	limit: number,
+) {
+	const searchRoot = await safePath(repository, root, value);
+	const searchRootMetadata = await repository.stat(searchRoot);
 	if (searchRootMetadata.isSymbolicLink()) throw new Error("Search path must not be a symbolic link.");
 	const search = createSearchMetadata(query);
 	let visitedFiles = 0;
 	let readBytes = 0;
 	const scan = async (path: string): Promise<boolean> => {
-		const fileName = basename(path);
+		const fileName = repository.baseName(path);
 		if (isExcludedRecursiveSearchFile(fileName)) {
-			recordSearchSkip(search, relative(root, path), "excluded-path");
+			recordSearchSkip(search, repository.relativePath(root, path), "excluded-path");
 			return false;
 		}
 		if (visitedFiles >= 128) {
-			recordSearchSkip(search, relative(root, path), "file-limit");
+			recordSearchSkip(search, repository.relativePath(root, path), "file-limit");
 			return true;
 		}
 		visitedFiles += 1;
 		const scanned = await scanTextFile({
+			repository,
 			path,
 			workspaceRoot: root,
 			query,
@@ -908,29 +1058,30 @@ async function searchTextDirectly(root: string, value: unknown, query: string, l
 		return scanned.stoppedForMatchLimit;
 	};
 	if (searchRootMetadata.isFile()) {
-		if (await scan(searchRoot)) recordSearchSkip(search, relative(root, searchRoot), "match-limit");
+		if (await scan(searchRoot)) recordSearchSkip(search, repository.relativePath(root, searchRoot), "match-limit");
 	} else if (searchRootMetadata.isDirectory()) {
-		const entries = await readdir(searchRoot, { withFileTypes: true });
+		const entries = await repository.listDirectory(searchRoot);
 		for (const entry of entries) {
 			if (!entry.isFile() || entry.isSymbolicLink()) continue;
-			const stopped = await scan(join(searchRoot, entry.name));
+			const stopped = await scan(repository.joinPath(searchRoot, entry.name));
 			if (stopped) {
-				recordSearchSkip(search, relative(root, join(searchRoot, entry.name)), "match-limit");
+				recordSearchSkip(search, repository.relativePath(root, repository.joinPath(searchRoot, entry.name)), "match-limit");
 				break;
 			}
 		}
 	} else {
 		throw new Error("Search path is not a regular file or directory.");
 	}
-	const displayRoot = searchRootMetadata.isFile() ? dirname(searchRoot) : searchRoot;
+	const displayRoot = searchRootMetadata.isFile() ? repository.parentPath(searchRoot) : searchRoot;
 	return {
-		observation: searchObservation(search.matches, root, displayRoot, search.coverage, search.skippedCount, limit),
+		observation: searchObservation(search.matches, repository, root, displayRoot, search.coverage, search.skippedCount, limit),
 		evidence: `Direct search coverage=${search.coverage}; files=${visitedFiles}; matches=${search.matchCount}; skipped=${search.skippedCount}.`,
 		search,
 	};
 }
 
 async function executeTool(
+	repository: HarnessNativeRepositoryPrimitives,
 	root: string,
 	request: ModelDecision & { kind: "tool" },
 	limit: number,
@@ -941,8 +1092,8 @@ async function executeTool(
 	try {
 		if (name === "read-file") {
 			const input = parseReadFileArguments(request.arguments);
-			const result = await readBoundedFileWindow({
-				absolutePath: await regularFile(root, input.path),
+			const result = await repository.readWindow({
+				path: await regularFile(repository, root, input.path),
 				displayPath: input.path.replaceAll("\\", "/"),
 				input,
 				maxObservationBytes: limit,
@@ -961,8 +1112,8 @@ async function executeTool(
 			};
 		}
 		if (name === "list-directory") {
-			const path = await safePath(root, request.arguments.path);
-			const entries = (await readdir(path, { withFileTypes: true }))
+			const path = await safePath(repository, root, request.arguments.path);
+			const entries = (await repository.listDirectory(path))
 				.filter((entry) => entry.name !== ".git" && entry.name !== ".agentpatchcheck")
 				.slice(0, 128);
 			return {
@@ -973,7 +1124,7 @@ async function executeTool(
 				evidence: "Listed a workspace directory.",
 				facts: retrievalFacts(request, "ok"),
 				programmaticValue: dshProgrammaticValue({
-					path: normalizedWorkspacePath(root, path),
+					path: normalizedWorkspacePath(repository, root, path),
 					entries: entries.map((entry) => ({
 						name: entry.name,
 						kind: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other",
@@ -985,7 +1136,7 @@ async function executeTool(
 			const query = request.arguments.query;
 			if (typeof query !== "string" || !query || query.length > 256 || query.includes("\0"))
 				throw new Error("Search query is invalid.");
-			const result = await searchTextDirectly(root, request.arguments.path, query, limit);
+			const result = await searchTextDirectly(repository, root, request.arguments.path, query, limit);
 			return {
 				status: "ok" as const,
 				...result,
@@ -997,7 +1148,7 @@ async function executeTool(
 			const query = request.arguments.query;
 			if (typeof query !== "string" || !query || query.length > 256 || query.includes("\0"))
 				throw new Error("Search query is invalid.");
-			const result = await searchTextRecursively(root, request.arguments.path, query, limit);
+			const result = await searchTextRecursively(repository, root, request.arguments.path, query, limit);
 			return {
 				status: "ok" as const,
 				...result,
@@ -1006,7 +1157,7 @@ async function executeTool(
 			};
 		}
 		if (name === "git-status" || name === "git-diff") {
-			const result = await runGit(root, name === "git-status" ? ["status", "--short"] : ["diff", "--"], {
+			const result = await repository.git(root, name === "git-status" ? ["status", "--short"] : ["diff", "--"], {
 				trimStdout: false,
 			});
 			return result.ok
@@ -1025,10 +1176,10 @@ async function executeTool(
 					};
 		}
 		if (name === "apply-patch") {
-			const result = await applyManagedMutationPatch({
+			const result = await repository.applyPatch({
 				root,
 				patch: request.arguments.patch,
-				validateTarget: async (path) => await safePatchTarget(root, path),
+				validateTarget: async (path) => await safePatchTarget(repository, root, path),
 			});
 			return {
 				status: "ok" as const,
@@ -1039,17 +1190,17 @@ async function executeTool(
 		}
 		if (name === "apply-edit") {
 			if (request.arguments.replaceAll === true) {
-				const path = await regularFile(root, request.arguments.path);
+				const path = await regularFile(repository, root, request.arguments.path);
 				const expectedText = request.arguments.expectedText;
 				const replacementText = request.arguments.replacementText;
 				if (typeof expectedText !== "string" || expectedText.length === 0 || typeof replacementText !== "string")
 					throw new Error("Single edit input is invalid.");
-				const before = await readFile(path, "utf8");
+				const before = await repository.readText(path);
 				if (!before.includes(expectedText))
 					throw new Error("Single edit expectedText was not found in the target.");
 				const after = before.replaceAll(expectedText, replacementText);
-				await writeFile(path, after, "utf8");
-				const relativePath = relative(root, path).replaceAll("\\", "/");
+				await repository.writeText(path, after);
+				const relativePath = normalizedWorkspacePath(repository, root, path);
 				return {
 					status: "ok" as const,
 					observation: `The file ${relativePath} has been updated. All occurrences were successfully replaced.`,
@@ -1058,7 +1209,7 @@ async function executeTool(
 					programmaticValue: dshProgrammaticValue({ path: relativePath, before, after }),
 				};
 			}
-			const edits = await preparePatches(root, [request.arguments], {
+			const edits = await preparePatches(repository, root, [request.arguments], {
 				minimum: 1,
 				maximum: 1,
 				failureMessage: "Single edit input is invalid.",
@@ -1066,8 +1217,8 @@ async function executeTool(
 			});
 			const [edit] = edits;
 			if (edit === undefined) throw new Error("Single edit input is invalid.");
-			await writeFile(edit.path, edit.replacement, "utf8");
-			const affectedPath = normalizedWorkspacePath(root, edit.path);
+			await repository.writeText(edit.path, edit.replacement);
+			const affectedPath = normalizedWorkspacePath(repository, root, edit.path);
 			return {
 				status: "ok" as const,
 				observation: `Replaced exactly one matching text region in ${affectedPath}.`,
@@ -1081,29 +1232,29 @@ async function executeTool(
 			};
 		}
 		if (name === "apply-patch-batch") {
-			const patches = await preparePatchBatch(root, request.arguments.patches);
-			for (const patch of patches) await writeFile(patch.path, patch.replacement, "utf8");
+			const patches = await preparePatchBatch(repository, root, request.arguments.patches);
+			for (const patch of patches) await repository.writeText(patch.path, patch.replacement);
 			return {
 				status: "ok" as const,
 				observation: `Patch batch applied to ${patches.length} files.`,
 				evidence: `Applied ${patches.length} constrained text replacements after batch preflight.`,
 				facts: mutationFacts(
 					name,
-					patches.map((patch) => normalizedWorkspacePath(root, patch.path)),
+					patches.map((patch) => normalizedWorkspacePath(repository, root, patch.path)),
 				),
 			};
 		}
 		if (name === "apply-edit-batch") {
-			const batch = await prepareEditBatch(root, request.arguments);
-			for (const patch of batch.patches) await writeFile(patch.path, patch.replacement, "utf8");
-			for (const file of batch.creates) await writeFile(file.path, file.content, { encoding: "utf8", flag: "wx" });
+			const batch = await prepareEditBatch(repository, root, request.arguments);
+			for (const patch of batch.patches) await repository.writeText(patch.path, patch.replacement);
+			for (const file of batch.creates) await repository.writeText(file.path, file.content, { exclusive: true });
 			return {
 				status: "ok" as const,
 				observation: `Edit batch applied to ${batch.patches.length} existing and ${batch.creates.length} new files.`,
 				evidence: `Applied ${batch.patches.length} constrained replacements and created ${batch.creates.length} files after batch preflight.`,
 				facts: mutationFacts(name, [
-					...batch.patches.map((patch) => normalizedWorkspacePath(root, patch.path)),
-					...batch.creates.map((file) => normalizedWorkspacePath(root, file.path)),
+					...batch.patches.map((patch) => normalizedWorkspacePath(repository, root, patch.path)),
+					...batch.creates.map((file) => normalizedWorkspacePath(repository, root, file.path)),
 				]),
 			};
 		}
@@ -1111,13 +1262,13 @@ async function executeTool(
 			const content = request.arguments.content;
 			if (typeof content !== "string" || content.length > 32_768 || content.includes("\0"))
 				throw new Error("New file content is invalid.");
-			const path = await safeNewFile(root, request.arguments.path);
-			await writeFile(path, content, { encoding: "utf8", flag: "wx" });
+			const path = await safeNewFile(repository, root, request.arguments.path);
+			await repository.writeText(path, content, { exclusive: true });
 			return {
 				status: "ok" as const,
 				observation: "New file created.",
 				evidence: "Created one new workspace file exclusively.",
-				facts: mutationFacts(name, [normalizedWorkspacePath(root, path)]),
+				facts: mutationFacts(name, [normalizedWorkspacePath(repository, root, path)]),
 			};
 		}
 		if (name === "write-file") {
@@ -1128,19 +1279,19 @@ async function executeTool(
 			let operation: "created" | "updated";
 			let before: string | null;
 			try {
-				path = await regularFile(root, request.arguments.path);
-				before = await readFile(path, "utf8");
-				await writeFile(path, content, "utf8");
+				path = await regularFile(repository, root, request.arguments.path);
+				before = await repository.readText(path);
+				await repository.writeText(path, content);
 				operation = "updated";
 			} catch (error) {
 				if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "ENOENT")
 					throw error;
-				path = await safeNewFile(root, request.arguments.path);
-				await writeFile(path, content, { encoding: "utf8", flag: "wx" });
+				path = await safeNewFile(repository, root, request.arguments.path);
+				await repository.writeText(path, content, { exclusive: true });
 				operation = "created";
 				before = null;
 			}
-			const affectedPath = normalizedWorkspacePath(root, path);
+			const affectedPath = normalizedWorkspacePath(repository, root, path);
 			return {
 				status: "ok" as const,
 				observation: `${operation === "created" ? "Created" : "Updated"} ${affectedPath}.`,
@@ -1202,7 +1353,7 @@ async function executeTool(
 				dialect === "pwsh"
 					? { command: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command] }
 					: { command: "/bin/bash", args: ["-lc", command] };
-			const result = await runVerificationCommand({
+			const result = await repository.runCommand({
 				command: { ...launch, timeoutMs },
 				cwd: root,
 				outputLimitBytes: limit,
@@ -1234,7 +1385,7 @@ async function executeTool(
 				throw new Error("Public verification command index is invalid.");
 			const command = verification.commands[index];
 			if (command === undefined) throw new Error("Public verification command index is unavailable.");
-			const result = await runVerificationCommand({
+			const result = await repository.runCommand({
 				command,
 				cwd: root,
 				outputLimitBytes: verification.outputLimitBytes,
@@ -1279,6 +1430,14 @@ async function executeTool(
 				facts: rejectedToolFacts(request),
 			};
 		}
+		if (isNotFoundError(error)) {
+			return {
+				status: "error" as const,
+				observation: "Tool request failed.",
+				evidence: error instanceof Error ? error.message : "Tool request failed.",
+				facts: isHarnessNativeRetrievalTool(request.tool) ? retrievalFacts(request, "error") : { kind: "other" as const },
+			};
+		}
 		return {
 			status: "rejected" as const,
 			observation: "Tool request was rejected by workspace policy.",
@@ -1298,8 +1457,10 @@ export async function executeHarnessNativeTool(input: {
 	arguments: Record<string, unknown>;
 	maxObservationBytes: number;
 	verification: VerificationPolicy | undefined;
+	repository?: HarnessNativeRepositoryPrimitives;
 }): Promise<RuntimeToolResult> {
 	const result = await executeTool(
+		input.repository ?? createHostRepositoryPrimitives(),
 		input.root,
 		{ kind: "tool", tool: input.tool, arguments: input.arguments },
 		input.maxObservationBytes,
@@ -1336,6 +1497,8 @@ export async function runHarnessNativeRuntime(options: {
 	attemptContinuation?: HarnessNativeAttemptContinuation | null;
 	/** Only TaskPolicy-declared verification commands are exposed to the Agent. */
 	verification?: VerificationPolicy;
+	/** Defaults to the existing Host worktree implementation. */
+	repository?: HarnessNativeRepositoryPrimitives;
 	/** Disable only for diagnostic A/B comparison. Shadow state is never sent to the Provider. */
 	shadowControlPlane?: boolean;
 	/** Outer attempt identity. Direct Runtime callers use attempt 1. */
@@ -1349,6 +1512,7 @@ export async function runHarnessNativeRuntime(options: {
 	/** Enabled only when the Event Spine is backed by a durable Runtime record. */
 	durableWorktreeCheckpoints?: boolean;
 }): Promise<HarnessNativeRuntimeResult> {
+	const repository = options.repository ?? createHostRepositoryPrimitives();
 	const startedAt = Date.now();
 	const attempt = options.attempt ?? 1;
 	const eventSpine = options.eventSpine ?? new HarnessNativeRuntimeEventSpine();
@@ -1779,14 +1943,12 @@ export async function runHarnessNativeRuntime(options: {
 									facts: { kind: "other" },
 									rejectionReason: "invalid-input",
 								};
-							const beforeSurface = dshCompatible
-								? await captureHarnessNativeWorktreeMutationSurface(options.worktreePath)
-								: null;
+							const beforeSurface = dshCompatible ? await repository.captureMutationSurface(options.worktreePath) : null;
 							const nestedOwnedPaths = new Set<string>();
 							const nestedOwnedSurfaceHashes = new Map<string, string | undefined>();
 							const collectDirectAffectedPaths = async (): Promise<string[]> => {
 								if (beforeSurface === null) return [];
-								const afterSurface = await captureHarnessNativeWorktreeMutationSurface(options.worktreePath);
+								const afterSurface = await repository.captureMutationSurface(options.worktreePath);
 								return diffHarnessNativeWorktreeMutationSurfaces(beforeSurface, afterSurface).filter(
 									(path) =>
 										!nestedOwnedPaths.has(path) ||
@@ -1831,18 +1993,19 @@ export async function runHarnessNativeRuntime(options: {
 												tool: mapped.tool,
 												arguments: nestedArguments,
 											});
-											const nested = await executeTool(
-												options.worktreePath,
-												nestedRequest,
-												options.policy.maxObservationBytes,
-												options.verification,
-												signal,
-											);
+									const nested = await executeTool(
+										repository,
+										options.worktreePath,
+										nestedRequest,
+										options.policy.maxObservationBytes,
+										options.verification,
+										signal,
+									);
 											if (nested.status === "rejected") rejectedToolCalls += 1;
 											else toolCalls += 1;
 											if (nested.facts.kind === "mutation") {
 												const nestedSurface = dshCompatible
-													? await captureHarnessNativeWorktreeMutationSurface(options.worktreePath)
+											? await repository.captureMutationSurface(options.worktreePath)
 													: null;
 												for (const path of nested.facts.affectedPaths) {
 													nestedOwnedPaths.add(path);
@@ -1873,7 +2036,7 @@ export async function runHarnessNativeRuntime(options: {
 													iteration,
 													type: "worktree-checkpoint",
 													actionId: nestedActionId,
-													worktreeSha256: await fingerprintHarnessNativeWorktree(options.worktreePath),
+											worktreeSha256: await repository.fingerprint(options.worktreePath),
 												});
 											const candidate = planner.triggerFor(nested.facts, nested.status);
 											if (candidate !== null) planningTrigger = candidate;
@@ -1978,6 +2141,7 @@ export async function runHarnessNativeRuntime(options: {
 							}
 						})()
 					: await executeTool(
+							repository,
 							options.worktreePath,
 							request,
 							options.policy.maxObservationBytes,
@@ -2007,7 +2171,7 @@ export async function runHarnessNativeRuntime(options: {
 					iteration,
 					type: "worktree-checkpoint",
 					actionId,
-					worktreeSha256: await fingerprintHarnessNativeWorktree(options.worktreePath),
+					worktreeSha256: await repository.fingerprint(options.worktreePath),
 				});
 			if (compositionTerminalReason !== null) return fail(compositionTerminalReason);
 			const candidateTrigger = compositionEnvelope ? null : planner.triggerFor(tool.facts, tool.status);

@@ -100,7 +100,9 @@ function gradingResult(options, runId, officialReportPath, normalizedStatus, rea
 async function evaluate(options, invocationRoot, prediction) {
 	const runId = `apc-evaluate-${safeSegment(options.instanceId)}-${randomUUID().slice(0, 12)}`;
 	const reportRoot = join(invocationRoot, "evaluation");
+	const evaluatorPredictionPath = join(invocationRoot, "predictions.json");
 	await mkdir(reportRoot, { recursive: true });
+	await writeFile(evaluatorPredictionPath, `${JSON.stringify([prediction])}\n`, "utf8");
 	const evaluatorEntrypoint = join(options.evaluatorSourceRoot, "swebench", "harness", "run_evaluation.py");
 	await Promise.all([
 		access(options.datasetPath),
@@ -125,7 +127,7 @@ async function evaluate(options, invocationRoot, prediction) {
 			"--instance_ids",
 			options.instanceId,
 			"--predictions_path",
-			options.predictionPath,
+			evaluatorPredictionPath,
 			"--max_workers",
 			"1",
 			"--timeout",
@@ -140,16 +142,30 @@ async function evaluate(options, invocationRoot, prediction) {
 	await Promise.all([
 		writeFile(join(invocationRoot, "evaluator.stdout.log"), evaluatorResult.stdout, "utf8"),
 		writeFile(join(invocationRoot, "evaluator.stderr.log"), evaluatorResult.stderr, "utf8"),
+		writeFile(
+			join(invocationRoot, "evaluator.process.json"),
+			`${JSON.stringify({ cwd: invocationRoot, runId, modelNameOrPath: prediction.model_name_or_path, predictionPath: evaluatorPredictionPath, exitCode: evaluatorResult.exitCode, signal: evaluatorResult.signal }, null, 2)}\n`,
+			"utf8",
+		),
 	]);
 
 	const modelDirectory = prediction.model_name_or_path.replaceAll("/", "__");
 	const instanceRoot = join(invocationRoot, "logs", "run_evaluation", runId, modelDirectory, options.instanceId);
 	const instanceReportPath = join(instanceRoot, "report.json");
-	const officialReportPath = join(reportRoot, `${modelDirectory}.${runId}.json`);
+	const officialReportName = `${modelDirectory}.${runId}.json`;
+	const officialReportCandidates = [join(reportRoot, officialReportName), join(invocationRoot, officialReportName)];
+	let officialReportPath = null;
 	let finalReport;
-	try {
-		finalReport = await readJson(officialReportPath);
-	} catch {
+	for (const candidate of officialReportCandidates) {
+		try {
+			finalReport = await readJson(candidate);
+			officialReportPath = candidate;
+			break;
+		} catch {
+			// Some official SWE-bench versions ignore report_dir and write to cwd.
+		}
+	}
+	if (officialReportPath === null) {
 		return gradingResult(options, runId, null, "infrastructure_error", "evaluator_report_missing");
 	}
 	if (finalReport.infra_failure_ids?.includes(options.instanceId)) {

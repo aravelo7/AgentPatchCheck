@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { constants } from "node:fs";
+import { access, mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getGitStdout } from "../workspace/git-utils";
@@ -10,6 +12,7 @@ import {
 	createSWEbenchModelNameOrPath,
 	createSWEbenchRuntimeConfiguration,
 	loadSWEbenchInstance,
+	resolveSWEbenchRepositoryRoot,
 	runSWEbenchInstance,
 	SWE_BENCH_MULTILINGUAL_DATASET,
 	SWE_BENCH_STANDARD_BASELINE_TAG,
@@ -19,6 +22,16 @@ import {
 const SWE_BENCH_EVALUATOR_BRIDGE_PATH = fileURLToPath(
 	new URL("../../scripts/swebench-verification-bridge.mjs", import.meta.url),
 );
+const SWE_BENCH_BOOTSTRAP_MANIFEST = join(
+	".agentpatchcheck",
+	"swebench",
+	"datasets",
+	"APC-Pilot-10-v1.manifest.json",
+);
+const SWE_BENCH_EVALUATOR_ROOT_ENV = "AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT";
+const SWE_BENCH_EVALUATOR_PYTHON_ENV = "AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON";
+const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u;
+const ARTIFACT_SEGMENT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u;
 
 type SWEbenchAgentExecutionStatus = "completed" | "model-failed" | "timeout" | "other-runtime-failure";
 type SWEbenchGradingStatus =
@@ -43,21 +56,57 @@ interface SWEbenchEvaluatorConfiguration {
 	evaluatorSourceRoot: string;
 	artifactRoot: string;
 	timeoutSeconds: number;
-	evaluatorVersion: string | null;
+	evaluatorVersion: string;
 }
 
 interface CliOptions {
-	dataset: string;
-	evaluatorDataset: string;
 	instance: string;
-	repository: string;
-	output: string;
-	deepseekModel: DeepSeekV4Model;
-	runId?: string;
+	runId: string;
 	variant?: string;
 	attempt?: number;
-	evaluator: SWEbenchEvaluatorConfiguration;
 }
+
+export interface SWEbenchBootstrapConfiguration {
+	manifestPath: string;
+	manifestName: string;
+	manifestVersion: string;
+	datasetPath: string;
+	evaluatorDatasetPath: string;
+	evaluatorRevision: string;
+	evaluatorTimeoutSeconds: number;
+	evaluatorSourceRoot: string;
+	evaluatorPythonPath: string;
+	deepseekModel: DeepSeekV4Model;
+	engineeringValidation: boolean;
+	instanceIds: readonly string[];
+}
+
+interface SWEbenchBootstrapManifest {
+	name: string;
+	version: string;
+	fullSubset: { path: string };
+	evaluator: { dataset: string; revision: string; timeoutSeconds: number };
+	execution: { classification: "formal-frozen" | "engineering-validation"; deepseekModel: string };
+	instanceIds: string[];
+}
+
+type SWEbenchSourceIdentity =
+	| {
+			classification: "formal-frozen";
+			head: string;
+			baselineTag: string;
+			dirty: false;
+			statusPorcelain: "";
+			sourceLabel: string;
+	  }
+	| {
+			classification: "engineering-validation";
+			head: string;
+			baselineTag: null;
+			dirty: boolean;
+			statusPorcelain: string;
+			sourceLabel: string;
+	  };
 
 interface SWEbenchPostRunEvaluatorInput {
 	predictionPath: string;
@@ -66,11 +115,168 @@ interface SWEbenchPostRunEvaluatorInput {
 	configuration: SWEbenchEvaluatorConfiguration;
 }
 
+export interface SWEbenchEvaluatorPreflightInput {
+	evaluatorPythonPath: string;
+	evaluatorSourceRoot: string;
+	datasetPath: string;
+	expectedRevision: string;
+}
+
+export type SWEbenchEvaluatorDependencyProbe = (pythonPath: string) => Promise<boolean>;
+export type SWEbenchEvaluatorRevisionProbe = (sourceRoot: string) => Promise<string>;
+
+const defaultSWEbenchEvaluatorDependencyProbe: SWEbenchEvaluatorDependencyProbe = async (pythonPath) =>
+	await new Promise<boolean>((resolveProbe) => {
+		const child = spawn(pythonPath, ["-c", "import docker"], { shell: false, windowsHide: true, stdio: "ignore" });
+		child.once("error", () => resolveProbe(false));
+		child.once("close", (exitCode) => resolveProbe(exitCode === 0));
+	});
+
+const defaultSWEbenchEvaluatorRevisionProbe: SWEbenchEvaluatorRevisionProbe = async (sourceRoot) =>
+	await getGitStdout(["-c", `safe.directory=${resolve(sourceRoot)}`, "rev-parse", "HEAD"], resolve(sourceRoot));
+
+function requireManifestString(value: unknown, field: string): string {
+	if (typeof value !== "string" || !value.trim()) throw new Error(`SWE-bench bootstrap manifest ${field} is required.`);
+	return value.trim();
+}
+
+function requireProjectEnvironmentValue(environment: NodeJS.ProcessEnv, name: string): string {
+	const value = environment[name]?.trim();
+	if (!value) throw new Error(`SWE-bench machine prerequisite is not configured: ${name}`);
+	return resolve(value);
+}
+
+function resolveManifestPath(manifestDirectory: string, value: unknown, field: string): string {
+	const path = requireManifestString(value, field);
+	return resolve(manifestDirectory, path);
+}
+
+export async function loadSWEbenchBootstrapConfiguration(
+	projectRoot: string,
+	environment: NodeJS.ProcessEnv = process.env,
+): Promise<SWEbenchBootstrapConfiguration> {
+	const manifestPath = resolve(projectRoot, SWE_BENCH_BOOTSTRAP_MANIFEST);
+	let value: unknown;
+	try {
+		value = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
+	} catch (error) {
+		throw new Error(`Could not load canonical SWE-bench bootstrap manifest: ${manifestPath}`, { cause: error });
+	}
+	if (value === null || typeof value !== "object" || Array.isArray(value))
+		throw new Error("SWE-bench bootstrap manifest must be a JSON object.");
+	const manifest = value as Partial<SWEbenchBootstrapManifest>;
+	const manifestName = requireManifestString(manifest.name, "name");
+	const manifestVersion = requireManifestString(manifest.version, "version");
+	if (manifest.fullSubset === undefined || manifest.evaluator === undefined || manifest.execution === undefined)
+		throw new Error("SWE-bench bootstrap manifest is missing its dataset, evaluator, or execution contract.");
+	if (!Array.isArray(manifest.instanceIds) || manifest.instanceIds.some((instanceId) => typeof instanceId !== "string"))
+		throw new Error("SWE-bench bootstrap manifest instanceIds must be an array of strings.");
+	const revision = requireManifestString(manifest.evaluator.revision, "evaluator.revision");
+	if (!/^[0-9a-f]{40}$/u.test(revision)) throw new Error("SWE-bench bootstrap evaluator revision must be a full commit SHA.");
+	if (!Number.isSafeInteger(manifest.evaluator.timeoutSeconds) || manifest.evaluator.timeoutSeconds <= 0)
+		throw new Error("SWE-bench bootstrap evaluator timeoutSeconds must be a positive integer.");
+	if (manifest.execution.classification !== "formal-frozen" && manifest.execution.classification !== "engineering-validation")
+		throw new Error("SWE-bench bootstrap execution classification is invalid.");
+	const manifestDirectory = dirname(manifestPath);
+	return {
+		manifestPath,
+		manifestName,
+		manifestVersion,
+		datasetPath: resolveManifestPath(manifestDirectory, manifest.fullSubset.path, "fullSubset.path"),
+		evaluatorDatasetPath: resolveManifestPath(manifestDirectory, manifest.evaluator.dataset, "evaluator.dataset"),
+		evaluatorRevision: revision,
+		evaluatorTimeoutSeconds: manifest.evaluator.timeoutSeconds,
+		evaluatorSourceRoot: requireProjectEnvironmentValue(environment, SWE_BENCH_EVALUATOR_ROOT_ENV),
+		evaluatorPythonPath: requireProjectEnvironmentValue(environment, SWE_BENCH_EVALUATOR_PYTHON_ENV),
+		deepseekModel: parseDeepSeekV4Model(requireManifestString(manifest.execution.deepseekModel, "execution.deepseekModel")),
+		engineeringValidation: manifest.execution.classification === "engineering-validation",
+		instanceIds: [...manifest.instanceIds],
+	};
+}
+
+export class SWEbenchEvaluatorPreflightError extends Error {
+	readonly code = "evaluator_preflight_failed" as const;
+	readonly failedChecks: readonly string[];
+	readonly evaluatorSourceRoot: string;
+	readonly expectedRevision: string;
+	readonly actualRevision: string | null;
+
+	constructor(
+		failedChecks: readonly string[],
+		evaluatorSourceRoot: string,
+		expectedRevision = "<not-configured>",
+		actualRevision: string | null = null,
+	) {
+		super(
+			`evaluator_preflight_failed: ${failedChecks.join(", ")}; evaluatorSourceRoot=${evaluatorSourceRoot}; expectedRevision=${expectedRevision}; actualRevision=${actualRevision ?? "<unavailable>"}`,
+		);
+		this.name = "SWEbenchEvaluatorPreflightError";
+		this.failedChecks = failedChecks;
+		this.evaluatorSourceRoot = evaluatorSourceRoot;
+		this.expectedRevision = expectedRevision;
+		this.actualRevision = actualRevision;
+	}
+}
+
+export async function preflightSWEbenchEvaluator(
+	input: SWEbenchEvaluatorPreflightInput,
+	dependencyProbe: SWEbenchEvaluatorDependencyProbe = defaultSWEbenchEvaluatorDependencyProbe,
+	revisionProbe: SWEbenchEvaluatorRevisionProbe = defaultSWEbenchEvaluatorRevisionProbe,
+): Promise<void> {
+	const evaluatorSourceRoot = resolve(input.evaluatorSourceRoot);
+	const evaluatorPythonPath = resolve(input.evaluatorPythonPath);
+	const datasetPath = resolve(input.datasetPath);
+	const failedChecks: string[] = [];
+	let actualRevision: string | null = null;
+
+	try {
+		if (!(await stat(evaluatorSourceRoot)).isDirectory()) failedChecks.push("evaluator-source-root-not-directory");
+	} catch {
+		failedChecks.push("evaluator-source-root-missing");
+	}
+	try {
+		await access(join(evaluatorSourceRoot, "swebench", "harness", "run_evaluation.py"), constants.R_OK);
+	} catch {
+		failedChecks.push("run_evaluation.py-unreadable");
+	}
+	try {
+		await access(evaluatorPythonPath, constants.F_OK | constants.X_OK);
+	} catch {
+		failedChecks.push("evaluator-python-unavailable");
+	}
+	try {
+		await access(datasetPath, constants.F_OK | constants.R_OK);
+	} catch {
+		failedChecks.push("full-evaluator-dataset-unreadable");
+	}
+	if (failedChecks.length === 0 && !(await dependencyProbe(evaluatorPythonPath)))
+		failedChecks.push("evaluator-python-docker-module-unavailable");
+	if (!failedChecks.includes("evaluator-source-root-missing") && !failedChecks.includes("evaluator-source-root-not-directory")) {
+		try {
+			actualRevision = (await revisionProbe(evaluatorSourceRoot)).trim();
+			if (actualRevision !== input.expectedRevision) failedChecks.push("evaluator-revision-mismatch");
+		} catch {
+			failedChecks.push("evaluator-revision-unavailable");
+		}
+	}
+
+	if (failedChecks.length > 0)
+		throw new SWEbenchEvaluatorPreflightError(
+			failedChecks,
+			evaluatorSourceRoot,
+			input.expectedRevision,
+			actualRevision,
+		);
+}
+
 interface SWEbenchCliDependencies {
 	initializeEnvironment: typeof initializeAgentPatchCheckEnvironment;
 	findProjectRoot: typeof findAgentPatchCheckProjectRoot;
+	loadBootstrapConfiguration: typeof loadSWEbenchBootstrapConfiguration;
 	getGitStdout: typeof getGitStdout;
 	loadInstance: typeof loadSWEbenchInstance;
+	resolveRepositoryRoot: typeof resolveSWEbenchRepositoryRoot;
+	runEvaluatorPreflight: typeof preflightSWEbenchEvaluator;
 	runInstance: typeof runSWEbenchInstance;
 	runPostRunEvaluator: typeof runSWEbenchPostRunEvaluator;
 }
@@ -78,8 +284,11 @@ interface SWEbenchCliDependencies {
 const defaultDependencies: SWEbenchCliDependencies = {
 	initializeEnvironment: initializeAgentPatchCheckEnvironment,
 	findProjectRoot: findAgentPatchCheckProjectRoot,
+	loadBootstrapConfiguration: loadSWEbenchBootstrapConfiguration,
 	getGitStdout,
 	loadInstance: loadSWEbenchInstance,
+	resolveRepositoryRoot: resolveSWEbenchRepositoryRoot,
+	runEvaluatorPreflight: preflightSWEbenchEvaluator,
 	runInstance: runSWEbenchInstance,
 	runPostRunEvaluator: runSWEbenchPostRunEvaluator,
 };
@@ -95,27 +304,49 @@ function optionValue(argv: string[], name: string, required = true): string | un
 	return value;
 }
 
-function positiveIntegerOption(argv: string[], name: string): number {
-	const value = Number(optionValue(argv, name));
-	if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer.`);
-	return value;
+const OPERATOR_OPTIONS = new Set(["--instance", "--run-id", "--variant", "--attempt"]);
+const CONFIGURED_OPTIONS = new Set([
+	"--dataset",
+	"--evaluator-dataset",
+	"--repository",
+	"--output",
+	"--deepseek-model",
+	"--engineering-validation",
+	"--model-name-or-path",
+	"--evaluator-python",
+	"--evaluator-source-root",
+	"--evaluator-artifact-root",
+	"--artifact-root",
+	"--evaluator-timeout-seconds",
+	"--evaluator-version",
+]);
+
+function assertCanonicalOperatorArguments(argv: string[]): void {
+	for (let index = 0; index < argv.length; index += 2) {
+		const name = argv[index];
+		if (name === undefined || !name.startsWith("--")) throw new Error(`Unexpected SWE-bench CLI argument: ${name ?? "<missing>"}`);
+		if (CONFIGURED_OPTIONS.has(name))
+			throw new Error(`${name} is owned by the canonical SWE-bench bootstrap configuration and is no longer accepted.`);
+		if (!OPERATOR_OPTIONS.has(name)) throw new Error(`Unknown SWE-bench CLI option: ${name}`);
+		const value = argv[index + 1];
+		if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for option: ${name}`);
+	}
+}
+
+function requireArtifactSegment(value: string, label: string, pattern = ARTIFACT_SEGMENT_PATTERN): string {
+	const normalized = value.trim();
+	if (!pattern.test(normalized)) throw new Error(`${label} is invalid.`);
+	return normalized;
 }
 
 function parseOptions(argv: string[]): CliOptions {
-	if (optionValue(argv, "--model-name-or-path", false) !== undefined) {
-		throw new Error(
-			"--model-name-or-path is no longer accepted; use --deepseek-model so prediction identity matches execution.",
-		);
-	}
+	assertCanonicalOperatorArguments(argv);
+	const runId = requireArtifactSegment(optionValue(argv, "--run-id") as string, "--run-id", RUN_ID_PATTERN);
+	const variantValue = optionValue(argv, "--variant", false);
 	return {
-		dataset: optionValue(argv, "--dataset") as string,
-		evaluatorDataset: optionValue(argv, "--evaluator-dataset") as string,
 		instance: optionValue(argv, "--instance") as string,
-		repository: optionValue(argv, "--repository") as string,
-		output: optionValue(argv, "--output") as string,
-		deepseekModel: parseDeepSeekV4Model(optionValue(argv, "--deepseek-model", false) ?? "deepseek-v4-pro"),
-		runId: optionValue(argv, "--run-id", false),
-		variant: optionValue(argv, "--variant", false),
+		runId,
+		variant: variantValue === undefined ? undefined : requireArtifactSegment(variantValue, "--variant"),
 		attempt: (() => {
 			const value = optionValue(argv, "--attempt", false);
 			if (value === undefined) return undefined;
@@ -123,14 +354,19 @@ function parseOptions(argv: string[]): CliOptions {
 			if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error("--attempt must be a positive integer.");
 			return parsed;
 		})(),
-		evaluator: {
-			evaluatorPythonPath: optionValue(argv, "--evaluator-python") as string,
-			evaluatorSourceRoot: optionValue(argv, "--evaluator-source-root") as string,
-			artifactRoot: optionValue(argv, "--evaluator-artifact-root") as string,
-			timeoutSeconds: positiveIntegerOption(argv, "--evaluator-timeout-seconds"),
-			evaluatorVersion: optionValue(argv, "--evaluator-version", false) ?? null,
-		},
 	};
+}
+
+async function ensureWritableDirectory(path: string): Promise<void> {
+	await mkdir(path, { recursive: true });
+	const probePath = join(path, `.apc-write-probe-${randomUUID()}`);
+	const probe = await open(probePath, "wx");
+	try {
+		await probe.sync();
+	} finally {
+		await probe.close();
+		await unlink(probePath).catch(() => undefined);
+	}
 }
 
 function isGradingStatus(value: unknown): value is SWEbenchGradingStatus {
@@ -188,25 +424,65 @@ function createNotRunGradingResult(result: SWEbenchAdapterResult): SWEbenchGradi
 	};
 }
 
-async function assertSWEbenchBaselineSource(
+function deriveCandidateValidity(result: SWEbenchAdapterResult, grading: SWEbenchGradingResult): {
+	executionValidity: "valid" | "invalid";
+	pass1Eligible: boolean;
+	predictionStatus: "generated" | "not_generated";
+	gradingValidity: "valid" | "grading_invalid" | "not_run";
+} {
+	const agentStarted = result.agent.runtimeEvents?.some((event) => event.type === "attempt-started") === true;
+	const executionValidity = result.failure?.stage === "agent-execution" && !agentStarted ? "invalid" : "valid";
+	return {
+		executionValidity,
+		pass1Eligible: executionValidity === "valid",
+		predictionStatus: result.prediction === null ? "not_generated" : "generated",
+		gradingValidity:
+			grading.normalizedStatus === "infrastructure_error" || grading.normalizedStatus === "grading_error_or_ambiguous"
+				? "grading_invalid"
+				: grading.normalizedStatus === "not_run"
+					? "not_run"
+					: "valid",
+	};
+}
+
+async function resolveSWEbenchSourceIdentity(
 	projectRoot: string,
 	getStdout: SWEbenchCliDependencies["getGitStdout"],
-): Promise<string> {
+	engineeringValidation: boolean,
+): Promise<SWEbenchSourceIdentity> {
+	const currentCommit = await getStdout(["rev-parse", "HEAD"], projectRoot);
+	if (engineeringValidation) {
+		const statusPorcelain = await getStdout(["status", "--porcelain", "--untracked-files=all"], projectRoot);
+		return {
+			classification: "engineering-validation",
+			head: currentCommit,
+			baselineTag: null,
+			dirty: statusPorcelain.length > 0,
+			statusPorcelain,
+			sourceLabel: `engineering-validation-${currentCommit.slice(0, 12)}`,
+		};
+	}
 	const expectedCommit = await getStdout(
 		["rev-parse", "--verify", `${SWE_BENCH_STANDARD_BASELINE_TAG}^{commit}`],
 		projectRoot,
 	);
-	const currentCommit = await getStdout(["rev-parse", "HEAD"], projectRoot);
 	if (currentCommit !== expectedCommit) {
 		throw new Error(
 			`SWE-bench standard mode must run from baseline tag ${SWE_BENCH_STANDARD_BASELINE_TAG} (${expectedCommit}); current HEAD is ${currentCommit}.`,
 		);
 	}
-	const trackedChanges = await getStdout(["status", "--porcelain", "--untracked-files=no"], projectRoot);
-	if (trackedChanges) {
+	const statusPorcelain = await getStdout(["status", "--porcelain", "--untracked-files=no"], projectRoot);
+	if (statusPorcelain) {
 		throw new Error("SWE-bench standard mode requires a clean tracked source worktree.");
 	}
-	return currentCommit;
+	return {
+		classification: "formal-frozen",
+		head: currentCommit,
+		baselineTag: SWE_BENCH_STANDARD_BASELINE_TAG,
+		dirty: false,
+		statusPorcelain: "",
+		sourceLabel: SWE_BENCH_STANDARD_BASELINE_TAG,
+	};
 }
 
 export async function runSWEbenchPostRunEvaluator(
@@ -259,16 +535,62 @@ export async function runSWEbenchCli(
 ): Promise<void> {
 	const resolvedDependencies = { ...defaultDependencies, ...dependencies };
 	resolvedDependencies.initializeEnvironment();
-	const options = parseOptions(argv);
 	const projectRoot = resolvedDependencies.findProjectRoot();
-	const sourceCommit = await assertSWEbenchBaselineSource(projectRoot, resolvedDependencies.getGitStdout);
-	const instance = await resolvedDependencies.loadInstance(options.dataset, options.instance);
+	const bootstrap = await resolvedDependencies.loadBootstrapConfiguration(projectRoot);
+	const options = parseOptions(argv);
+	if (!bootstrap.instanceIds.includes(options.instance))
+		throw new Error(`SWE-bench instance is not part of ${bootstrap.manifestName} ${bootstrap.manifestVersion}: ${options.instance}`);
+	const outputVariant = options.variant ?? `${bootstrap.manifestName}-${bootstrap.manifestVersion}`;
+	const outputDirectory = resolve(
+		projectRoot,
+		".agentpatchcheck",
+		"swebench",
+		"results",
+		outputVariant,
+		options.instance,
+	);
+	const outputPath = join(outputDirectory, `${options.runId}.prediction.jsonl`);
+	const artifactRoot = join(outputDirectory, "evaluator-artifacts");
+	await ensureWritableDirectory(outputDirectory);
+	await ensureWritableDirectory(artifactRoot);
+	const evaluator: SWEbenchEvaluatorConfiguration = {
+		evaluatorPythonPath: bootstrap.evaluatorPythonPath,
+		evaluatorSourceRoot: bootstrap.evaluatorSourceRoot,
+		artifactRoot,
+		timeoutSeconds: bootstrap.evaluatorTimeoutSeconds,
+		evaluatorVersion: bootstrap.evaluatorRevision,
+	};
+	await resolvedDependencies.runEvaluatorPreflight({
+		evaluatorPythonPath: evaluator.evaluatorPythonPath,
+		evaluatorSourceRoot: evaluator.evaluatorSourceRoot,
+		datasetPath: bootstrap.evaluatorDatasetPath,
+		expectedRevision: bootstrap.evaluatorRevision,
+	});
+	const source = await resolveSWEbenchSourceIdentity(
+		projectRoot,
+		resolvedDependencies.getGitStdout,
+		bootstrap.engineeringValidation,
+	);
+	const instance = await resolvedDependencies.loadInstance(bootstrap.datasetPath, options.instance);
+	const repositoryRoot = await resolvedDependencies.resolveRepositoryRoot(projectRoot, instance, resolvedDependencies.getGitStdout);
+	const runtime = createSWEbenchRuntimeConfiguration(bootstrap.deepseekModel);
+	if (bootstrap.engineeringValidation) {
+		runtime.dockerTaskEnvironment = {
+			image: {
+				instanceId: instance.instance_id,
+				arch: "x86_64",
+				namespace: "swebench",
+				instanceImageTag: "latest",
+			},
+		};
+	};
 	const result = await resolvedDependencies.runInstance({
 		instance,
-		repositoryRoot: options.repository,
-		outputPath: options.output,
-		modelNameOrPath: createSWEbenchModelNameOrPath(options.deepseekModel),
-		runtime: createSWEbenchRuntimeConfiguration(options.deepseekModel),
+		repositoryRoot,
+		outputPath,
+		modelNameOrPath: createSWEbenchModelNameOrPath(bootstrap.deepseekModel, source.sourceLabel),
+		sourceLabel: source.sourceLabel,
+		runtime,
 		runId: options.runId,
 		variant: options.variant,
 		attempt: options.attempt,
@@ -280,9 +602,9 @@ export async function runSWEbenchCli(
 		try {
 			grading = await resolvedDependencies.runPostRunEvaluator({
 				predictionPath: result.predictionPath,
-				datasetPath: options.evaluatorDataset,
+				datasetPath: bootstrap.evaluatorDatasetPath,
 				instanceId: result.instance.instance_id,
-				configuration: options.evaluator,
+				configuration: evaluator,
 			});
 		} catch {
 			grading = {
@@ -292,11 +614,10 @@ export async function runSWEbenchCli(
 				reason: "post_run_evaluator_invocation_failed",
 				officialReportPath: null,
 				officialRunId: null,
-				evaluatorVersion: options.evaluator.evaluatorVersion,
+				evaluatorVersion: evaluator.evaluatorVersion,
 			};
 		}
 	}
-	const outputDirectory = dirname(result.predictionPath ?? resolve(options.output));
 	const gradingPath = resolve(outputDirectory, `${result.runId}.swebench-grading.json`);
 	await writeFile(gradingPath, `${JSON.stringify(grading, null, 2)}\n`, "utf8");
 	const summaryPath = resolve(outputDirectory, `${result.runId}.apc-run.json`);
@@ -306,14 +627,26 @@ export async function runSWEbenchCli(
 			{
 				version: 2,
 				dataset: SWE_BENCH_MULTILINGUAL_DATASET,
-				apcBaselineCommit: sourceCommit,
+				bootstrapManifest: bootstrap.manifestPath,
+				apcBaselineCommit: source.classification === "formal-frozen" ? source.head : null,
+				runClassification: source.classification,
+				source,
 				instanceId: result.instance.instance_id,
 				baseCommit: result.instance.base_commit,
 				runId: result.runId,
 				runIdentity: result.runIdentity,
 				repository: result.instance.repo,
 				model: result.runIdentity.model,
-				workspacePath: result.workspace.path,
+				runConfiguration: {
+					deepseekModel: bootstrap.deepseekModel,
+					variant: options.variant ?? null,
+					attempt: options.attempt ?? 1,
+					evaluatorTimeoutSeconds: evaluator.timeoutSeconds,
+					evaluatorVersion: evaluator.evaluatorVersion,
+					outputDirectory,
+					evaluatorArtifactRoot: artifactRoot,
+				},
+				workspacePath: result.workspace?.path ?? null,
 				runtimeRecordPath: result.runtimeRecordPath,
 				agent: {
 					status: deriveAgentExecutionStatus(result),
@@ -330,6 +663,8 @@ export async function runSWEbenchCli(
 					result.prediction === null ? null : Buffer.byteLength(result.prediction.model_patch, "utf8"),
 				predictionPath: result.predictionPath,
 				predictionError: result.predictionError,
+				failure: result.failure,
+				candidateValidity: deriveCandidateValidity(result, grading),
 			},
 			null,
 			2,

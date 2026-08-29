@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { deriveHarnessNativeContextViews } from "../../src/agentpatchcheck/context-view";
 import {
 	createHarnessNativeRuntime,
+	createHarnessNativeRuntimeRecordWorktree,
+	createHostRepositoryPrimitives,
 	type HarnessNativeModelProvider,
 } from "../../src/agentpatchcheck/harness-native-runtime";
 import { createIsolatedWorkspace } from "../../src/agentpatchcheck/isolated-workspace";
@@ -98,7 +100,82 @@ async function policyFor(root: string, baseCommit: string, worktreeRoot: string,
 	});
 }
 
+function hostRecordWorktree(root: string, baseCommit: string) {
+	return createHarnessNativeRuntimeRecordWorktree(createHostRepositoryPrimitives(), root, baseCommit);
+}
+
 describe("Harness-native durable Runtime record", () => {
+	it("uses the injected repository fingerprint and state source for a container worktree", async () => {
+		const recordRoot = await mkdtemp(join(tmpdir(), "agentpatchcheck-container-record-"));
+		temporaryPaths.push(recordRoot);
+		const recordPath = join(recordRoot, "runtime.jsonl");
+		const identity = {
+			version: 1 as const,
+			kind: "agentpatchcheck-runtime" as const,
+			runId: "container-record-test",
+			taskSha256: "f".repeat(64),
+			worktreePath: "/testbed",
+			repositoryRoot: "/source-repository",
+			baseCommit: "1".repeat(40),
+		};
+		let fingerprint = "initial-fingerprint";
+		let stateChecks = 0;
+		const worktree = {
+			fingerprint: async () => fingerprint,
+			assertRepositoryState: async () => {
+				stateChecks += 1;
+			},
+		};
+
+		const record = await HarnessNativeRuntimeRecord.open({ path: recordPath, identity, worktree });
+		expect((await loadHarnessNativeRuntimeRecord(recordPath)).header.initialWorktreeSha256).toBe("initial-fingerprint");
+		new HarnessNativeRuntimeEventSpine([], record).append({
+			version: 1,
+			attempt: 1,
+			iteration: null,
+			type: "attempt-started",
+			phase: "initial",
+			continuationFromAttempt: null,
+		});
+		fingerprint = "checkpoint-fingerprint";
+		const spine = new HarnessNativeRuntimeEventSpine(
+			(await loadHarnessNativeRuntimeRecord(recordPath)).events,
+			record,
+		);
+		spine.append({
+			version: 1,
+			attempt: 1,
+			iteration: 1,
+			type: "tool-dispatched",
+			actionId: "container-mutation",
+			tool: "apply-edit",
+			arguments: { path: "README.md" },
+		});
+		spine.append({
+			version: 1,
+			attempt: 1,
+			iteration: 1,
+			type: "tool-result",
+			actionId: "container-mutation",
+			tool: "apply-edit",
+			arguments: { path: "README.md" },
+			status: "ok",
+			observation: "changed",
+			observationSummary: "changed one file",
+			facts: { kind: "mutation", tool: "apply-edit", affectedPaths: ["README.md"] },
+		});
+		spine.append({
+			version: 1,
+			attempt: 1,
+			iteration: 1,
+			type: "worktree-checkpoint",
+			actionId: "container-mutation",
+			worktreeSha256: fingerprint,
+		});
+		await expect(HarnessNativeRuntimeRecord.open({ path: recordPath, identity, worktree })).resolves.toBeDefined();
+		expect(stateChecks).toBe(1);
+	});
+
 	it("persists, reloads, and replays equivalent context and explicit unknown usage", async () => {
 		const { root, baseCommit } = await repository();
 		const recordPath = join(root, ".agentpatchcheck-test", "runtime.jsonl");
@@ -113,6 +190,7 @@ describe("Harness-native durable Runtime record", () => {
 				repositoryRoot: root,
 				baseCommit,
 			},
+			worktree: hostRecordWorktree(root, baseCommit),
 		});
 		const spine = new HarnessNativeRuntimeEventSpine([], record);
 		spine.append({
@@ -238,6 +316,7 @@ describe("Harness-native durable Runtime record", () => {
 				repositoryRoot: root,
 				baseCommit,
 			},
+			worktree: hostRecordWorktree(root, baseCommit),
 		});
 		new HarnessNativeRuntimeEventSpine([], record).append({
 			version: 1,
@@ -289,6 +368,7 @@ describe("Harness-native durable Runtime record", () => {
 				repositoryRoot: root,
 				baseCommit,
 			},
+			worktree: hostRecordWorktree(workspace.path, baseCommit),
 		});
 		const spine = new HarnessNativeRuntimeEventSpine([], record);
 		spine.append({
@@ -379,6 +459,7 @@ describe("Harness-native durable Runtime record", () => {
 				repositoryRoot: root,
 				baseCommit,
 			},
+			worktree: hostRecordWorktree(root, baseCommit),
 		});
 		await writeFile(join(root, "README.md"), "drifted\n", "utf8");
 		await expect(
@@ -393,6 +474,7 @@ describe("Harness-native durable Runtime record", () => {
 					repositoryRoot: root,
 					baseCommit,
 				},
+				worktree: hostRecordWorktree(root, baseCommit),
 			}),
 		).rejects.toThrow("latest durable checkpoint");
 
@@ -409,6 +491,7 @@ describe("Harness-native durable Runtime record", () => {
 				repositoryRoot: root,
 				baseCommit,
 			},
+			worktree: hostRecordWorktree(root, baseCommit),
 		});
 		const dispatchSpine = new HarnessNativeRuntimeEventSpine([], second);
 		dispatchSpine.append({
@@ -440,6 +523,7 @@ describe("Harness-native durable Runtime record", () => {
 					repositoryRoot: root,
 					baseCommit,
 				},
+				worktree: hostRecordWorktree(root, baseCommit),
 			}),
 		).rejects.toThrow("unresolved tool dispatch");
 	});
@@ -467,7 +551,11 @@ describe("Harness-native durable Runtime record", () => {
 			repositoryRoot: root,
 			baseCommit,
 		};
-		const record = await HarnessNativeRuntimeRecord.open({ path: recordPath, identity });
+		const record = await HarnessNativeRuntimeRecord.open({
+			path: recordPath,
+			identity,
+			worktree: hostRecordWorktree(root, baseCommit),
+		});
 		const spine = new HarnessNativeRuntimeEventSpine([], record);
 		spine.append({
 			version: 1,
@@ -510,6 +598,12 @@ describe("Harness-native durable Runtime record", () => {
 			worktreeSha256: await fingerprintHarnessNativeWorktree(root),
 		});
 
-		await expect(HarnessNativeRuntimeRecord.open({ path: recordPath, identity })).resolves.toBeDefined();
+		await expect(
+			HarnessNativeRuntimeRecord.open({
+				path: recordPath,
+				identity,
+				worktree: hostRecordWorktree(root, baseCommit),
+			}),
+		).resolves.toBeDefined();
 	});
 });

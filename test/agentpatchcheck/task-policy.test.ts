@@ -62,7 +62,7 @@ describe("validateTaskPolicy", () => {
 		).rejects.toThrow("Base ref must not begin with a dash");
 	});
 
-	it("defaults transport retry to zero and permits only one explicit retry", async () => {
+	it("defaults managed Agent budgets to the converged execution configuration", async () => {
 		const defaultPolicy = await validateTaskPolicy({
 			repositoryRoot: process.cwd(),
 			prompt: "Inspect the change.",
@@ -70,7 +70,8 @@ describe("validateTaskPolicy", () => {
 			model: "test-model",
 			nativeAgent: { credentialRef: "openai-primary" },
 		});
-		expect(defaultPolicy.nativeAgent?.maxTransportRetries).toBe(0);
+		expect(defaultPolicy.nativeAgent?.maxIterations).toBe(24);
+		expect(defaultPolicy.nativeAgent?.maxTransportRetries).toBe(2);
 		expect(defaultPolicy.nativeAgent?.maxProtocolRecoveries).toBe(2);
 		expect(defaultPolicy.nativeAgent?.maxCompletionDeferrals).toBe(2);
 		expect(defaultPolicy.nativeAgent?.maxPlanRevisions).toBe(4);
@@ -78,14 +79,14 @@ describe("validateTaskPolicy", () => {
 		expect(defaultPolicy.nativeAgent?.toolPresentation).toBe("native");
 		expect(defaultPolicy.nativeAgent?.maxAttempts).toBe(2);
 		expect(defaultPolicy.nativeAgent?.minContinuationTimeMs).toBe(30_000);
-		const retriedPolicy = await validateTaskPolicy({
+		const retryDisabledPolicy = await validateTaskPolicy({
 			repositoryRoot: process.cwd(),
 			prompt: "Inspect the change.",
 			agentAdapter: "harness-native",
 			model: "test-model",
-			nativeAgent: { credentialRef: "openai-primary", maxTransportRetries: 1 },
+			nativeAgent: { credentialRef: "openai-primary", maxTransportRetries: 0 },
 		});
-		expect(retriedPolicy.nativeAgent?.maxTransportRetries).toBe(1);
+		expect(retryDisabledPolicy.nativeAgent?.maxTransportRetries).toBe(0);
 		const singleAgentPolicy = await validateTaskPolicy({
 			repositoryRoot: process.cwd(),
 			prompt: "Inspect the change.",
@@ -101,9 +102,9 @@ describe("validateTaskPolicy", () => {
 				prompt: "Inspect the change.",
 				agentAdapter: "harness-native",
 				model: "test-model",
-				nativeAgent: { credentialRef: "openai-primary", maxTransportRetries: 2 },
+				nativeAgent: { credentialRef: "openai-primary", maxTransportRetries: 3 },
 			}),
-		).rejects.toThrow("maxTransportRetries must be an integer between 0 and 1");
+		).rejects.toThrow("maxTransportRetries must be an integer between 0 and 2");
 		await expect(
 			validateTaskPolicy({
 				repositoryRoot: process.cwd(),

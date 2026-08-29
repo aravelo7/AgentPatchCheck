@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +9,14 @@ import {
 	SWE_BENCH_STANDARD_BASELINE_TAG,
 	type SWEbenchAdapterResult,
 } from "../../src/agentpatchcheck/swebench-adapter";
-import { runSWEbenchCli, type SWEbenchGradingResult } from "../../src/agentpatchcheck/swebench-cli";
+import {
+	loadSWEbenchBootstrapConfiguration,
+	runSWEbenchCli,
+	SWEbenchEvaluatorPreflightError,
+	preflightSWEbenchEvaluator,
+	type SWEbenchBootstrapConfiguration,
+	type SWEbenchGradingResult,
+} from "../../src/agentpatchcheck/swebench-cli";
 import type { AgentExecution, IsolatedWorkspace } from "../../src/agentpatchcheck/types";
 
 const instance = {
@@ -70,34 +77,45 @@ function adapterResult(
 		prediction,
 		predictionPath,
 		predictionError,
+		failure: null,
 		runtimeRecordPath: join(root, "runtime.jsonl"),
 	};
 }
 
-function argumentsFor(root: string, outputPath: string): string[] {
+const evaluatorRevision = "b".repeat(40);
+
+function bootstrapConfiguration(root: string, overrides: Partial<SWEbenchBootstrapConfiguration> = {}): SWEbenchBootstrapConfiguration {
+	return {
+		manifestPath: join(root, "APC-Pilot-10-v1.manifest.json"),
+		manifestName: "APC-Pilot-10",
+		manifestVersion: "v1",
+		datasetPath: join(root, "agent-safe-dataset.jsonl"),
+		evaluatorDatasetPath: join(root, "official-dataset.jsonl"),
+		evaluatorRevision,
+		evaluatorTimeoutSeconds: 120,
+		evaluatorSourceRoot: join(root, "official-evaluator"),
+		evaluatorPythonPath: join(root, "evaluator-python"),
+		deepseekModel: "deepseek-v4-flash",
+		engineeringValidation: true,
+		instanceIds: [instance.instance_id],
+		...overrides,
+	};
+}
+
+function outputDirectoryFor(root: string): string {
+	return join(root, ".agentpatchcheck", "swebench", "results", "APC-Pilot-10-v1", instance.instance_id);
+}
+
+function predictionPathFor(root: string): string {
+	return join(outputDirectoryFor(root), "swebench-cli-test.prediction.jsonl");
+}
+
+function argumentsFor(_root: string, _outputPath: string): string[] {
 	return [
-		"--dataset",
-		join(root, "agent-safe-dataset.jsonl"),
-		"--evaluator-dataset",
-		join(root, "official-dataset.jsonl"),
 		"--instance",
 		instance.instance_id,
-		"--repository",
-		join(root, "repository"),
-		"--output",
-		outputPath,
-		"--deepseek-model",
-		"deepseek-v4-pro",
 		"--run-id",
 		"swebench-cli-test",
-		"--evaluator-python",
-		"evaluator-python",
-		"--evaluator-source-root",
-		join(root, "official-evaluator"),
-		"--evaluator-artifact-root",
-		join(root, "grading-artifacts"),
-		"--evaluator-timeout-seconds",
-		"120",
 	];
 }
 
@@ -129,18 +147,211 @@ function baselineGitStdout(options: { currentCommit?: string; trackedChanges?: s
 }
 
 describe("SWE-bench CLI post-run orchestration", () => {
+	it("loads the single canonical manifest plus machine prerequisite environment", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-bootstrap-"));
+		const manifestDirectory = join(root, ".agentpatchcheck", "swebench", "datasets");
+		await mkdir(manifestDirectory, { recursive: true });
+		await writeFile(
+			join(manifestDirectory, "APC-Pilot-10-v1.manifest.json"),
+			JSON.stringify({
+				name: "APC-Pilot-10",
+				version: "v1",
+				fullSubset: { path: "agent.jsonl" },
+				evaluator: { dataset: "official.jsonl", revision: evaluatorRevision, timeoutSeconds: 120 },
+				execution: { classification: "engineering-validation", deepseekModel: "deepseek-v4-flash" },
+				instanceIds: [instance.instance_id],
+			}),
+		);
+
+		await expect(
+			loadSWEbenchBootstrapConfiguration(root, {
+				AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: join(root, "evaluator"),
+				AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: join(root, "python.exe"),
+			}),
+		).resolves.toMatchObject({
+			datasetPath: join(manifestDirectory, "agent.jsonl"),
+			evaluatorDatasetPath: join(manifestDirectory, "official.jsonl"),
+			evaluatorRevision,
+			deepseekModel: "deepseek-v4-flash",
+			engineeringValidation: true,
+		});
+	});
+
+	it("reports all unavailable evaluator prerequisites", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		await expect(
+			preflightSWEbenchEvaluator({
+				evaluatorPythonPath: join(root, "missing-python"),
+				evaluatorSourceRoot: join(root, "missing-evaluator"),
+				datasetPath: join(root, "missing-dataset.jsonl"),
+				expectedRevision: evaluatorRevision,
+			}),
+		).rejects.toMatchObject({
+			code: "evaluator_preflight_failed",
+			failedChecks: expect.arrayContaining([
+				"evaluator-source-root-missing",
+				"run_evaluation.py-unreadable",
+				"evaluator-python-unavailable",
+				"full-evaluator-dataset-unreadable",
+			]),
+		});
+	});
+
+	it("fails before Agent startup when the selected evaluator Python lacks the Docker SDK", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		const evaluatorRoot = join(root, "evaluator");
+		const pythonPath = join(root, "python.exe");
+		const datasetPath = join(root, "official-dataset.jsonl");
+		await mkdir(join(evaluatorRoot, "swebench", "harness"), { recursive: true });
+		await writeFile(join(evaluatorRoot, "swebench", "harness", "run_evaluation.py"), "# evaluator\n");
+		await writeFile(pythonPath, "placeholder\n");
+		await writeFile(datasetPath, "{}\n");
+
+		await expect(
+			preflightSWEbenchEvaluator(
+				{ evaluatorPythonPath: pythonPath, evaluatorSourceRoot: evaluatorRoot, datasetPath, expectedRevision: evaluatorRevision },
+				async () => false,
+				async () => evaluatorRevision,
+			),
+		).rejects.toMatchObject({
+			code: "evaluator_preflight_failed",
+			failedChecks: ["evaluator-python-docker-module-unavailable"],
+		});
+	});
+
+	it("rejects an evaluator checkout whose HEAD differs from the frozen manifest revision", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		const evaluatorRoot = join(root, "evaluator");
+		const pythonPath = join(root, "python.exe");
+		const datasetPath = join(root, "official-dataset.jsonl");
+		await mkdir(join(evaluatorRoot, "swebench", "harness"), { recursive: true });
+		await writeFile(join(evaluatorRoot, "swebench", "harness", "run_evaluation.py"), "# evaluator\n");
+		await writeFile(pythonPath, "placeholder\n");
+		await writeFile(datasetPath, "{}\n");
+
+		await expect(
+			preflightSWEbenchEvaluator(
+				{ evaluatorPythonPath: pythonPath, evaluatorSourceRoot: evaluatorRoot, datasetPath, expectedRevision: evaluatorRevision },
+				async () => true,
+				async () => "a".repeat(40),
+			),
+		).rejects.toMatchObject({
+			failedChecks: ["evaluator-revision-mismatch"],
+			expectedRevision: evaluatorRevision,
+			actualRevision: "a".repeat(40),
+		});
+	});
+
+	it("blocks Agent startup when evaluator preflight fails", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		let agentStarted = false;
+		await expect(
+			runSWEbenchCli(argumentsFor(root, join(root, "predictions.jsonl")), {
+				initializeEnvironment: () => "already-loaded",
+				findProjectRoot: () => root,
+				loadBootstrapConfiguration: async () => bootstrapConfiguration(root),
+				runEvaluatorPreflight: async () => {
+					throw new SWEbenchEvaluatorPreflightError(["run_evaluation.py-unreadable"], join(root, "missing-evaluator"));
+				},
+				runInstance: async () => {
+					agentStarted = true;
+					throw new Error("Agent must not start after evaluator preflight failure.");
+				},
+			}),
+		).rejects.toMatchObject({ code: "evaluator_preflight_failed", failedChecks: ["run_evaluation.py-unreadable"] });
+		expect(agentStarted).toBe(false);
+	});
+
+	it("proves Operator Independence through environment preparation and the AgentRuntime boundary without an LLM call", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		const outputPath = join(root, "predictions.jsonl");
+		const order: string[] = [];
+		let preflightInput: {
+			evaluatorPythonPath: string;
+			evaluatorSourceRoot: string;
+			datasetPath: string;
+			expectedRevision: string;
+		} | null = null;
+		let agentStarted = false;
+		await runSWEbenchCli(argumentsFor(root, outputPath), {
+			initializeEnvironment: () => "already-loaded",
+			loadBootstrapConfiguration: async () => {
+				order.push("canonical-config");
+				return bootstrapConfiguration(root);
+			},
+			runEvaluatorPreflight: async (input) => {
+				order.push("evaluator-preflight");
+				preflightInput = input;
+			},
+			findProjectRoot: () => root,
+			getGitStdout: baselineGitStdout(),
+			loadInstance: async () => instance,
+			resolveRepositoryRoot: async () => {
+				order.push("host-repository-preflight");
+				return join(root, "repository");
+			},
+			runInstance: async (options) => {
+				order.push("docker-environment-prepared", "agent-runtime-boundary");
+				agentStarted = true;
+				expect(options.outputPath).toBe(predictionPathFor(root));
+				await writeFile(join(outputDirectoryFor(root), "evaluator-artifacts", "write-proof"), "ok\n");
+				return adapterResult(root, null, null, execution(), "prediction_export_failed");
+			},
+		});
+		expect(preflightInput).toEqual({
+			evaluatorPythonPath: join(root, "evaluator-python"),
+			evaluatorSourceRoot: join(root, "official-evaluator"),
+			datasetPath: join(root, "official-dataset.jsonl"),
+			expectedRevision: evaluatorRevision,
+		});
+		expect(agentStarted).toBe(true);
+		expect(order).toEqual([
+			"canonical-config",
+			"evaluator-preflight",
+			"host-repository-preflight",
+			"docker-environment-prepared",
+			"agent-runtime-boundary",
+		]);
+	});
+
 	it("rejects an independently supplied prediction model label", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
 		await expect(
 			runSWEbenchCli([...argumentsFor(root, join(root, "predictions.jsonl")), "--model-name-or-path", "apc/stale"], {
 				initializeEnvironment: () => "already-loaded",
+				findProjectRoot: () => root,
+				loadBootstrapConfiguration: async () => bootstrapConfiguration(root),
+				runEvaluatorPreflight: async () => undefined,
 			}),
-		).rejects.toThrow("--model-name-or-path is no longer accepted");
+		).rejects.toThrow("--model-name-or-path is owned by the canonical SWE-bench bootstrap configuration");
+	});
+
+	it("rejects a manually supplied repository before Agent startup", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-repository-"));
+		let agentStarted = false;
+		await expect(
+			runSWEbenchCli(
+				[...argumentsFor(root, join(root, "predictions.jsonl")), "--repository", root],
+				{
+					initializeEnvironment: () => "already-loaded",
+					loadBootstrapConfiguration: async () => bootstrapConfiguration(root),
+					runEvaluatorPreflight: async () => undefined,
+					findProjectRoot: () => root,
+					getGitStdout: baselineGitStdout(),
+					loadInstance: async () => instance,
+					runInstance: async () => {
+						agentStarted = true;
+						throw new Error("Agent must not start for a manually supplied repository.");
+					},
+				},
+			),
+		).rejects.toThrow("--repository is owned by the canonical SWE-bench bootstrap configuration");
+		expect(agentStarted).toBe(false);
 	});
 
 	it("executes Agent, writes a standard prediction, then evaluates a timeout with a valid patch", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
-		const outputPath = join(root, "predictions.jsonl");
+		const outputPath = predictionPathFor(root);
 		const officialDatasetPath = join(root, "official-dataset.jsonl");
 		const order: string[] = [];
 		const prediction = {
@@ -160,16 +371,21 @@ describe("SWE-bench CLI post-run orchestration", () => {
 
 		await runSWEbenchCli(argumentsFor(root, outputPath), {
 			initializeEnvironment: () => "already-loaded",
-			findProjectRoot: () => root,
-			getGitStdout: baselineGitStdout(),
-			loadInstance: async () => instance,
-			runInstance: async (options) => {
+			loadBootstrapConfiguration: async () =>
+				bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: false }),
+			runEvaluatorPreflight: async () => undefined,
+				findProjectRoot: () => root,
+				getGitStdout: baselineGitStdout(),
+				loadInstance: async () => instance,
+				resolveRepositoryRoot: async () => join(root, "repository"),
+				runInstance: async (options) => {
 				order.push("executeAgent", "collectPatch");
 				expect(options).toEqual({
 					instance,
 					repositoryRoot: join(root, "repository"),
 					outputPath,
 					modelNameOrPath: `agentpatchcheck/${SWE_BENCH_STANDARD_BASELINE_TAG}/deepseek-v4-pro`,
+					sourceLabel: SWE_BENCH_STANDARD_BASELINE_TAG,
 					runtime: expect.objectContaining({ model: "deepseek-v4-pro" }),
 					runId: "swebench-cli-test",
 					variant: undefined,
@@ -194,26 +410,42 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		});
 
 		expect(order).toEqual(["executeAgent", "collectPatch", "writePrediction", "evaluator"]);
-		const grading = JSON.parse(await readFile(join(root, "swebench-cli-test.swebench-grading.json"), "utf8"));
-		const summary = JSON.parse(await readFile(join(root, "swebench-cli-test.apc-run.json"), "utf8"));
+		const grading = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.swebench-grading.json"), "utf8"));
+		const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
 		expect(grading).toMatchObject({ normalizedStatus: "resolved", officialRunId: "official-run-1" });
 		expect(summary).toMatchObject({
+			apcBaselineCommit: "e7fa37e1e9af8ace2c6b4ff13d99eb94e80c6854",
+			runClassification: "formal-frozen",
+			source: {
+				baselineTag: SWE_BENCH_STANDARD_BASELINE_TAG,
+				dirty: false,
+			},
 			agent: { status: "timeout", timedOut: true },
 			grading: { normalizedStatus: "resolved" },
+			candidateValidity: {
+				executionValidity: "valid",
+				pass1Eligible: true,
+				predictionStatus: "generated",
+				gradingValidity: "valid",
+			},
 			predictionPath: outputPath,
 		});
 	});
 
 	it("writes not_run without invoking the evaluator when a legal prediction cannot be produced", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
-		const outputPath = join(root, "predictions.jsonl");
+		const outputPath = predictionPathFor(root);
 		let evaluatorInvoked = false;
 
 		await runSWEbenchCli(argumentsFor(root, outputPath), {
 			initializeEnvironment: () => "already-loaded",
+			loadBootstrapConfiguration: async () =>
+				bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: false }),
+			runEvaluatorPreflight: async () => undefined,
 			findProjectRoot: () => root,
 			getGitStdout: baselineGitStdout(),
 			loadInstance: async () => instance,
+			resolveRepositoryRoot: async () => join(root, "repository"),
 			runInstance: async () => adapterResult(root, null, null, execution(), "prediction_export_failed"),
 			runPostRunEvaluator: async () => {
 				evaluatorInvoked = true;
@@ -221,44 +453,56 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			},
 		});
 
-		const grading = JSON.parse(await readFile(join(root, "swebench-cli-test.swebench-grading.json"), "utf8"));
-		const summary = JSON.parse(await readFile(join(root, "swebench-cli-test.apc-run.json"), "utf8"));
+		const grading = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.swebench-grading.json"), "utf8"));
+		const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
 		expect(evaluatorInvoked).toBe(false);
 		expect(grading).toMatchObject({ normalizedStatus: "not_run", reason: "prediction_export_failed" });
 		expect(summary).toMatchObject({
+			apcBaselineCommit: "e7fa37e1e9af8ace2c6b4ff13d99eb94e80c6854",
 			agent: { status: "completed" },
 			grading: { normalizedStatus: "not_run" },
 			predictionPath: null,
 			predictionError: "prediction_export_failed",
+			candidateValidity: {
+				predictionStatus: "not_generated",
+				gradingValidity: "not_run",
+			},
 		});
 	});
 
 	it("keeps evaluator infrastructure and ambiguous outcomes out of Agent execution state", async () => {
 		for (const normalizedStatus of ["infrastructure_error", "grading_error_or_ambiguous"] as const) {
 			const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
-			const outputPath = join(root, "predictions.jsonl");
+			const outputPath = predictionPathFor(root);
 			const prediction = {
 				instance_id: instance.instance_id,
 				model_name_or_path: "apc/test-model",
 				model_patch: "diff --git a/gin.go b/gin.go\n",
 			};
 			const agent = execution();
-			await writeFile(outputPath, `${JSON.stringify(prediction)}\n`, "utf8");
 
 			await runSWEbenchCli(argumentsFor(root, outputPath), {
 				initializeEnvironment: () => "already-loaded",
+				loadBootstrapConfiguration: async () =>
+					bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: false }),
+				runEvaluatorPreflight: async () => undefined,
 				findProjectRoot: () => root,
 				getGitStdout: baselineGitStdout(),
 				loadInstance: async () => instance,
-				runInstance: async () => adapterResult(root, outputPath, prediction, agent),
+				resolveRepositoryRoot: async () => join(root, "repository"),
+				runInstance: async () => {
+					await writeFile(outputPath, `${JSON.stringify(prediction)}\n`, "utf8");
+					return adapterResult(root, outputPath, prediction, agent);
+				},
 				runPostRunEvaluator: async () => resolvedGrading(normalizedStatus),
 			});
 
-			const summary = JSON.parse(await readFile(join(root, "swebench-cli-test.apc-run.json"), "utf8"));
+			const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
 			expect(agent).toEqual(execution());
 			expect(summary).toMatchObject({
 				agent: { status: "completed" },
 				grading: { normalizedStatus },
+				candidateValidity: { gradingValidity: "grading_invalid" },
 			});
 		}
 	});
@@ -268,6 +512,9 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		await expect(
 			runSWEbenchCli(argumentsFor(root, join(root, "predictions.jsonl")), {
 				initializeEnvironment: () => "already-loaded",
+				loadBootstrapConfiguration: async () =>
+					bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: false }),
+				runEvaluatorPreflight: async () => undefined,
 				findProjectRoot: () => root,
 				getGitStdout: baselineGitStdout({ currentCommit: "f".repeat(40) }),
 				loadInstance: async () => {
@@ -282,6 +529,9 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		await expect(
 			runSWEbenchCli(argumentsFor(root, join(root, "predictions.jsonl")), {
 				initializeEnvironment: () => "already-loaded",
+				loadBootstrapConfiguration: async () =>
+					bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: false }),
+				runEvaluatorPreflight: async () => undefined,
 				findProjectRoot: () => root,
 				getGitStdout: baselineGitStdout({ trackedChanges: " M src/agentpatchcheck/swebench-cli.ts" }),
 				loadInstance: async () => {
@@ -289,5 +539,85 @@ describe("SWE-bench CLI post-run orchestration", () => {
 				},
 			}),
 		).rejects.toThrow("clean tracked source worktree");
+	});
+
+	it("runs engineering validation from the current dirty source and records its identity", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
+		const outputPath = predictionPathFor(root);
+		const currentCommit = "a".repeat(40);
+		const trackedChanges = " M src/agentpatchcheck/swebench-cli.ts\n?? scratch.txt";
+		const prediction = {
+			instance_id: instance.instance_id,
+			model_name_or_path: "agentpatchcheck/engineering-validation-aaaaaaaaaaaa/deepseek-v4-pro",
+			model_patch: "diff --git a/gin.go b/gin.go\n",
+		};
+
+		await runSWEbenchCli(argumentsFor(root, outputPath), {
+			initializeEnvironment: () => "already-loaded",
+			loadBootstrapConfiguration: async () =>
+				bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: true }),
+			runEvaluatorPreflight: async () => undefined,
+			findProjectRoot: () => root,
+			getGitStdout: baselineGitStdout({ currentCommit, trackedChanges }),
+			loadInstance: async () => instance,
+			resolveRepositoryRoot: async () => join(root, "repository"),
+			runInstance: async (options) => {
+				expect(options.modelNameOrPath).toBe(prediction.model_name_or_path);
+				expect(options.sourceLabel).toBe("engineering-validation-aaaaaaaaaaaa");
+				await writeFile(outputPath, `${JSON.stringify(prediction)}\n`, "utf8");
+				return adapterResult(root, outputPath, prediction, execution());
+			},
+			runPostRunEvaluator: async () => resolvedGrading("resolved"),
+		});
+
+		const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
+		expect(summary).toMatchObject({
+			apcBaselineCommit: null,
+			runClassification: "engineering-validation",
+			source: {
+				head: currentCommit,
+				baselineTag: null,
+				dirty: true,
+				statusPorcelain: trackedChanges,
+			},
+			runConfiguration: { deepseekModel: "deepseek-v4-pro", attempt: 1 },
+		});
+	});
+
+	it("defaults engineering validation to the converged Flash runtime", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-default-runtime-"));
+		const outputPath = predictionPathFor(root);
+		const args = argumentsFor(root, outputPath);
+		const prediction = {
+			instance_id: instance.instance_id,
+			model_name_or_path: "agentpatchcheck/engineering-validation-aaaaaaaaaaaa/deepseek-v4-flash",
+			model_patch: "diff --git a/gin.go b/gin.go\n",
+		};
+
+		await runSWEbenchCli(args, {
+			initializeEnvironment: () => "already-loaded",
+			loadBootstrapConfiguration: async () => bootstrapConfiguration(root),
+			runEvaluatorPreflight: async () => undefined,
+			findProjectRoot: () => root,
+			getGitStdout: baselineGitStdout({ currentCommit: "a".repeat(40), trackedChanges: " M source.ts" }),
+			loadInstance: async () => instance,
+			resolveRepositoryRoot: async () => join(root, "repository"),
+			runInstance: async (options) => {
+				expect(options).toMatchObject({
+					modelNameOrPath: prediction.model_name_or_path,
+					runtime: {
+						model: "deepseek-v4-flash",
+						timeoutMs: 1_200_000,
+						nativeAgent: { maxIterations: 24, maxToolCalls: 48, maxTransportRetries: 2 },
+					},
+				});
+				await writeFile(outputPath, `${JSON.stringify(prediction)}\n`, "utf8");
+				return adapterResult(root, outputPath, prediction, execution());
+			},
+			runPostRunEvaluator: async () => resolvedGrading("resolved"),
+		});
+
+		const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
+		expect(summary.runConfiguration).toMatchObject({ deepseekModel: "deepseek-v4-flash", attempt: 1 });
 	});
 });

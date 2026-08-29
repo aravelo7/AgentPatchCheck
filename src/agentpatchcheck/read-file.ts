@@ -129,6 +129,31 @@ function formatReadFileObservation(displayPath: string, window: ReadFileWindow):
 	return `<path>${displayPath}</path>\n<type>file</type>\n<content>\n${body}\n</content>`;
 }
 
+/** Render a bounded file observation from repository-provided UTF-8 text. */
+export async function readBoundedTextWindow(options: {
+	content: string;
+	displayPath: string;
+	input: ReadFileInput;
+	maxObservationBytes: number;
+}): Promise<ReadFileResult> {
+	const window = await buildReadFileWindow(
+		[options.content],
+		options.input,
+		Math.min(READ_FILE_MAX_CONTENT_BYTES, options.maxObservationBytes),
+		options.displayPath,
+	);
+	const boundedWindow = { ...window, lines: [...window.lines] };
+	let observation = formatReadFileObservation(options.displayPath, boundedWindow);
+	while (Buffer.byteLength(observation, "utf8") > options.maxObservationBytes && boundedWindow.lines.length > 0) {
+		boundedWindow.lines.pop();
+		boundedWindow.truncatedByBytes = true;
+		observation = formatReadFileObservation(options.displayPath, boundedWindow);
+	}
+	if (Buffer.byteLength(observation, "utf8") > options.maxObservationBytes)
+		throw new Error("read-file observation metadata exceeds the configured byte limit.");
+	return { ...boundedWindow, observation };
+}
+
 /** Stream and render one bounded, replay-safe model observation. */
 export async function readBoundedFileWindow(options: {
 	absolutePath: string;

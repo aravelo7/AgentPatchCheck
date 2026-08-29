@@ -7,6 +7,7 @@ import {
 	type Message,
 	type ToolDefinition,
 } from "@clinebot/llms";
+import { fetch as undiciFetch, ProxyAgent, type RequestInit as UndiciRequestInit } from "undici";
 import { type CredentialResolution, resolveCredential } from "./credential-resolver";
 import {
 	type DeepSeekAssistantMessage,
@@ -132,6 +133,31 @@ export interface ModelProviderOptions {
 
 const defaultDependencies: ModelProviderDependencies = { fetcher: fetch, resolveCredential, createHandler };
 const SAFE_VALUE = /^[A-Za-z0-9._-]{1,256}$/u;
+const DEEPSEEK_PROXY_URL_ENV = "AGENTPATCHCHECK_DEEPSEEK_PROXY_URL";
+
+function resolveDeepSeekProxyUrl(environment: NodeJS.ProcessEnv = process.env): string | null {
+	const configured = environment[DEEPSEEK_PROXY_URL_ENV]?.trim();
+	if (!configured) return null;
+	let url: URL;
+	try {
+		url = new URL(configured);
+	} catch {
+		throw new Error(`${DEEPSEEK_PROXY_URL_ENV} must be an absolute HTTP(S) proxy URL.`);
+	}
+	if (url.protocol !== "http:" && url.protocol !== "https:")
+		throw new Error(`${DEEPSEEK_PROXY_URL_ENV} must be an absolute HTTP(S) proxy URL.`);
+	if (url.username || url.password || url.search || url.hash)
+		throw new Error(`${DEEPSEEK_PROXY_URL_ENV} must be an absolute HTTP(S) proxy URL without credentials.`);
+	return url.toString();
+}
+
+function createProxyFetcher(proxyUrl: string): typeof fetch {
+	const dispatcher = new ProxyAgent(proxyUrl);
+	return async (input, init) => {
+		const request: UndiciRequestInit = { ...(init ?? {}), dispatcher };
+		return (await undiciFetch(input, request)) as Response;
+	};
+}
 
 const toolParameters: Record<HarnessNativeToolName, Record<string, unknown>> = {
 	"run-code": {
@@ -372,7 +398,9 @@ const CODING_LOOP_GUIDANCE = `Coding task workflow:
 - Once the relevant implementation is understood, make the smallest task-relevant change supported by the available evidence.
 - After a mutation, use declared public verification when available. A passing existing test command establishes only the behavior it covers; it does not by itself establish that the task-specific behavior or every declared verification requirement is satisfied.
 - If verification fails, treat it as feedback on the current changes and re-evaluate the task requirements, current workspace, changed paths, and relevant implementation before finishing.
-- Call finish only when the current changes are consistent with the task requirements and available verification evidence.
+- Before calling finish, treat completion as unproven. Audit each task requirement against authoritative evidence from the current workspace and tool results.
+- Mutation, intent, partial progress, a plausible result, or the absence of a declared public verification command does not prove completion. If evidence is missing, weak, indirect, or contradicted by a failed check, continue working and gather stronger evidence.
+- Call finish only when current evidence supports the task requirements and no required work remains.
 The Harness does not choose the next action or file; those decisions remain with the model.`;
 
 const NEXT_ACTION_DECISION_PROTOCOL = `Next-action decision protocol:
@@ -726,7 +754,8 @@ function selectedTools(tools: readonly HarnessNativeToolName[]) {
 		{
 			type: "function" as const,
 			name: "finish",
-			description: "Finish the current Agent task without another tool call.",
+			description:
+				"Finish the current Agent task only after auditing every requirement against authoritative current-state evidence and confirming that no required work remains.",
 			parameters: controlToolParameters,
 		},
 		{
@@ -754,6 +783,20 @@ function errorCode(error: unknown): string | null {
 	return safeValue(error.code);
 }
 
+function isRetryableTransportCode(code: string | null): boolean {
+	return (
+		code === "ECONNRESET" ||
+		code === "ETIMEDOUT" ||
+		code === "EAI_AGAIN" ||
+		code === "UND_ERR_CONNECT_TIMEOUT" ||
+		code === "UND_ERR_SOCKET"
+	);
+}
+
+function isRetryableHttpStatus(status: number): boolean {
+	return status === 500 || status === 502 || status === 503 || status === 504;
+}
+
 function resolveSecret(configuration: ModelProviderConfiguration, dependencies: ModelProviderDependencies): string {
 	const resolved = dependencies.resolveCredential(configuration.credentialRef);
 	if (resolved.ok) return resolved.secret;
@@ -779,17 +822,22 @@ async function requestJson(
 				},
 				body: JSON.stringify(body),
 			});
-			break;
 		} catch (error) {
 			if (error instanceof ModelProviderFailureError) throw error;
 			const cause = typeof error === "object" && error !== null && "cause" in error ? error.cause : undefined;
 			const code = errorCode(cause) ?? errorCode(error);
-			if (code === "ECONNRESET" && transportRetries < maxTransportRetries) {
+			if (isRetryableTransportCode(code) && transportRetries < maxTransportRetries) {
 				transportRetries += 1;
 				continue;
 			}
 			throw providerFailure(code === "UND_ERR_CONNECT_TIMEOUT" ? "timeout" : "provider-unavailable", { code });
 		}
+		if (isRetryableHttpStatus(response.status) && transportRetries < maxTransportRetries) {
+			await response.body?.cancel();
+			transportRetries += 1;
+			continue;
+		}
+		break;
 	}
 	if (response === null) throw new Error("Model provider did not return a response.");
 	const requestId = safeValue(response.headers.get("x-request-id"));
@@ -1206,7 +1254,7 @@ function createOpenAICompatibleProvider(
 		};
 	};
 	const decide = async (context: ModelProviderContext): Promise<ModelProviderDecision> => {
-		const maxTransportRetries = context.observations.length === 0 ? options.maxTransportRetries : 0;
+		const maxTransportRetries = options.maxTransportRetries;
 		if (configuration.protocol === "responses") {
 			const result = await requestJson(
 				configuration,
@@ -1262,7 +1310,7 @@ function createOpenAICompatibleProvider(
 			let pendingCallIds = new Set<string>();
 			return {
 				decide: async (context) => {
-					const maxTransportRetries = initialMessages === null ? options.maxTransportRetries : 0;
+					const maxTransportRetries = options.maxTransportRetries;
 					initialMessages ??= [
 						{
 							role: "system",
@@ -1457,7 +1505,7 @@ function createDeepSeekProvider(
 				{ role: "user", content: requestInputWithWorkingContext(context) },
 			],
 			chatTools(context.tools),
-			context.observations.length === 0 ? options.maxTransportRetries : 0,
+			options.maxTransportRetries,
 		);
 		const { assistantMessage: _assistantMessage, ...decision } = parseDeepSeekDecision(
 			result.payload,
@@ -1479,7 +1527,7 @@ function createDeepSeekProvider(
 			let pendingCallIds = new Set<string>();
 			return {
 				decide: async (context) => {
-					const maxTransportRetries = initialMessages === null ? options.maxTransportRetries : 0;
+					const maxTransportRetries = options.maxTransportRetries;
 					initialMessages ??= [
 						{ role: "system", content: executorSystemInstruction(context) },
 						{
@@ -1842,10 +1890,15 @@ export function createModelProvider(
 	overrides: Partial<ModelProviderDependencies> = {},
 	options: ModelProviderOptions = {},
 ): ModelProvider {
-	const dependencies = { ...defaultDependencies, ...overrides };
+	const proxyUrl = configuration.provider === "deepseek" && overrides.fetcher === undefined ? resolveDeepSeekProxyUrl() : null;
+	const dependencies = {
+		...defaultDependencies,
+		...overrides,
+		...(proxyUrl === null ? {} : { fetcher: createProxyFetcher(proxyUrl) }),
+	};
 	const maxTransportRetries = options.maxTransportRetries ?? 0;
-	if (!Number.isSafeInteger(maxTransportRetries) || maxTransportRetries < 0 || maxTransportRetries > 1)
-		throw new Error("Model provider maxTransportRetries must be an integer between 0 and 1.");
+	if (!Number.isSafeInteger(maxTransportRetries) || maxTransportRetries < 0 || maxTransportRetries > 2)
+		throw new Error("Model provider maxTransportRetries must be an integer between 0 and 2.");
 	if (configuration.provider === "gemini") return createGeminiNativeProvider(configuration, dependencies);
 	if (configuration.provider === "deepseek")
 		return createDeepSeekProvider(configuration, dependencies, { maxTransportRetries });

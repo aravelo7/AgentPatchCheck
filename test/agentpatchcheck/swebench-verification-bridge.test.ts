@@ -22,7 +22,9 @@ const dataset = JSON.parse(fs.readFileSync(datasetPath, "utf8").trim());
 if (!dataset.test_patch || !Array.isArray(dataset.FAIL_TO_PASS) || !Array.isArray(dataset.PASS_TO_PASS)) {
   throw new Error("full_dataset_snapshot_required");
 }
-const prediction = JSON.parse(fs.readFileSync(predictionPath, "utf8").trim());
+const predictions = JSON.parse(fs.readFileSync(predictionPath, "utf8").trim());
+if (!Array.isArray(predictions) || predictions.length !== 1) throw new Error("official_prediction_array_required");
+const prediction = predictions[0];
 const modelDirectory = prediction.model_name_or_path.replaceAll("/", "__");
 const instanceRoot = path.join(process.cwd(), "logs", "run_evaluation", runId, modelDirectory, instanceId);
 fs.mkdirSync(instanceRoot, { recursive: true });
@@ -41,7 +43,8 @@ if (!instanceId.endsWith("infra") && !instanceId.endsWith("ambiguous") && !insta
     [instanceId]: { patch_successfully_applied: true, resolved, infra_failure: false }
   }));
 }
-fs.writeFileSync(path.join(reportRoot, modelDirectory + "." + runId + ".json"), JSON.stringify(finalReport));
+const aggregateRoot = instanceId.endsWith("canonical-output") ? process.cwd() : reportRoot;
+fs.writeFileSync(path.join(aggregateRoot, modelDirectory + "." + runId + ".json"), JSON.stringify(finalReport));
 process.stdout.write("EVALUATOR_STDOUT\n");
 process.stderr.write("EVALUATOR_STDERR\n");
 `;
@@ -134,7 +137,7 @@ describe("SWE-bench post-run prediction evaluator adapter", () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.stderr).toBe("");
 		expect(result.stdout).not.toContain("EVALUATOR_");
-		expect(result.predictionSeen).toBe(`${JSON.stringify(result.prediction)}\n`);
+		expect(result.predictionSeen).toBe(`${JSON.stringify([result.prediction])}\n`);
 		expect(result.datasetSeen).toMatchObject({
 			test_patch: "hidden test patch",
 			FAIL_TO_PASS: ["hidden_failure"],
@@ -148,6 +151,12 @@ describe("SWE-bench post-run prediction evaluator adapter", () => {
 			evaluatorVersion: "fixture-evaluator-commit",
 		});
 		expect(result.result.officialReportPath).toEqual(expect.any(String));
+	});
+
+	it("discovers the official aggregate report when report_dir is ignored", async () => {
+		await expect(runBridge("owner__canonical-output")).resolves.toMatchObject({
+			result: { normalizedStatus: "unresolved", reason: "official_unresolved" },
+		});
 	});
 
 	it("maps official resolved, infrastructure, ambiguous, and empty-patch results independently", async () => {

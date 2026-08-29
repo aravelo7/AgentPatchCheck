@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import { createHarnessNativeAdapter } from "../../src/agentpatchcheck/agent-adapter";
 import {
+	createHostRepositoryPrimitives,
 	executeHarnessNativeTool,
+	type HarnessNativeRepositoryPrimitives,
 	type HarnessNativeModelProvider,
 	runHarnessNativeRuntime,
 } from "../../src/agentpatchcheck/harness-native-runtime";
@@ -30,6 +32,153 @@ function wholeFilePatch(path: string, before: string, after: string): string {
 }
 
 describe("Harness-native Agent Runtime", () => {
+	it("keeps structured tool semantics shared when repository I/O is injected", async () => {
+		const files = new Map<string, string>([
+			["/virtual/README.md", "before\nneedle\n"],
+			["/virtual/src/app.ts", "export const value = 1;\n"],
+		]);
+		const commands: string[] = [];
+		const repository: HarnessNativeRepositoryPrimitives = {
+			resolvePath: (root, path) => (path === "." ? root : `${root}/${path.replaceAll("\\", "/")}`),
+			joinPath: (...parts) => parts.join("/").replaceAll("//", "/"),
+			relativePath: (root, path) => (path === root ? "" : path.slice(root.length + 1)),
+			parentPath: (path) => path.slice(0, path.lastIndexOf("/")) || "/",
+			baseName: (path) => path.slice(path.lastIndexOf("/") + 1),
+			stat: async (path) => {
+				const isFile = files.has(path);
+				const isDirectory = path === "/virtual" || [...files.keys()].some((file) => file.startsWith(`${path}/`));
+				if (!isFile && !isDirectory) {
+					const error = new Error("missing") as NodeJS.ErrnoException;
+					error.code = "ENOENT";
+					throw error;
+				}
+				return { isFile: () => isFile, isDirectory: () => isDirectory, isSymbolicLink: () => false, size: files.get(path)?.length ?? 0 };
+			},
+			listDirectory: async (path) => {
+				const names = new Set<string>();
+				for (const file of files.keys()) {
+					const suffix = file.startsWith(`${path}/`) ? file.slice(path.length + 1) : "";
+					const name = suffix.split("/")[0];
+					if (name) names.add(name);
+				}
+				return [...names].map((name) => {
+					const entryPath = `${path}/${name}`;
+					const isFile = files.has(entryPath);
+					return { name, isFile: () => isFile, isDirectory: () => !isFile, isSymbolicLink: () => false };
+				});
+			},
+			readText: async (path) => {
+				const content = files.get(path);
+				if (content === undefined) {
+					const error = new Error("missing") as NodeJS.ErrnoException;
+					error.code = "ENOENT";
+					throw error;
+				}
+				return content;
+			},
+			readWindow: async ({ path, displayPath, input }) => {
+				const content = files.get(path) ?? "";
+				const allLines = content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
+				const lines = allLines.slice(input.offset - 1, input.offset - 1 + input.limit).map((text, index) => ({ number: input.offset + index, text }));
+				return { ...input, lines, totalLines: allLines.length, truncatedByBytes: false, observation: `<path>${displayPath}</path>` };
+			},
+			writeText: async (path, content, options) => {
+				if (options?.exclusive && files.has(path)) throw new Error("exists");
+				files.set(path, content);
+			},
+			git: async (_root, args) => ({ ok: true, stdout: args[0] === "status" ? " M README.md\n" : "diff --git a/README.md", stderr: "", output: "", error: null, exitCode: 0 }),
+			runCommand: async ({ command }) => {
+				commands.push(command.command);
+				return { command: command.command, args: command.args, exitCode: 1, signal: null, stdout: "test failure", stderr: "details", durationMs: 1, timedOut: false };
+			},
+			applyPatch: async () => ({ affectedPaths: [] }),
+			fingerprint: async () => "virtual-fingerprint",
+			captureMutationSurface: async () => ({ pathSha256: new Map() }),
+		};
+
+		const edit = await executeHarnessNativeTool({
+			root: "/virtual",
+			repository,
+			tool: "apply-edit",
+			arguments: { path: "README.md", expectedText: "before", replacementText: "after" },
+			maxObservationBytes: 1_024,
+			verification: undefined,
+		});
+		const search = await executeHarnessNativeTool({
+			root: "/virtual",
+			repository,
+			tool: "search-text-recursive",
+			arguments: { path: ".", query: "value" },
+			maxObservationBytes: 1_024,
+			verification: undefined,
+		});
+		const verification = await executeHarnessNativeTool({
+			root: "/virtual",
+			repository,
+			tool: "run-public-verification",
+			arguments: { index: 0 },
+			maxObservationBytes: 1_024,
+			verification: { commands: [{ command: "test", args: [], timeoutMs: 100 }], outputLimitBytes: 1_024, allowShell: false, allowNetwork: false },
+		});
+
+		expect(edit.facts).toMatchObject({ kind: "mutation", affectedPaths: ["README.md"] });
+		expect(files.get("/virtual/README.md")).toContain("after");
+		expect(search.facts).toMatchObject({ kind: "retrieval", tool: "search-text-recursive", query: "value" });
+		expect(verification.facts).toMatchObject({ kind: "verification", outcome: "failed", exitCode: 1 });
+		expect(commands).toEqual(["test"]);
+	});
+
+	it("classifies missing workspace paths as tool errors without weakening containment", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-path-policy-"));
+		try {
+			await mkdir(join(worktree, "src"));
+			await writeFile(join(worktree, "src", "present.txt"), "needle\n", "utf8");
+        const common = {
+          root: worktree,
+          repository: createHostRepositoryPrimitives(),
+          maxObservationBytes: 1024,
+          verification: undefined,
+        } as const;
+
+			expect((await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: "src/present.txt" } })).status).toBe("ok");
+			expect((await executeHarnessNativeTool({ ...common, tool: "list-directory", arguments: { path: "src" } })).status).toBe("ok");
+			expect((await executeHarnessNativeTool({ ...common, tool: "search-text", arguments: { path: "src", query: "needle" } })).status).toBe("ok");
+			expect((await executeHarnessNativeTool({ ...common, tool: "search-text-recursive", arguments: { path: ".", query: "needle" } })).status).toBe("ok");
+
+			const missing = await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: "src/missing.txt" } });
+			expect(missing).toMatchObject({ status: "error", facts: { kind: "retrieval" } });
+			expect(missing).not.toHaveProperty("rejectionReason");
+
+			const traversal = await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: "../outside.txt" } });
+			expect(traversal.status).toBe("rejected");
+			const absolute = await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: join(worktree, "outside.txt") } });
+			expect(absolute.status).toBe("rejected");
+			const empty = await executeHarnessNativeTool({ ...common, tool: "list-directory", arguments: { path: "" } });
+			expect(empty.status).toBe("rejected");
+
+			let decision = 0;
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1, maxRejectedToolCalls: 1, plannerEnabled: false }),
+				prompt: "Inspect the workspace.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider: {
+					id: "test-provider",
+					decide: async () => {
+						decision += 1;
+						return decision === 1
+							? { decision: { kind: "tool", tool: "read-file", arguments: { path: "src/missing.txt" } } }
+							: { decision: { kind: "finish" } };
+					},
+				},
+				timeoutMs: 2_000,
+			});
+			expect(result.resourceLedger).toMatchObject({ rejectedToolCalls: 0, budgetedRejectedToolCalls: 0 });
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
 	it("executes the DSH foreground shell contract in the managed worktree with bounded output", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-dsh-shell-"));
 		try {
@@ -1118,16 +1267,18 @@ describe("Harness-native Agent Runtime", () => {
 		try {
 			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
 			let verificationObservation = "";
+			let decisionCount = 0;
 			const provider: HarnessNativeModelProvider = {
 				id: "test-provider",
 				decide: async ({ observations, tools }) => {
+					decisionCount += 1;
 					expect(tools).toContain("run-public-verification");
-					if (observations.length === 0)
+					if (decisionCount === 1)
 						return {
 							decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } },
 						};
 					verificationObservation = observations[0] ?? "";
-					if (observations.length === 1)
+					if (decisionCount === 2)
 						return {
 							decision: {
 								kind: "tool",
@@ -1135,11 +1286,13 @@ describe("Harness-native Agent Runtime", () => {
 								arguments: { patch: wholeFilePatch("README.md", "before", "after") },
 							},
 						};
+					if (decisionCount === 3)
+						return { decision: { kind: "tool", tool: "run-public-verification", arguments: { index: 0 } } };
 					return { decision: { kind: "finish" } };
 				},
 			};
 			const result = await runHarnessNativeRuntime({
-				policy: testNativePolicy({ maxIterations: 3, maxToolCalls: 2 }),
+				policy: testNativePolicy({ maxIterations: 4, maxToolCalls: 3 }),
 				prompt: "Repair README.",
 				model: "test-model",
 				worktreePath: worktree,
@@ -1162,7 +1315,7 @@ describe("Harness-native Agent Runtime", () => {
 				},
 			});
 
-			expect(result).toMatchObject({ status: "succeeded", toolCalls: 2 });
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 3 });
 			expect(result.trajectory[0]).toMatchObject({
 				tool: "run-public-verification",
 				toolStatus: "ok",
@@ -1193,25 +1346,51 @@ describe("Harness-native Agent Runtime", () => {
 	it("does not expose public verification when TaskPolicy declares no verifier", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {
+			let decisionCount = 0;
 			const provider: HarnessNativeModelProvider = {
 				id: "test-provider",
-				decide: async ({ tools }) => {
+				decide: async ({ observations, tools }) => {
+					decisionCount += 1;
+					expect(tools).toContain("dsh-shell");
 					expect(tools).not.toContain("run-public-verification");
 					expect(tools).not.toContain("write-file");
+					if (decisionCount === 1)
+						return {
+							decision: {
+								kind: "tool",
+								tool: "dsh-shell",
+								arguments: {
+									command:
+										process.platform === "win32"
+											? "Write-Output (Get-Location).Path; [Console]::Error.WriteLine('shell-stderr'); exit 7"
+											: "printf '%s\\n' \"$PWD\"; printf shell-stderr >&2; exit 7",
+									description: "Report managed worktree and command result",
+									dialect: process.platform === "win32" ? "pwsh" : "bash",
+								},
+							},
+						};
+					expect(observations.at(-1)).toContain(worktree);
+					expect(observations.at(-1)).toContain("shell-stderr");
+					expect(observations.at(-1)).toContain("[exit code: 7]");
 					return { decision: { kind: "finish" } };
 				},
 			};
 
 			const result = await runHarnessNativeRuntime({
-				policy: testNativePolicy({ maxIterations: 1, maxToolCalls: 1 }),
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
 				prompt: "Inspect.",
 				model: "test-model",
 				worktreePath: worktree,
 				provider,
-				timeoutMs: 1_000,
+				timeoutMs: 5_000,
 			});
 
-			expect(result).toMatchObject({ status: "succeeded", toolCalls: 0 });
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(result.trajectory[0]).toMatchObject({
+				tool: "dsh-shell",
+				toolStatus: "ok",
+				facts: { kind: "other" },
+			});
 		} finally {
 			await rm(worktree, { recursive: true, force: true });
 		}
@@ -1438,6 +1617,221 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
+	it("applies two independent constrained edits to one file as one mutation", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "first\nsecond\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-edit-batch",
+									arguments: {
+										patches: [
+											{ path: "README.md", expectedText: "first", replacementText: "first-after" },
+											{ path: "README.md", expectedText: "second", replacementText: "second-after" },
+										],
+										creates: [],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Update both lines.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result.trajectory[0]).toMatchObject({
+				tool: "apply-edit-batch",
+				toolStatus: "ok",
+				facts: { kind: "mutation", affectedPaths: ["README.md"] },
+			});
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("first-after\nsecond-after\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("applies same-file edits in declared order against the evolving in-memory content", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-edit-batch",
+									arguments: {
+										patches: [
+											{ path: "README.md", expectedText: "before", replacementText: "intermediate" },
+											{ path: "README.md", expectedText: "intermediate", replacementText: "after" },
+										],
+										creates: [],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Apply ordered edits.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result.trajectory[0]).toMatchObject({
+				tool: "apply-edit-batch",
+				toolStatus: "ok",
+				facts: { kind: "mutation", affectedPaths: ["README.md"] },
+			});
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("after\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects overlapping same-file edits without writing a partial batch", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "abcdef\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-edit-batch",
+									arguments: {
+										patches: [
+											{ path: "README.md", expectedText: "abcd", replacementText: "first" },
+											{ path: "README.md", expectedText: "cdef", replacementText: "second" },
+										],
+										creates: [],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Try conflicting edits.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result.trajectory[0]).toMatchObject({
+				tool: "apply-edit-batch",
+				toolStatus: "rejected",
+				observationSummary: "Patch batch replacements must not overlap.",
+				facts: { kind: "mutation", affectedPaths: [] },
+			});
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("abcdef\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a later same-file edit without writing an earlier in-memory replacement", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-edit-batch",
+									arguments: {
+										patches: [
+											{ path: "README.md", expectedText: "before", replacementText: "after" },
+											{ path: "README.md", expectedText: "missing", replacementText: "other" },
+										],
+										creates: [],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Try an invalid later edit.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result.trajectory[0]).toMatchObject({ tool: "apply-edit-batch", toolStatus: "rejected" });
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("before\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps different-file edit batches as separate successful mutations", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
+		try {
+			await writeFile(join(worktree, "first.txt"), "first-before\n", "utf8");
+			await writeFile(join(worktree, "second.txt"), "second-before\n", "utf8");
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "apply-edit-batch",
+									arguments: {
+										patches: [
+											{ path: "first.txt", expectedText: "first-before", replacementText: "first-after" },
+											{ path: "second.txt", expectedText: "second-before", replacementText: "second-after" },
+										],
+										creates: [],
+									},
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Update two files.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				timeoutMs: 1_000,
+			});
+
+			expect(result.trajectory[0]).toMatchObject({
+				tool: "apply-edit-batch",
+				toolStatus: "ok",
+				facts: { kind: "mutation", affectedPaths: ["first.txt", "second.txt"] },
+			});
+			expect(await readFile(join(worktree, "first.txt"), "utf8")).toBe("first-after\n");
+			expect(await readFile(join(worktree, "second.txt"), "utf8")).toBe("second-after\n");
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects a combined edit batch before changing any target when creation preflight fails", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {
@@ -1645,7 +2039,7 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
-	it("rejects new-file overwrite, missing-parent, and workspace-escape attempts", async () => {
+		it("rejects new-file overwrite and workspace-escape attempts while reporting missing parents normally", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {
 			await writeFile(join(worktree, "existing.txt"), "original\\n", "utf8");
@@ -1676,8 +2070,8 @@ describe("Harness-native Agent Runtime", () => {
 				timeoutMs: 1_000,
 			});
 
-			expect(result).toMatchObject({ status: "succeeded", toolCalls: 0, rejectedToolCalls: 3 });
-			expect(result.trajectory.map((step) => step.toolStatus)).toEqual(["rejected", "rejected", "rejected", null]);
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1, rejectedToolCalls: 2 });
+			expect(result.trajectory.map((step) => step.toolStatus)).toEqual(["rejected", "error", "rejected", null]);
 			expect(await readFile(join(worktree, "existing.txt"), "utf8")).toBe("original\\n");
 			await expect(readFile(join(worktree, "missing", "new.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 		} finally {

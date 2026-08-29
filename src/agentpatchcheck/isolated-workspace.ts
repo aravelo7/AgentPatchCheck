@@ -11,6 +11,18 @@ const MAX_UNTRACKED_TOTAL_BYTES = 256 * 1024;
 const SECRET_PATTERN =
 	/\b(?:sk|rk|sess)_[a-zA-Z0-9_-]{12,}\b|\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|cookie|password)\b\s*[:=]/iu;
 
+export class IsolatedWorkspaceCollisionError extends Error {
+	readonly code = "worktree_collision" as const;
+
+	constructor(
+		readonly worktreePath: string,
+		readonly collision: "path-exists" | "git-worktree-registered",
+	) {
+		super(`worktree_collision: ${collision}; worktreePath=${worktreePath}`);
+		this.name = "IsolatedWorkspaceCollisionError";
+	}
+}
+
 function isSafeRelativePath(path: string): boolean {
 	return !!path && !path.includes("\0") && !isAbsolute(path) && !path.split(/[\\/]/u).includes("..");
 }
@@ -73,6 +85,22 @@ export function getIsolatedWorkspacePath(repositoryPath: string, runId: string):
 	return join(normalizedRepositoryPath, ".agentpatchcheck", "worktrees", normalizedRunId);
 }
 
+async function assertWorkspaceIsUnoccupied(repositoryPath: string, worktreePath: string): Promise<void> {
+	try {
+		await lstat(worktreePath);
+		throw new IsolatedWorkspaceCollisionError(worktreePath, "path-exists");
+	} catch (error) {
+		if (error instanceof IsolatedWorkspaceCollisionError) throw error;
+		if (typeof error === "object" && error !== null && "code" in error && error.code !== "ENOENT") throw error;
+	}
+	const listed = await runGit(repositoryPath, ["worktree", "list", "--porcelain"]);
+	if (!listed.ok) throw new Error(listed.error ?? "Could not inspect registered Git worktrees.");
+	const registered = listed.stdout
+		.split(/\r?\n/u)
+		.some((line) => line.startsWith("worktree ") && resolve(line.slice("worktree ".length)) === worktreePath);
+	if (registered) throw new IsolatedWorkspaceCollisionError(worktreePath, "git-worktree-registered");
+}
+
 export async function createIsolatedWorkspace(options: {
 	repositoryPath: string;
 	runId: string;
@@ -93,6 +121,7 @@ export async function createIsolatedWorkspace(options: {
 		throw new Error("Isolated workspace path must be absolute.");
 	}
 
+	await assertWorkspaceIsUnoccupied(repositoryPath, worktreePath);
 	await mkdir(resolve(options.worktreeRoot), { recursive: true });
 	const addResult = await runGit(repositoryPath, ["worktree", "add", "--detach", worktreePath, baseCommit]);
 	if (!addResult.ok) {

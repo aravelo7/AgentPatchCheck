@@ -23,6 +23,15 @@ export interface HarnessNativeRuntimeRecordIdentity {
 	createdAtMs: number;
 }
 
+/**
+ * Repository state supplied by the Runtime caller. The record layer must not
+ * infer whether the worktree is local or container-backed.
+ */
+export interface HarnessNativeRuntimeRecordWorktree {
+	fingerprint(): Promise<string>;
+	assertRepositoryState(): Promise<void>;
+}
+
 interface RuntimeRecordEventLine {
 	kind: "event";
 	event: HarnessNativeRuntimeEvent;
@@ -145,17 +154,18 @@ export class HarnessNativeRuntimeRecord implements HarnessNativeRuntimeEventSink
 	static async open(input: {
 		path: string;
 		identity: Omit<HarnessNativeRuntimeRecordIdentity, "createdAtMs" | "initialWorktreeSha256">;
+		worktree: HarnessNativeRuntimeRecordWorktree;
 	}): Promise<HarnessNativeRuntimeRecord> {
 		const path = resolve(input.path);
 		if (existsSync(path)) {
 			const loaded = await loadHarnessNativeRuntimeRecord(path);
 			if (!sameIdentity(loaded.header, input.identity))
 				throw new Error("Runtime record identity does not match the requested task or worktree.");
-			await assertHarnessNativeWorktreeResumeSafe(loaded.header, loaded.events);
+			await assertHarnessNativeWorktreeResumeSafe(loaded.header, loaded.events, input.worktree);
 			return new HarnessNativeRuntimeRecord(path, loaded.header, loaded.events);
 		}
 		await mkdir(dirname(path), { recursive: true });
-		const initialWorktreeSha256 = await fingerprintHarnessNativeWorktree(input.identity.worktreePath);
+		const initialWorktreeSha256 = await input.worktree.fingerprint();
 		const header: HarnessNativeRuntimeRecordIdentity = {
 			...input.identity,
 			initialWorktreeSha256,
@@ -269,21 +279,9 @@ export function diffHarnessNativeWorktreeMutationSurfaces(
 export async function assertHarnessNativeWorktreeResumeSafe(
 	header: HarnessNativeRuntimeRecordIdentity,
 	events: readonly HarnessNativeRuntimeEvent[],
+	worktree: HarnessNativeRuntimeRecordWorktree,
 ): Promise<void> {
-	const root = await realpath(resolve(header.worktreePath));
-	if (resolve(root) !== resolve(header.worktreePath))
-		throw new Error("Runtime worktree path now resolves through an unexpected alias.");
-	const metadata = await lstat(root);
-	if (!metadata.isDirectory() || metadata.isSymbolicLink())
-		throw new Error("Runtime worktree is not a regular directory.");
-	const [topLevel, head] = await Promise.all([
-		runGit(root, ["rev-parse", "--show-toplevel"]),
-		runGit(root, ["rev-parse", "HEAD"]),
-	]);
-	if (!topLevel.ok || resolve(topLevel.stdout.trim()) !== resolve(root))
-		throw new Error("Runtime worktree no longer resolves to its recorded Git worktree.");
-	if (!head.ok || head.stdout.trim() !== header.baseCommit)
-		throw new Error("Runtime worktree HEAD no longer matches the recorded base commit.");
+	await worktree.assertRepositoryState();
 
 	const dispatched = new Set(
 		events.filter((event) => event.type === "tool-dispatched").map((event) => event.actionId),
@@ -310,7 +308,7 @@ export async function assertHarnessNativeWorktreeResumeSafe(
 		attributedMutations.length === 0
 			? header.initialWorktreeSha256
 			: checkpoints.get(attributedMutations.at(-1)?.actionId ?? "");
-	if (expected === undefined || (await fingerprintHarnessNativeWorktree(root)) !== expected)
+	if (expected === undefined || (await worktree.fingerprint()) !== expected)
 		throw new Error("Runtime worktree contents do not match the latest durable checkpoint.");
 }
 

@@ -34,6 +34,23 @@ export { listEvidenceBundles } from "./evidence-list";
 export { manageEvidenceRetention } from "./evidence-retention";
 export { showEvidenceBundle } from "./evidence-show";
 export { executeAgentPatchCheck } from "./execute";
+export type {
+	GeneralizationBenchmarkManifest,
+	GeneralizationBenchmarkSplit,
+	GeneralizationBenchmarkTask,
+} from "./generalization-benchmark-spec";
+export { loadGeneralizationBenchmarkManifest } from "./generalization-benchmark-spec";
+export type {
+	GeneralizationAggregateReport,
+	GeneralizationFailureStage,
+	GeneralizationRunSummary,
+} from "./generalization-report";
+export {
+	aggregateGeneralizationReports,
+	formatGeneralizationReportSummary,
+	getGeneralizationReportPath,
+	writeGeneralizationAggregateReport,
+} from "./generalization-report";
 export { readEvidenceBundle, verifyGitPatchBundle, verifyGitPatchEvidence } from "./git-patch-verifier";
 export {
 	HIDDEN_ORACLE_WORKTREE_ENV,

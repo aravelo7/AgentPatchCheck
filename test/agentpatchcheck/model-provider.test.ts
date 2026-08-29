@@ -61,6 +61,18 @@ function geminiConfiguration(): ModelProviderConfiguration {
 	};
 }
 
+function deepSeekConfiguration(): ModelProviderConfiguration {
+	return {
+		provider: "deepseek",
+		protocol: "chat-completions",
+		thinkingMode: "enabled",
+		baseUrl: "https://api.deepseek.com/v1",
+		endpointSha256: "c".repeat(64),
+		credentialRef: "deepseek-primary",
+		implementation: "deepseek-official-chat-v1",
+	};
+}
+
 function geminiHandler(
 	responses: ApiStreamChunk[][],
 	requests: Message[][],
@@ -84,7 +96,53 @@ function connectionResetError(): Error & { code: string } {
 	return Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
 }
 
+function connectTimeoutError(): Error & { code: string } {
+	return Object.assign(new Error("connect timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" });
+}
+
 describe("Model Provider Registry", () => {
+	it("rejects an invalid explicit DeepSeek proxy URL before a request starts", () => {
+		const previous = process.env.AGENTPATCHCHECK_DEEPSEEK_PROXY_URL;
+		process.env.AGENTPATCHCHECK_DEEPSEEK_PROXY_URL = "socks5://127.0.0.1:1080";
+		try {
+			expect(() => createModelProvider(deepSeekConfiguration())).toThrow(
+				"AGENTPATCHCHECK_DEEPSEEK_PROXY_URL must be an absolute HTTP(S) proxy URL.",
+			);
+		} finally {
+			if (previous === undefined) delete process.env.AGENTPATCHCHECK_DEEPSEEK_PROXY_URL;
+			else process.env.AGENTPATCHCHECK_DEEPSEEK_PROXY_URL = previous;
+		}
+	});
+
+	it("preserves an injected DeepSeek fetcher when an explicit proxy is configured", async () => {
+		const previous = process.env.AGENTPATCHCHECK_DEEPSEEK_PROXY_URL;
+		process.env.AGENTPATCHCHECK_DEEPSEEK_PROXY_URL = "http://127.0.0.1:9674";
+		let requests = 0;
+		try {
+			const provider = createModelProvider(deepSeekConfiguration(), {
+				fetcher: async () => {
+					requests += 1;
+					return new Response(
+						JSON.stringify({
+							choices: [
+								{
+									finish_reason: "tool_calls",
+									message: { tool_calls: [{ id: "finish-1", type: "function", function: { name: "finish", arguments: "{}" } }] },
+								},
+							],
+						}),
+					);
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "deepseek-primary", secret: "fake-secret" }),
+			});
+			await expect(provider.decide(context)).resolves.toMatchObject({ decision: { kind: "finish" } });
+			expect(requests).toBe(1);
+		} finally {
+			if (previous === undefined) delete process.env.AGENTPATCHCHECK_DEEPSEEK_PROXY_URL;
+			else process.env.AGENTPATCHCHECK_DEEPSEEK_PROXY_URL = previous;
+		}
+	});
+
 	it("uses a provider-neutral structured planning call for both OpenAI-compatible protocols", async () => {
 		for (const protocol of ["responses", "chat-completions"] as const) {
 			let requestBody: Record<string, unknown> = {};
@@ -822,6 +880,12 @@ describe("Model Provider Registry", () => {
 			"Reproduction or test changes are diagnostic unless the task explicitly requires them",
 		);
 		expect(responsesRequest).toContain("A passing existing test command establishes only the behavior it covers");
+		expect(responsesRequest).toContain("Before calling finish, treat completion as unproven");
+		expect(responsesRequest).toContain(
+			"the absence of a declared public verification command does not prove completion",
+		);
+		expect(responsesRequest).toContain("If evidence is missing, weak, indirect");
+		expect(responsesRequest).toContain("no required work remains");
 		expect(responsesRequest).toContain("those decisions remain with the model");
 		expect(responsesRequest).toContain("Next-action decision protocol");
 		expect(responsesRequest).toContain("transition to a task-relevant implementation action");
@@ -1148,7 +1212,103 @@ describe("Model Provider Registry", () => {
 		expect(requests).toBe(2);
 	});
 
-	it("does not retry ECONNRESET after a Chat session has begun", async () => {
+	it("retries two UND_ERR_CONNECT_TIMEOUT failures within the same logical model decision", async () => {
+		let requests = 0;
+		const provider = createModelProvider(
+			configuration("chat-completions"),
+			{
+				fetcher: async () => {
+					requests += 1;
+					if (requests <= 2) throw connectTimeoutError();
+					return new Response(
+						JSON.stringify({
+							choices: [{ message: { tool_calls: [{ function: { name: "finish", arguments: "{}" } }] } }],
+						}),
+					);
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+			{ maxTransportRetries: 2 },
+		);
+
+		const decision = await provider.createSession().decide({ ...context, iteration: 1 });
+		expect(decision).toMatchObject({ decision: { kind: "finish" }, transportRetries: 2 });
+		expect(requests).toBe(3);
+	});
+
+	it("preserves the final transient transport code after the retry limit", async () => {
+		let requests = 0;
+		const provider = createModelProvider(
+			configuration("chat-completions"),
+			{
+				fetcher: async () => {
+					requests += 1;
+					throw connectTimeoutError();
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+			{ maxTransportRetries: 2 },
+		);
+
+		await expect(provider.createSession().decide(context)).rejects.toMatchObject({
+			failure: { kind: "timeout", code: "UND_ERR_CONNECT_TIMEOUT" },
+		});
+		expect(requests).toBe(3);
+	});
+
+	it("retries explicitly transient HTTP 5xx responses", async () => {
+		let requests = 0;
+		const provider = createModelProvider(
+			configuration("chat-completions"),
+			{
+				fetcher: async () => {
+					requests += 1;
+					if (requests <= 2)
+						return new Response(JSON.stringify({ error: { code: "temporarily_unavailable" } }), { status: 503 });
+					return new Response(
+						JSON.stringify({
+							choices: [{ message: { tool_calls: [{ function: { name: "finish", arguments: "{}" } }] } }],
+						}),
+					);
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+			{ maxTransportRetries: 2 },
+		);
+
+		await expect(provider.createSession().decide(context)).resolves.toMatchObject({
+			decision: { kind: "finish" },
+			transportRetries: 2,
+		});
+		expect(requests).toBe(3);
+	});
+
+	it("does not retry permanent HTTP provider failures", async () => {
+		for (const [status, kind, code] of [
+			[400, "provider-error", "invalid_request"],
+			[401, "authentication-failure", "invalid_api_key"],
+		] as const) {
+			let requests = 0;
+			const provider = createModelProvider(
+				configuration("chat-completions"),
+				{
+					fetcher: async () => {
+						requests += 1;
+						return new Response(JSON.stringify({ error: { code } }), { status });
+					},
+					resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+				},
+				{ maxTransportRetries: 1 },
+			);
+
+			await expect(provider.createSession().decide(context)).rejects.toMatchObject({
+				failure: { kind, code, httpStatus: status },
+			});
+			expect(requests).toBe(1);
+		}
+	});
+
+	it("retries ECONNRESET without consuming a new decision after a Chat session has begun", async () => {
 		let requests = 0;
 		const provider = createModelProvider(
 			configuration("chat-completions"),
@@ -1175,10 +1335,11 @@ describe("Model Provider Registry", () => {
 		const session = provider.createSession();
 		await session.decide(context);
 
-		await expect(session.decide({ ...context, observations: ["Git status clean."] })).rejects.toMatchObject({
-			failure: { kind: "provider-unavailable", code: "ECONNRESET" },
+		await expect(session.decide({ ...context, observations: ["Git status clean."] })).resolves.toMatchObject({
+			decision: { kind: "tool" },
+			transportRetries: 1,
 		});
-		expect(requests).toBe(2);
+		expect(requests).toBe(3);
 	});
 
 	it("does not retry malformed model output", async () => {

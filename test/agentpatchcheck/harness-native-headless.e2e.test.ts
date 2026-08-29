@@ -422,13 +422,14 @@ describe("Harness-native Headless Core E2E", () => {
 							command: process.execPath,
 							args: [
 								"-e",
-								"const fs=require('node:fs');process.exit(fs.readFileSync('README.md','utf8').startsWith('after')?0:1)",
+								"const fs=require('node:fs');if(fs.readFileSync('README.md','utf8').startsWith('after'))process.exit(0);process.stdout.write('public verification failure');process.stderr.write('repair README');process.exit(1)",
 							],
 						},
 					],
 				},
 			});
 			let sessionsCreated = 0;
+			let verificationFailureObservation: string | null = null;
 			const repairContinuationProvider: HarnessNativeModelProvider = {
 				id: "openai-responses",
 				decide: async () => ({ decision: { kind: "fail" } }),
@@ -437,7 +438,7 @@ describe("Harness-native Headless Core E2E", () => {
 					const session = sessionsCreated;
 					let turn = 0;
 					return {
-						decide: async () => {
+						decide: async ({ observations }) => {
 							turn += 1;
 							if (session === 1) {
 								if (turn === 1)
@@ -456,7 +457,10 @@ describe("Harness-native Headless Core E2E", () => {
 											arguments: { index: 0 },
 										},
 									};
-								if (turn === 3) return { decision: { kind: "tool", tool: "git-status", arguments: {} } };
+								if (turn === 3) {
+									verificationFailureObservation = observations.at(-1) ?? null;
+									return { decision: { kind: "tool", tool: "git-status", arguments: {} } };
+								}
 								if (turn === 4)
 									return { decision: { kind: "tool", tool: "read-file", arguments: { path: "README.md" } } };
 								return { decision: { kind: "tool", tool: "git-diff", arguments: {} } };
@@ -508,6 +512,8 @@ describe("Harness-native Headless Core E2E", () => {
 				{ disposition: "continue", reason: "verification-due" },
 				{ disposition: "accept", reason: "complete" },
 			]);
+			expect(verificationFailureObservation).toContain("public verification failure");
+			expect(verificationFailureObservation).toContain("repair README");
 			expect((await readFile(join(result.workspace.path, "README.md"), "utf8")).replaceAll("\r\n", "\n")).toBe(
 				"after\n",
 			);

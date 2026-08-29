@@ -44,6 +44,14 @@ When reading issues:
 When closing issues via commit:
 - Include fixes #<number> or closes #<number> in the commit message. This automatically closes the issue when the commit is merged.
 
+External Network Permission
+- Any Codex task that needs access to external project network resources, including the DeepSeek API, GitHub, npm or other package registries, external evaluators, benchmark downloads or remote data sources, or other external HTTP/HTTPS/TCP services, must request the command's `network.enabled` or additional network permission before executing the networked command.
+- Do not execute a networked operation first in `CODEX_SANDBOX_NETWORK_DISABLED=1` or another network-restricted sandbox and wait for `EACCES` or a similar failure before handling permission.
+- After the user approves network access, continue the original task in the approved execution context; do not redesign the execution path.
+- If the current Codex client cannot issue the required network permission request, state the specific restricted operation, do not repeatedly retry a request that will necessarily fail, and do not bypass the restriction by modifying APC providers, endpoints, Windows Firewall, WFP, Node, or other project code.
+- For benchmark and experiment tasks, reuse an already successful execution path where possible. Unless explicitly required by the experiment, do not change the model, provider, budget, launcher, or evaluator merely because of a network permission issue.
+- Never output or ask the user to paste API keys, tokens, cookies, passwords, or other sensitive credentials.
+
 web-ui Stack
 - Kanban web-ui uses Tailwind CSS v4 for styling, Radix UI for accessible headless primitives, and Lucide React for icons.
 - Custom UI primitives live in `src/components/ui/` (button, dialog, tooltip, kbd, spinner, cn utility).
@@ -87,6 +95,7 @@ Dark theme
 - Do NOT use Blueprint, Tailwind's light-mode defaults, or any `dark:` prefix. The theme is always dark.
 
 Misc. tribal knowledge
+- Planner progression invariant: a verification observation does not automatically take ownership of the plan. If an implementation step remains active and can continue after failed verification, keep its objective stable and expose the failure as canonical execution evidence to the Executor. Replan only for a supported lifecycle transition, a blocker that prevents the current step, or a genuine scope/order change; never fold the latest local tool or command failure into the plan objective merely because it is recent.
 - Kanban's native Cline agent is powered by the installed `@clinebot/core` and `@clinebot/llms` packages plus the local `src/cline-sdk/` boundary layer, so when Cline behavior is unclear, inspect those packages and `src/cline-sdk/` for the real implementation details.
 - Kanban is launched from the user's shell and inherits its environment. For agent detection and task-agent startup, prefer direct PATH checks and direct process launches over spawning an interactive shell. Avoid `zsh -i`, shell fallback command discovery, or "launch shell then type command into it" on hot paths. On setups with heavy shell init like `conda` or `nvm`, doing that per task can freeze the runtime and even make new Terminal.app windows feel hung when several tasks start at once. It's fine to use an actual interactive shell for explicit shell terminals, not for normal agent session work.
 - If CI hangs on Node 22 after tests seem to finish, suspect a live subprocess or SDK-host startup path before assuming a slow test body. Read `.plan/docs/node22-ci-hanging-tests-investigation.md` before repeating that investigation. `test/runtime/cline-sdk/cline-task-session-service.test.ts` was the big prior culprit because a unit-style suite was still booting the real Cline SDK host.

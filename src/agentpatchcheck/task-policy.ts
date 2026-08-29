@@ -45,7 +45,7 @@ const AGENT_ADAPTERS = new Set<AgentAdapterId>(["codex", "script", "harness-nati
 const HIDDEN_ORACLE_ISOLATION_LEVELS = new Set<HiddenOracleIsolationLevel>(["none", "network", "process", "strict"]);
 const DEFAULT_HIDDEN_ORACLE_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024;
 const DEFAULT_HIDDEN_ORACLE_CPU_RATE_PERCENT = 50;
-const DEFAULT_NATIVE_MAX_ITERATIONS = 12;
+const DEFAULT_NATIVE_MAX_ITERATIONS = 24;
 const DEFAULT_NATIVE_MAX_TOOL_CALLS = 24;
 const DEFAULT_NATIVE_MAX_OBSERVATION_BYTES = 16 * 1024;
 const DEFAULT_NATIVE_MAX_ATTEMPTS = 2;
@@ -236,7 +236,7 @@ function normalizeNativeAgent(
 	const maxToolCalls = input?.maxToolCalls ?? DEFAULT_NATIVE_MAX_TOOL_CALLS;
 	const maxRejectedToolCalls = input?.maxRejectedToolCalls ?? 4;
 	const maxObservationBytes = input?.maxObservationBytes ?? DEFAULT_NATIVE_MAX_OBSERVATION_BYTES;
-	const maxTransportRetries = input?.maxTransportRetries ?? 0;
+	const maxTransportRetries = input?.maxTransportRetries ?? 2;
 	const maxProtocolRecoveries = input?.maxProtocolRecoveries ?? DEFAULT_MAX_PROTOCOL_RECOVERIES;
 	const maxCompletionDeferrals = input?.maxCompletionDeferrals ?? DEFAULT_MAX_COMPLETION_DEFERRALS;
 	const maxPlanRevisions = input?.maxPlanRevisions ?? DEFAULT_MAX_PLAN_REVISIONS;
@@ -256,8 +256,8 @@ function normalizeNativeAgent(
 		throw new Error("Harness-native maxRejectedToolCalls must be an integer between 1 and 16.");
 	if (!Number.isSafeInteger(maxObservationBytes) || maxObservationBytes < 1_024 || maxObservationBytes > 64 * 1024)
 		throw new Error("Harness-native maxObservationBytes must be an integer between 1024 and 65536.");
-	if (!Number.isSafeInteger(maxTransportRetries) || maxTransportRetries < 0 || maxTransportRetries > 1)
-		throw new Error("Harness-native maxTransportRetries must be an integer between 0 and 1.");
+	if (!Number.isSafeInteger(maxTransportRetries) || maxTransportRetries < 0 || maxTransportRetries > 2)
+		throw new Error("Harness-native maxTransportRetries must be an integer between 0 and 2.");
 	if (
 		!Number.isSafeInteger(maxProtocolRecoveries) ||
 		maxProtocolRecoveries < 0 ||

@@ -3,7 +3,11 @@ import { spawn } from "node:child_process";
 import { appendBoundedOutput } from "./bounded-output";
 import { createClineRuntimeAdapter } from "./cline-runtime-adapter";
 import { runCodex, terminateCodexProcess } from "./codex-runner";
-import { createHarnessNativeRuntime, type HarnessNativeModelProvider } from "./harness-native-runtime";
+import {
+	createHarnessNativeRuntime,
+	type HarnessNativeModelProvider,
+	type HarnessNativeRepositoryPrimitives,
+} from "./harness-native-runtime";
 import type { AgentAdapterId, AgentExecution, RepairContext, TaskPolicy } from "./types";
 
 const OUTPUT_LIMIT_BYTES = 1_024 * 1_024;
@@ -12,6 +16,7 @@ export const SCRIPT_ADAPTER_WORKTREE_ENV = "AGENTPATCHCHECK_AGENT_WORKTREE";
 export interface AgentAdapterContext {
 	policy: TaskPolicy;
 	worktreePath: string;
+	repository?: HarnessNativeRepositoryPrimitives;
 	repairContext: RepairContext;
 }
 

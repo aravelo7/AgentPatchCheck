@@ -6,12 +6,18 @@ const MAX_PATCH_BYTES = 128 * 1024;
 const MAX_GIT_OUTPUT_BYTES = 256 * 1024;
 const MAX_ERROR_DETAIL_BYTES = 8 * 1024;
 
-interface GitApplyResult {
+export interface ManagedMutationPatchGitResult {
 	exitCode: number;
 	stdout: Buffer;
 	stderr: Buffer;
 	outputTruncated: boolean;
 }
+
+/** Repository-location-specific Git apply primitive. Validation remains shared below. */
+export type ManagedMutationPatchGitRunner = (
+	argumentsValue: string[],
+	patch: string,
+) => Promise<ManagedMutationPatchGitResult>;
 
 export class MutationPatchError extends Error {}
 
@@ -35,7 +41,11 @@ function appendBounded(chunks: Buffer[], chunk: Buffer, state: { bytes: number; 
 	state.bytes += chunk.length;
 }
 
-async function runGitApply(root: string, argumentsValue: string[], patch: string): Promise<GitApplyResult> {
+export async function runHostManagedMutationPatchGit(
+	root: string,
+	argumentsValue: string[],
+	patch: string,
+): Promise<ManagedMutationPatchGitResult> {
 	return await new Promise((resolvePromise, rejectPromise) => {
 		const child = spawn("git", ["-c", "core.quotepath=false", "apply", ...argumentsValue, "--"], {
 			cwd: root,
@@ -71,7 +81,7 @@ async function runGitApply(root: string, argumentsValue: string[], patch: string
 	});
 }
 
-function errorDetail(result: GitApplyResult): string {
+function errorDetail(result: ManagedMutationPatchGitResult): string {
 	const detail = result.stderr.toString("utf8").trim() || result.stdout.toString("utf8").trim();
 	if (!detail) return `Git exited with code ${result.exitCode}.`;
 	const encoded = Buffer.from(detail, "utf8");
@@ -121,6 +131,7 @@ export async function applyManagedMutationPatch(input: {
 	root: string;
 	patch: unknown;
 	validateTarget: (relativePath: string) => Promise<void>;
+	runGitApply?: ManagedMutationPatchGitRunner;
 }): Promise<ManagedMutationPatchResult> {
 	if (typeof input.patch !== "string" || !input.patch.trim() || input.patch.includes("\0"))
 		throw new MutationPatchError("Patch is malformed: expected a non-empty unified diff.");
@@ -130,7 +141,8 @@ export async function applyManagedMutationPatch(input: {
 
 	// This invocation never writes. Let Git enumerate even traversal-shaped paths
 	// so the Harness validator, rather than Git's implicit policy, makes the final decision.
-	const metadata = await runGitApply(input.root, ["--numstat", "-z", "--binary", "--unsafe-paths"], input.patch);
+	const runGitApply = input.runGitApply ?? ((args, patch) => runHostManagedMutationPatchGit(input.root, args, patch));
+	const metadata = await runGitApply(["--numstat", "-z", "--binary", "--unsafe-paths"], input.patch);
 	if (metadata.outputTruncated)
 		throw new MutationPatchError("Patch is malformed: Git change metadata exceeded the safety limit.");
 	if (metadata.exitCode !== 0) throw new MutationPatchError(`Patch is malformed: ${errorDetail(metadata)}`);
@@ -144,10 +156,10 @@ export async function applyManagedMutationPatch(input: {
 		}
 	}
 
-	const preflight = await runGitApply(input.root, ["--check", "--binary"], input.patch);
+	const preflight = await runGitApply(["--check", "--binary"], input.patch);
 	if (preflight.exitCode !== 0)
 		throw new MutationPatchError(`Patch does not apply cleanly: ${errorDetail(preflight)}`);
-	const applied = await runGitApply(input.root, ["--binary"], input.patch);
+	const applied = await runGitApply(["--binary"], input.patch);
 	if (applied.exitCode !== 0)
 		throw new MutationPatchError(`Patch application failed after preflight: ${errorDetail(applied)}`);
 	return { affectedPaths };

@@ -37,10 +37,10 @@
     }
   },
   "files": [
-    "dist",
-    "man",
-    "README.md",
-    "THIRD_PARTY_NOTICES.md",
+		"dist",
+		"man",
+		"README.md",
+		"THIRD_PARTY_NOTICES.md",
     "LICENSE"
   ],
   "engines": {
