@@ -1,19 +1,21 @@
-import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyManagedMutationPatch, type ManagedMutationPatchGitResult } from "./mutation-patch";
-import { readBoundedTextWindow } from "./read-file";
 import type {
 	HarnessNativeRepositoryDirectoryEntry,
 	HarnessNativeRepositoryMetadata,
 	HarnessNativeRepositoryPrimitives,
 } from "./harness-native-runtime";
+import { terminateCodexProcess } from "./codex-runner";
+import { applyManagedMutationPatch, type ManagedMutationPatchGitResult } from "./mutation-patch";
+import { readBoundedTextWindow } from "./read-file";
 import type { VerificationCommand } from "./types";
 
 const TESTBED = "/testbed";
+const DOCKER_COMMAND_CLEANUP_GRACE_MS = 5_000;
 
 export interface SafeSWEbenchVerificationImageDescriptor {
 	instanceId: string;
@@ -52,19 +54,46 @@ export function createDockerCommandExecutor(): DockerCommandExecutor {
 				let stdout = "";
 				let stderr = "";
 				let timedOut = false;
+				let settled = false;
+				let cleanupDeadline: NodeJS.Timeout | undefined;
+				const finish = (result: DockerCommandResult): void => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timeout);
+					if (cleanupDeadline !== undefined) clearTimeout(cleanupDeadline);
+					resolvePromise(result);
+				};
 				const timeout = setTimeout(() => {
 					timedOut = true;
-					child.kill();
+					terminateCodexProcess(child);
+					cleanupDeadline = setTimeout(() => {
+						terminateCodexProcess(child);
+						finish({
+							exitCode: null,
+							stdout,
+							stderr,
+							durationMs: Date.now() - startedAt,
+							timedOut,
+						});
+					}, DOCKER_COMMAND_CLEANUP_GRACE_MS);
 				}, timeoutMs);
-				child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-				child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+				child.stdout.on("data", (chunk: Buffer) => {
+					stdout += chunk.toString("utf8");
+				});
+				child.stderr.on("data", (chunk: Buffer) => {
+					stderr += chunk.toString("utf8");
+				});
 				child.once("error", (error) => {
-					clearTimeout(timeout);
-					resolvePromise({ exitCode: null, stdout, stderr: `${stderr}${error.message}`, durationMs: Date.now() - startedAt, timedOut });
+					finish({
+						exitCode: null,
+						stdout,
+						stderr: `${stderr}${error.message}`,
+						durationMs: Date.now() - startedAt,
+						timedOut,
+					});
 				});
 				child.once("close", (exitCode) => {
-					clearTimeout(timeout);
-					resolvePromise({ exitCode, stdout, stderr, durationMs: Date.now() - startedAt, timedOut });
+					finish({ exitCode, stdout, stderr, durationMs: Date.now() - startedAt, timedOut });
 				});
 				child.stdin.end(stdin, "utf8");
 			}),

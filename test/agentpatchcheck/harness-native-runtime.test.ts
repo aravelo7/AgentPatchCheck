@@ -1396,6 +1396,59 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
+	it("persists a timed-out DSH result through the native tool path", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-dsh-timeout-"));
+		try {
+			const baseRepository = createHostRepositoryPrimitives();
+			const repository: HarnessNativeRepositoryPrimitives = {
+				...baseRepository,
+				runCommand: async ({ command }) => ({
+					command: command.command,
+					args: command.args,
+					exitCode: null,
+					signal: null,
+					stdout: "partial output",
+					stderr: "",
+					durationMs: 10,
+					timedOut: true,
+				}),
+			};
+			const provider: HarnessNativeModelProvider = {
+				id: "test-provider",
+				decide: async ({ observations }) =>
+					observations.length === 0
+						? {
+								decision: {
+									kind: "tool",
+									tool: "dsh-shell",
+									arguments: { command: "hang", description: "Exercise timeout settlement", dialect: "pwsh", timeoutMs: 10 },
+								},
+							}
+						: { decision: { kind: "finish" } },
+			};
+
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1 }),
+				prompt: "Exercise timeout settlement.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider,
+				repository,
+				timeoutMs: 1_000,
+			});
+
+			expect(result).toMatchObject({ status: "succeeded", toolCalls: 1 });
+			expect(result.trajectory[0]).toMatchObject({
+				tool: "dsh-shell",
+				toolStatus: "ok",
+				observationSummary: "Executed one bounded pwsh command in the managed worktree ([timed out]).",
+				facts: { kind: "other" },
+			});
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
 	it("applies one structured exact-text edit without unified diff syntax", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {
