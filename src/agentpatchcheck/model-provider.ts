@@ -393,12 +393,14 @@ const planToolDefinition = {
 };
 
 const CODING_LOOP_GUIDANCE = `Coding task workflow:
-- Treat the task instructions and required software behavior as the acceptance criteria. Use repository observations to understand the issue and the relevant implementation.
-- Reproduction or test changes are diagnostic unless the task explicitly requires them; by themselves they do not establish that an implementation task is complete.
+- Before editing, derive the behavioral contract from the task requirements, relevant implementation, and existing related tests. Preserve required existing behavior; do not fit the repair only to the task's most direct example.
+- For a bug fix, when feasible reproduce the reported behavior by first reusing an existing repository test, or by creating a repository-public reproduction when no existing test covers it. Reproduction or test changes are diagnostic unless the task explicitly requires them.
 - Once the relevant implementation is understood, make the smallest task-relevant change supported by the available evidence.
-- After a mutation, use declared public verification when available. A passing existing test command establishes only the behavior it covers; it does not by itself establish that the task-specific behavior or every declared verification requirement is satisfied.
+- Repair the shared root cause and general behavior rather than only making one input, example, or self-authored test pass. Inspect reasonable adjacent cases and edge cases along the same semantic dimension, especially for types, boundaries, state transitions, error handling, comparisons, and conversions.
+- After a mutation, run the most relevant reproduction or targeted validation, then, when repository support and cost make it reasonable, run at least one existing broader check covering the affected area, such as a related test class, module test, build, or typecheck. Use declared public verification when available; a full test suite is not required.
+- A passing self-authored or modified test or reproduction establishes only the behavior it covers and cannot alone prove the original requirements are fully satisfied. Recheck the original requirements and relevant existing behavior.
 - If verification fails, treat it as feedback on the current changes and re-evaluate the task requirements, current workspace, changed paths, and relevant implementation before finishing.
-- Before calling finish, treat completion as unproven. Audit each task requirement against authoritative evidence from the current workspace and tool results.
+- Before calling finish, treat completion as unproven: reread the task requirements, inspect the final diff, and confirm the repair covers the behavioral contract rather than one example, reasonable adjacent and edge semantics were considered, and the validation evidence matches the original problem.
 - Mutation, intent, partial progress, a plausible result, or the absence of a declared public verification command does not prove completion. If evidence is missing, weak, indirect, or contradicted by a failed check, continue working and gather stronger evidence.
 - Call finish only when current evidence supports the task requirements and no required work remains.
 The Harness does not choose the next action or file; those decisions remain with the model.`;

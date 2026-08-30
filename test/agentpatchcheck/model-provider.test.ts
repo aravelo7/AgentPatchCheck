@@ -875,12 +875,23 @@ describe("Model Provider Registry", () => {
 		expect(JSON.parse(responsesRequest).input).toContain('"executionCheckpoint":"verification-due"');
 		expect(responsesRequest).toContain("current execution objective");
 		expect(responsesRequest).toContain("Coding task workflow");
-		expect(responsesRequest).toContain("required software behavior as the acceptance criteria");
+		expect(responsesRequest).toContain("derive the behavioral contract from the task requirements");
+		expect(responsesRequest).toContain("relevant implementation, and existing related tests");
+		expect(responsesRequest).toContain("do not fit the repair only to the task's most direct example");
 		expect(responsesRequest).toContain(
-			"Reproduction or test changes are diagnostic unless the task explicitly requires them",
+			"when feasible reproduce the reported behavior by first reusing an existing repository test",
 		);
-		expect(responsesRequest).toContain("A passing existing test command establishes only the behavior it covers");
-		expect(responsesRequest).toContain("Before calling finish, treat completion as unproven");
+		expect(responsesRequest).toContain("Repair the shared root cause and general behavior");
+		expect(responsesRequest).toContain("reasonable adjacent cases and edge cases along the same semantic dimension");
+		expect(responsesRequest).toContain("run the most relevant reproduction or targeted validation");
+		expect(responsesRequest).toContain("run at least one existing broader check covering the affected area");
+		expect(responsesRequest).toContain("a full test suite is not required");
+		expect(responsesRequest).toContain(
+			"A passing self-authored or modified test or reproduction establishes only the behavior it covers",
+		);
+		expect(responsesRequest).toContain("cannot alone prove the original requirements are fully satisfied");
+		expect(responsesRequest).toContain("reread the task requirements, inspect the final diff");
+		expect(responsesRequest).toContain("the validation evidence matches the original problem");
 		expect(responsesRequest).toContain(
 			"the absence of a declared public verification command does not prove completion",
 		);
@@ -890,6 +901,18 @@ describe("Model Provider Registry", () => {
 		expect(responsesRequest).toContain("Next-action decision protocol");
 		expect(responsesRequest).toContain("transition to a task-relevant implementation action");
 		expect(responsesRequest).toContain("does not authorize the Harness to choose an action or file");
+		for (const forbidden of [
+			"Gson",
+			"JsonPrimitive",
+			"BigInteger",
+			"Long",
+			"google__gson-2311",
+			"FAIL_TO_PASS",
+			"PASS_TO_PASS",
+			"hidden tests",
+			"grader failure",
+		])
+			expect(responsesRequest).not.toContain(forbidden);
 		await responses.decide({
 			...context,
 			attemptContinuation: {
