@@ -21,6 +21,7 @@ import {
 	type SWEbenchGradingResult,
 } from "../../src/agentpatchcheck/swebench-cli";
 import type { AgentExecution, IsolatedWorkspace, VerificationPolicy } from "../../src/agentpatchcheck/types";
+import { runGit } from "../../src/workspace/git-utils";
 
 const instance = {
 	instance_id: "gin-gonic__gin-2755",
@@ -140,10 +141,6 @@ function baselineGitStdout(options: { currentCommit?: string; trackedChanges?: s
 	const currentCommit = options.currentCommit ?? expectedCommit;
 	const trackedChanges = options.trackedChanges ?? "";
 	return async (args: string[]): Promise<string> => {
-		if (args[0] === "rev-parse" && args[1] === "--verify") {
-			expect(args[2]).toBe(`${SWE_BENCH_STANDARD_BASELINE_TAG}^{commit}`);
-			return expectedCommit;
-		}
 		if (args[0] === "rev-parse" && args[1] === "HEAD") return currentCommit;
 		if (args[0] === "status") return trackedChanges;
 		throw new Error(`Unexpected Git command: ${args.join(" ")}`);
@@ -235,6 +232,86 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			...historicalManifest,
 			execution: historicalExecution,
 		});
+		expect((await runGit(projectRoot, ["rev-parse", `${SWE_BENCH_STANDARD_BASELINE_TAG}^{commit}`])).stdout.trim()).toBe(
+			"310609c2a610466f2c4ae869391fa1612bd0d68e",
+		);
+	});
+
+	it("admits a clean canonical formal startup at a non-baseline HEAD and reaches the AgentRuntime boundary", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-canonical-pre-agent-"));
+		const projectRoot = resolve(process.cwd());
+		const manifestDirectory = join(root, ".agentpatchcheck", "swebench", "datasets");
+		const evaluatorRoot = join(root, "test-evaluator");
+		const evaluatorPythonPath = join(root, "test-python");
+		const formalManifestPath = join(manifestDirectory, "APC-Pilot-10-v1-formal.manifest.json");
+		const fullSubsetPath = join(manifestDirectory, "APC-Pilot-10-v1.full.jsonl");
+		const actualFormalManifestPath = join(
+			projectRoot,
+			".agentpatchcheck",
+			"swebench",
+			"datasets",
+			"APC-Pilot-10-v1-formal.manifest.json",
+		);
+		const actualFullSubsetPath = join(
+			projectRoot,
+			".agentpatchcheck",
+			"swebench",
+			"datasets",
+			"APC-Pilot-10-v1.full.jsonl",
+		);
+		await mkdir(manifestDirectory, { recursive: true });
+		await mkdir(join(evaluatorRoot, "swebench", "harness"), { recursive: true });
+		await Promise.all([
+			writeFile(formalManifestPath, await readFile(actualFormalManifestPath, "utf8")),
+			writeFile(fullSubsetPath, await readFile(actualFullSubsetPath, "utf8")),
+			writeFile(join(evaluatorRoot, "swebench", "harness", "run_evaluation.py"), "# evaluator\n"),
+			writeFile(evaluatorPythonPath, "placeholder\n"),
+			writeFile(join(root, "README.md"), "canonical formal pre-agent fixture\n"),
+		]);
+		expect((await runGit(root, ["init"])).ok).toBe(true);
+		expect((await runGit(root, ["config", "user.email", "test@example.com"])).ok).toBe(true);
+		expect((await runGit(root, ["config", "user.name", "Test"])).ok).toBe(true);
+		expect((await runGit(root, ["add", "."])).ok).toBe(true);
+		expect((await runGit(root, ["commit", "-m", "canonical formal fixture"])).ok).toBe(true);
+		const currentHead = (await runGit(root, ["rev-parse", "HEAD"])).stdout.trim();
+		expect((await runGit(root, ["tag", "-l", SWE_BENCH_STANDARD_BASELINE_TAG])).stdout.trim()).toBe("");
+		let reachedAgentRuntimeBoundary = false;
+		const dependencies = {
+			initializeEnvironment: (): "already-loaded" => "already-loaded",
+			findProjectRoot: () => root,
+			loadBootstrapConfiguration: async (resolvedRoot: string) =>
+				await loadSWEbenchBootstrapConfiguration(resolvedRoot, {
+					AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: evaluatorRoot,
+					AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: evaluatorPythonPath,
+				}),
+			runEvaluatorPreflight: async (input: Parameters<typeof preflightSWEbenchEvaluator>[0]) =>
+				await preflightSWEbenchEvaluator(input, async () => true, async () => input.expectedRevision),
+			loadInstance: async () => instance,
+			resolveRepositoryRoot: async () => join(root, "repository"),
+			runInstance: async () => {
+				reachedAgentRuntimeBoundary = true;
+				return adapterResult(root, null, null, execution());
+			},
+		};
+
+		await runSWEbenchCli(argumentsFor(root, predictionPathFor(root)), dependencies);
+
+		const summary = JSON.parse(
+			await readFile(join(root, ".agentpatchcheck", "swebench", "results", "APC-Pilot-10-v1", instance.instance_id, "swebench-cli-test.apc-run.json"), "utf8"),
+		);
+		expect(reachedAgentRuntimeBoundary).toBe(true);
+		expect(summary).toMatchObject({
+			apcBaselineCommit: currentHead,
+			runClassification: "formal-frozen",
+			source: { head: currentHead, baselineTag: SWE_BENCH_STANDARD_BASELINE_TAG, dirty: false },
+		});
+
+		await writeFile(join(root, "README.md"), "dirty tracked source\n");
+		reachedAgentRuntimeBoundary = false;
+		await expect(runSWEbenchCli(argumentsFor(root, predictionPathFor(root)), dependencies)).rejects.toThrow(
+			"clean tracked source worktree",
+		);
+		expect(reachedAgentRuntimeBoundary).toBe(false);
 	});
 
 	it("reports all unavailable evaluator prerequisites", async () => {
@@ -567,21 +644,24 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		}
 	});
 
-	it("rejects a HEAD that differs from the resolved baseline tag", async () => {
+	it("admits a clean formal HEAD that differs from the historical baseline tag", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
-		await expect(
-			runSWEbenchCli(argumentsFor(root, join(root, "predictions.jsonl")), {
-				initializeEnvironment: () => "already-loaded",
-				loadBootstrapConfiguration: async () =>
-					bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: false }),
-				runEvaluatorPreflight: async () => undefined,
-				findProjectRoot: () => root,
-				getGitStdout: baselineGitStdout({ currentCommit: "f".repeat(40) }),
-				loadInstance: async () => {
-					throw new Error("Agent execution must not start after baseline rejection.");
-				},
-			}),
-		).rejects.toThrow(`baseline tag ${SWE_BENCH_STANDARD_BASELINE_TAG}`);
+		let agentRuntimeStarted = false;
+		await runSWEbenchCli(argumentsFor(root, join(root, "predictions.jsonl")), {
+			initializeEnvironment: () => "already-loaded",
+			loadBootstrapConfiguration: async () =>
+				bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: false }),
+			runEvaluatorPreflight: async () => undefined,
+			findProjectRoot: () => root,
+			getGitStdout: baselineGitStdout({ currentCommit: "f".repeat(40) }),
+			loadInstance: async () => instance,
+			resolveRepositoryRoot: async () => join(root, "repository"),
+			runInstance: async () => {
+				agentRuntimeStarted = true;
+				return adapterResult(root, null, null, execution());
+			},
+		});
+		expect(agentRuntimeStarted).toBe(true);
 	});
 
 	it("rejects tracked source changes after the baseline tag resolves to HEAD", async () => {

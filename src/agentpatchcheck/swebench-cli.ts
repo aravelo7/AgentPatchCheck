@@ -464,15 +464,6 @@ async function resolveSWEbenchSourceIdentity(
 			sourceLabel: `engineering-validation-${currentCommit.slice(0, 12)}`,
 		};
 	}
-	const expectedCommit = await getStdout(
-		["rev-parse", "--verify", `${SWE_BENCH_STANDARD_BASELINE_TAG}^{commit}`],
-		projectRoot,
-	);
-	if (currentCommit !== expectedCommit) {
-		throw new Error(
-			`SWE-bench standard mode must run from baseline tag ${SWE_BENCH_STANDARD_BASELINE_TAG} (${expectedCommit}); current HEAD is ${currentCommit}.`,
-		);
-	}
 	const statusPorcelain = await getStdout(["status", "--porcelain", "--untracked-files=no"], projectRoot);
 	if (statusPorcelain) {
 		throw new Error("SWE-bench standard mode requires a clean tracked source worktree.");
