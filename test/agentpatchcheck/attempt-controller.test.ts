@@ -177,4 +177,19 @@ describe("Harness-native attempt controller", () => {
 			}),
 		).toMatchObject({ decision: "stop", reason: "insufficient-time" });
 	});
+
+	it.each([1, 2])("does not continue a timeout from attempt %i", (attempt) => {
+		const review = reviewHarnessNativeAttempt({
+			runtime: runtime("timeout", []),
+			attempt,
+			maxAttempts: 2,
+			remainingTimeMs: 60_000,
+			minContinuationTimeMs: 1,
+		});
+
+		expect(review).toMatchObject({ decision: "stop", reason: "terminal-termination" });
+		expect(() => createHarnessNativeAttemptContinuation(review)).toThrow(
+			"A stopped attempt cannot create continuation context.",
+		);
+	});
 });

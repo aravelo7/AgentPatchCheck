@@ -3418,6 +3418,59 @@ describe("Harness-native Agent Runtime", () => {
 			await rm(worktree, { recursive: true, force: true });
 		}
 	});
+
+	it("settles an in-flight mutation before timeout and never starts the next mutation", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-mutation-abort-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const controller = new AbortController();
+			const hostRepository = createHostRepositoryPrimitives();
+			let decisions = 0;
+			let mutationSettled = false;
+			const repository: HarnessNativeRepositoryPrimitives = {
+				...hostRepository,
+				writeText: async (path, content, options) => {
+					await hostRepository.writeText(path, content, options);
+					mutationSettled = true;
+					controller.abort(new Error("agent wall timeout"));
+				},
+				acknowledgeCancellation: async () => {
+					expect(mutationSettled).toBe(true);
+				},
+			};
+			const result = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 2, plannerEnabled: false }),
+				prompt: "Update README.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider: {
+					id: "mutation-abort",
+					decide: async () => {
+						decisions += 1;
+						return {
+							decision: {
+								kind: "tool",
+								tool: "apply-edit",
+								arguments: { path: "README.md", expectedText: "before", replacementText: "after" },
+							},
+						};
+					},
+				},
+				repository,
+				timeoutMs: 1_000,
+				signal: controller.signal,
+			});
+
+			expect(result).toMatchObject({ status: "failed", terminationReason: "timeout" });
+			expect(decisions).toBe(1);
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe("after\n");
+			const terminalSnapshot = await readFile(join(worktree, "README.md"), "utf8");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(await readFile(join(worktree, "README.md"), "utf8")).toBe(terminalSnapshot);
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
 });
 
 async function initializeTrackedWorktree(worktree: string, files: Record<string, string>): Promise<void> {
