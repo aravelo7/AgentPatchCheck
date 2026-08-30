@@ -1,14 +1,17 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import type { RunIdentity } from "../../src/agentpatchcheck/run-identity";
 import {
 	SWE_BENCH_STANDARD_BASELINE_TAG,
+	createSWEbenchRuntimeConfiguration,
+	resolveDevelopmentVerification,
 	type SWEbenchAdapterResult,
 } from "../../src/agentpatchcheck/swebench-adapter";
+import { getHarnessNativeAvailableTools } from "../../src/agentpatchcheck/harness-native-runtime";
 import {
 	loadSWEbenchBootstrapConfiguration,
 	runSWEbenchCli,
@@ -17,7 +20,7 @@ import {
 	type SWEbenchBootstrapConfiguration,
 	type SWEbenchGradingResult,
 } from "../../src/agentpatchcheck/swebench-cli";
-import type { AgentExecution, IsolatedWorkspace } from "../../src/agentpatchcheck/types";
+import type { AgentExecution, IsolatedWorkspace, VerificationPolicy } from "../../src/agentpatchcheck/types";
 
 const instance = {
 	instance_id: "gin-gonic__gin-2755",
@@ -96,6 +99,7 @@ function bootstrapConfiguration(root: string, overrides: Partial<SWEbenchBootstr
 		evaluatorSourceRoot: join(root, "official-evaluator"),
 		evaluatorPythonPath: join(root, "evaluator-python"),
 		deepseekModel: "deepseek-v4-flash",
+		classification: "engineering-validation",
 		engineeringValidation: true,
 		instanceIds: [instance.instance_id],
 		...overrides,
@@ -152,13 +156,13 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		const manifestDirectory = join(root, ".agentpatchcheck", "swebench", "datasets");
 		await mkdir(manifestDirectory, { recursive: true });
 		await writeFile(
-			join(manifestDirectory, "APC-Pilot-10-v1.manifest.json"),
+			join(manifestDirectory, "APC-Pilot-10-v1-formal.manifest.json"),
 			JSON.stringify({
 				name: "APC-Pilot-10",
 				version: "v1",
 				fullSubset: { path: "agent.jsonl" },
 				evaluator: { dataset: "official.jsonl", revision: evaluatorRevision, timeoutSeconds: 120 },
-				execution: { classification: "engineering-validation", deepseekModel: "deepseek-v4-flash" },
+				execution: { classification: "formal-frozen", deepseekModel: "deepseek-v4-flash" },
 				instanceIds: [instance.instance_id],
 			}),
 		);
@@ -173,7 +177,63 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			evaluatorDatasetPath: join(manifestDirectory, "official.jsonl"),
 			evaluatorRevision,
 			deepseekModel: "deepseek-v4-flash",
-			engineeringValidation: true,
+			classification: "formal-frozen",
+			engineeringValidation: false,
+		});
+	});
+
+	it("resolves the canonical formal bootstrap into the zero-LLM effective contract", async () => {
+		const projectRoot = resolve(process.cwd());
+		const manifestDirectory = join(projectRoot, ".agentpatchcheck", "swebench", "datasets");
+		const [historicalManifest, formalManifest] = await Promise.all(
+			["APC-Pilot-10-v1.manifest.json", "APC-Pilot-10-v1-formal.manifest.json"].map(async (name) =>
+				JSON.parse(await readFile(join(manifestDirectory, name), "utf8")) as Record<string, unknown>,
+			),
+		);
+		const bootstrap = await loadSWEbenchBootstrapConfiguration(projectRoot, {
+			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: join(projectRoot, "test-evaluator"),
+			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: join(projectRoot, "test-python"),
+		});
+		const runtime = createSWEbenchRuntimeConfiguration(bootstrap.deepseekModel);
+		const verificationInput = resolveDevelopmentVerification(
+			SWE_BENCH_STANDARD_BASELINE_TAG,
+			bootstrap.instanceIds[0] as string,
+			runtime,
+		);
+		const verification: VerificationPolicy = {
+			commands: [],
+			outputLimitBytes: 16_384,
+			allowShell: false,
+			allowNetwork: false,
+		};
+		const nativeTools = getHarnessNativeAvailableTools(verification);
+		const { classification: historicalClassification, ...historicalExecution } = historicalManifest.execution as Record<
+			string,
+			unknown
+		>;
+		const { classification: formalClassification, ...formalExecution } = formalManifest.execution as Record<string, unknown>;
+
+		expect(bootstrap.manifestPath).toBe(join(manifestDirectory, "APC-Pilot-10-v1-formal.manifest.json"));
+		expect(bootstrap.classification).toBe("formal-frozen");
+		expect(bootstrap.engineeringValidation).toBe(false);
+		expect(verificationInput.commands ?? []).toEqual([]);
+		expect(verification.commands).toEqual([]);
+		expect(nativeTools).toContain("dsh-shell");
+		expect(nativeTools).not.toContain("run-public-verification");
+		expect(bootstrap.instanceIds).toEqual(formalManifest.instanceIds);
+		expect(bootstrap.deepseekModel).toBe((formalManifest.execution as { deepseekModel: string }).deepseekModel);
+		expect(bootstrap.evaluatorRevision).toBe((formalManifest.evaluator as { revision: string }).revision);
+		expect(runtime).toMatchObject({
+			model: bootstrap.deepseekModel,
+			timeoutMs: 1_200_000,
+			nativeAgent: { maxIterations: 24, maxToolCalls: 48, maxTransportRetries: 2 },
+		});
+		expect(historicalClassification).toBe("engineering-validation");
+		expect(formalClassification).toBe("formal-frozen");
+		expect(formalExecution).toEqual(historicalExecution);
+		expect({ ...formalManifest, execution: formalExecution }).toEqual({
+			...historicalManifest,
+			execution: historicalExecution,
 		});
 	});
 

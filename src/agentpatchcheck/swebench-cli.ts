@@ -26,7 +26,7 @@ const SWE_BENCH_BOOTSTRAP_MANIFEST = join(
 	".agentpatchcheck",
 	"swebench",
 	"datasets",
-	"APC-Pilot-10-v1.manifest.json",
+	"APC-Pilot-10-v1-formal.manifest.json",
 );
 const SWE_BENCH_EVALUATOR_ROOT_ENV = "AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT";
 const SWE_BENCH_EVALUATOR_PYTHON_ENV = "AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON";
@@ -77,6 +77,7 @@ export interface SWEbenchBootstrapConfiguration {
 	evaluatorSourceRoot: string;
 	evaluatorPythonPath: string;
 	deepseekModel: DeepSeekV4Model;
+	classification: "formal-frozen" | "engineering-validation";
 	engineeringValidation: boolean;
 	instanceIds: readonly string[];
 }
@@ -189,6 +190,7 @@ export async function loadSWEbenchBootstrapConfiguration(
 		evaluatorSourceRoot: requireProjectEnvironmentValue(environment, SWE_BENCH_EVALUATOR_ROOT_ENV),
 		evaluatorPythonPath: requireProjectEnvironmentValue(environment, SWE_BENCH_EVALUATOR_PYTHON_ENV),
 		deepseekModel: parseDeepSeekV4Model(requireManifestString(manifest.execution.deepseekModel, "execution.deepseekModel")),
+		classification: manifest.execution.classification,
 		engineeringValidation: manifest.execution.classification === "engineering-validation",
 		instanceIds: [...manifest.instanceIds],
 	};

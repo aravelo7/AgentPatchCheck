@@ -178,7 +178,7 @@ export function createSWEbenchRuntimeConfiguration(model: DeepSeekV4Model): SWEb
 	return { ...defaultRuntime, model };
 }
 
-function resolveDevelopmentVerification(
+export function resolveDevelopmentVerification(
 	sourceLabel: string | undefined,
 	instanceId: string,
 	runtime: SWEbenchRuntimeConfiguration,
