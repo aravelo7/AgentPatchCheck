@@ -127,7 +127,11 @@ describe("Model Provider Registry", () => {
 							choices: [
 								{
 									finish_reason: "tool_calls",
-									message: { tool_calls: [{ id: "finish-1", type: "function", function: { name: "finish", arguments: "{}" } }] },
+									message: {
+										tool_calls: [
+											{ id: "finish-1", type: "function", function: { name: "finish", arguments: "{}" } },
+										],
+									},
 								},
 							],
 						}),
@@ -1277,6 +1281,32 @@ describe("Model Provider Registry", () => {
 			failure: { kind: "timeout", code: "UND_ERR_CONNECT_TIMEOUT" },
 		});
 		expect(requests).toBe(3);
+	});
+
+	it("forwards whole-agent cancellation to fetch without transport retry or failure reclassification", async () => {
+		const controller = new AbortController();
+		let requests = 0;
+		const provider = createModelProvider(
+			configuration("chat-completions"),
+			{
+				fetcher: async (_input, init) => {
+					requests += 1;
+					const signal = init?.signal;
+					if (!(signal instanceof AbortSignal)) throw new Error("missing AbortSignal");
+					return await new Promise<Response>((_resolve, reject) =>
+						signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+					);
+				},
+				resolveCredential: () => ({ ok: true, credentialRef: "provider-a-primary", secret: "fake-secret" }),
+			},
+			{ maxTransportRetries: 2 },
+		);
+		const cancellation = new Error("agent wall timeout");
+		const decision = provider.createSession().decide({ ...context, signal: controller.signal });
+		controller.abort(cancellation);
+
+		await expect(decision).rejects.toBe(cancellation);
+		expect(requests).toBe(1);
 	});
 
 	it("retries explicitly transient HTTP 5xx responses", async () => {

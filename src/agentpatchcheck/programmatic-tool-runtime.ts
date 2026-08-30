@@ -97,9 +97,10 @@ function renderOutput(logs: unknown, value: unknown, maxBytes: number): string {
 export async function runProgrammaticToolComposition(input: {
 	code: string;
 	tools: readonly string[];
-	dispatch: (call: ProgrammaticToolDispatch) => Promise<ProgrammaticToolDispatchResult>;
+	dispatch: (call: ProgrammaticToolDispatch, signal: AbortSignal) => Promise<ProgrammaticToolDispatchResult>;
 	maxWallMs?: number;
 	maxOutputBytes?: number;
+	signal?: AbortSignal;
 }): Promise<ProgrammaticToolRunResult> {
 	if (typeof input.code !== "string" || input.code.trim().length === 0)
 		throw new Error("run-code code must be non-empty");
@@ -111,20 +112,32 @@ export async function runProgrammaticToolComposition(input: {
 		resourceLimits: { maxOldGenerationSizeMb: 128 },
 	});
 	let dispatches = 0;
+	const controller = new AbortController();
+	const signal = input.signal === undefined ? controller.signal : AbortSignal.any([input.signal, controller.signal]);
 	return await new Promise<ProgrammaticToolRunResult>((resolve, reject) => {
 		let settled = false;
+		let closing = false;
+		const inFlight = new Set<Promise<void>>();
+		const onAbort = (): void =>
+			finish(() => reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason))));
 		const finish = (callback: () => void): void => {
-			if (settled) return;
-			settled = true;
+			if (settled || closing) return;
+			closing = true;
 			clearTimeout(timeout);
-			void worker.terminate();
-			callback();
+			signal.removeEventListener("abort", onAbort);
+			void (async () => {
+				await worker.terminate();
+				await Promise.allSettled([...inFlight]);
+				settled = true;
+				callback();
+			})();
 		};
 		const timeout = setTimeout(
-			() => finish(() => reject(new Error("run-code exceeded its wall-clock budget"))),
+			() => controller.abort(new Error("run-code exceeded its wall-clock budget")),
 			input.maxWallMs ?? DEFAULT_WALL_MS,
 		);
 		worker.on("message", (message: unknown) => {
+			if (closing) return;
 			if (typeof message !== "object" || message === null) return;
 			const record = message as Record<string, unknown>;
 			if (record.type === "call" && typeof record.id === "number" && typeof record.name === "string") {
@@ -146,24 +159,30 @@ export async function runProgrammaticToolComposition(input: {
 					});
 					return;
 				}
-				void input
-					.dispatch({ tool, arguments: argumentsValue })
+				const flight = input
+					.dispatch({ tool, arguments: argumentsValue }, signal)
 					.then((result) =>
-						worker.postMessage({
-							type: "result",
-							id: record.id,
-							ok: result.ok,
-							...(result.ok ? { value: result.observation } : { error: result.observation }),
-						}),
+						closing
+							? undefined
+							: worker.postMessage({
+									type: "result",
+									id: record.id,
+									ok: result.ok,
+									...(result.ok ? { value: result.observation } : { error: result.observation }),
+								}),
 					)
 					.catch((error: unknown) =>
-						worker.postMessage({
-							type: "result",
-							id: record.id,
-							ok: false,
-							error: error instanceof Error ? error.message : String(error),
-						}),
-					);
+						closing
+							? undefined
+							: worker.postMessage({
+									type: "result",
+									id: record.id,
+									ok: false,
+									error: error instanceof Error ? error.message : String(error),
+								}),
+					)
+					.finally(() => inFlight.delete(flight));
+				inFlight.add(flight);
 				return;
 			}
 			if (record.type === "done")
@@ -185,5 +204,7 @@ export async function runProgrammaticToolComposition(input: {
 			if (!settled && codeValue !== 0)
 				finish(() => reject(new Error(`run-code worker exited with code ${codeValue}`)));
 		});
+		if (signal.aborted) onAbort();
+		else signal.addEventListener("abort", onAbort, { once: true });
 	});
 }

@@ -100,6 +100,29 @@ describe("CommandVerifier", () => {
 		}
 	});
 
+	it("waits for an aborted Host command to exit before returning", async () => {
+		const controller = new AbortController();
+		const command = runVerificationCommand({
+			command: {
+				command: process.execPath,
+				args: ["-e", "setInterval(() => process.stdout.write('still-running'), 20)"],
+				timeoutMs: 10_000,
+			},
+			cwd: process.cwd(),
+			outputLimitBytes: 1_024,
+			signal: controller.signal,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		controller.abort(new Error("agent wall timeout"));
+
+		const result = await command;
+		const outputAtReturn = result.stdout;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stdout).toBe(outputAtReturn);
+		expect(result.durationMs).toBeLessThan(10_000);
+	});
+
 	it("creates repair feedback without verifier output or command arguments", () => {
 		const feedback = createPublicVerificationFeedback({
 			status: "failed",

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 
 import { appendBoundedOutput } from "./bounded-output";
 import { sanitizedChildEnvironment } from "./child-process-environment";
-import { terminateCodexProcess } from "./codex-runner";
+import { terminateCodexProcess, terminateCodexProcessAndWait } from "./codex-runner";
 import { getWindowsNpmCliEntrypoint } from "./execution-bootstrap";
 import type {
 	CommandVerification,
@@ -35,7 +35,7 @@ export async function runVerificationCommand(options: {
 	signal?: AbortSignal;
 }): Promise<CommandVerificationResult> {
 	const startedAt = Date.now();
-	return await new Promise<CommandVerificationResult>((resolve) => {
+	return await new Promise<CommandVerificationResult>((resolve, reject) => {
 		const env = sanitizedChildEnvironment();
 		const launch = launchVerificationCommand(options.command.command, options.command.args);
 		const child = spawn(launch.executable, launch.args, {
@@ -49,6 +49,7 @@ export async function runVerificationCommand(options: {
 		let stderr = "";
 		let timedOut = false;
 		let settled = false;
+		let cancellation: Promise<void> | null = null;
 		const finish = (result: CommandVerificationResult) => {
 			if (settled) return;
 			settled = true;
@@ -56,7 +57,9 @@ export async function runVerificationCommand(options: {
 			options.signal?.removeEventListener("abort", onAbort);
 			resolve(result);
 		};
-		const onAbort = (): void => terminateCodexProcess(child);
+		const onAbort = (): void => {
+			cancellation ??= terminateCodexProcessAndWait(child);
+		};
 		const timeout = setTimeout(() => {
 			timedOut = true;
 			if (options.signal === undefined) child.kill();
@@ -82,16 +85,23 @@ export async function runVerificationCommand(options: {
 			});
 		});
 		child.once("close", (exitCode, signal) => {
-			finish({
-				command: options.command.command,
-				args: options.command.args,
-				exitCode,
-				signal,
-				stdout,
-				stderr,
-				durationMs: Date.now() - startedAt,
-				timedOut,
-			});
+			void (async () => {
+				try {
+					await cancellation;
+					finish({
+						command: options.command.command,
+						args: options.command.args,
+						exitCode,
+						signal,
+						stdout,
+						stderr,
+						durationMs: Date.now() - startedAt,
+						timedOut,
+					});
+				} catch (error) {
+					reject(error);
+				}
+			})();
 		});
 		if (options.signal?.aborted) onAbort();
 		else options.signal?.addEventListener("abort", onAbort, { once: true });

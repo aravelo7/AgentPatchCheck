@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 import { createGitProcessEnv } from "../core/git-process-env";
+import { terminateCodexProcessAndWait } from "./codex-runner";
 
 const MAX_PATCH_BYTES = 128 * 1024;
 const MAX_GIT_OUTPUT_BYTES = 256 * 1024;
@@ -17,6 +18,7 @@ export interface ManagedMutationPatchGitResult {
 export type ManagedMutationPatchGitRunner = (
 	argumentsValue: string[],
 	patch: string,
+	signal?: AbortSignal,
 ) => Promise<ManagedMutationPatchGitResult>;
 
 export class MutationPatchError extends Error {}
@@ -45,6 +47,7 @@ export async function runHostManagedMutationPatchGit(
 	root: string,
 	argumentsValue: string[],
 	patch: string,
+	signal?: AbortSignal,
 ): Promise<ManagedMutationPatchGitResult> {
 	return await new Promise((resolvePromise, rejectPromise) => {
 		const child = spawn("git", ["-c", "core.quotepath=false", "apply", ...argumentsValue, "--"], {
@@ -57,26 +60,45 @@ export async function runHostManagedMutationPatchGit(
 		const stdoutState = { bytes: 0, truncated: false };
 		const stderrState = { bytes: 0, truncated: false };
 		let settled = false;
+		let cancellation: Promise<void> | null = null;
+		const onAbort = (): void => {
+			cancellation ??= terminateCodexProcessAndWait(child);
+		};
 		child.stdout.on("data", (chunk: Buffer) => appendBounded(stdoutChunks, chunk, stdoutState));
 		child.stderr.on("data", (chunk: Buffer) => appendBounded(stderrChunks, chunk, stderrState));
 		child.on("error", (error) => {
 			if (settled) return;
 			settled = true;
+			signal?.removeEventListener("abort", onAbort);
 			rejectPromise(new MutationPatchError(`Git patch engine could not start: ${error.message}`));
 		});
 		child.on("close", (code) => {
 			if (settled) return;
 			settled = true;
-			resolvePromise({
-				exitCode: code ?? -1,
-				stdout: Buffer.concat(stdoutChunks),
-				stderr: Buffer.concat(stderrChunks),
-				outputTruncated: stdoutState.truncated || stderrState.truncated,
-			});
+			signal?.removeEventListener("abort", onAbort);
+			void (async () => {
+				try {
+					await cancellation;
+					if (signal?.aborted) {
+						rejectPromise(signal.reason);
+						return;
+					}
+					resolvePromise({
+						exitCode: code ?? -1,
+						stdout: Buffer.concat(stdoutChunks),
+						stderr: Buffer.concat(stderrChunks),
+						outputTruncated: stdoutState.truncated || stderrState.truncated,
+					});
+				} catch (error) {
+					rejectPromise(error);
+				}
+			})();
 		});
 		child.stdin.on("error", () => {
 			// Git reports malformed input through its exit status and stderr.
 		});
+		if (signal?.aborted) onAbort();
+		else signal?.addEventListener("abort", onAbort, { once: true });
 		child.stdin.end(patch, "utf8");
 	});
 }
@@ -132,6 +154,7 @@ export async function applyManagedMutationPatch(input: {
 	patch: unknown;
 	validateTarget: (relativePath: string) => Promise<void>;
 	runGitApply?: ManagedMutationPatchGitRunner;
+	signal?: AbortSignal;
 }): Promise<ManagedMutationPatchResult> {
 	if (typeof input.patch !== "string" || !input.patch.trim() || input.patch.includes("\0"))
 		throw new MutationPatchError("Patch is malformed: expected a non-empty unified diff.");
@@ -141,13 +164,16 @@ export async function applyManagedMutationPatch(input: {
 
 	// This invocation never writes. Let Git enumerate even traversal-shaped paths
 	// so the Harness validator, rather than Git's implicit policy, makes the final decision.
-	const runGitApply = input.runGitApply ?? ((args, patch) => runHostManagedMutationPatchGit(input.root, args, patch));
-	const metadata = await runGitApply(["--numstat", "-z", "--binary", "--unsafe-paths"], input.patch);
+	const runGitApply =
+		input.runGitApply ?? ((args, patch, signal) => runHostManagedMutationPatchGit(input.root, args, patch, signal));
+	input.signal?.throwIfAborted();
+	const metadata = await runGitApply(["--numstat", "-z", "--binary", "--unsafe-paths"], input.patch, input.signal);
 	if (metadata.outputTruncated)
 		throw new MutationPatchError("Patch is malformed: Git change metadata exceeded the safety limit.");
 	if (metadata.exitCode !== 0) throw new MutationPatchError(`Patch is malformed: ${errorDetail(metadata)}`);
 	const affectedPaths = parseNumstat(metadata.stdout);
 	for (const path of affectedPaths) {
+		input.signal?.throwIfAborted();
 		try {
 			await input.validateTarget(path);
 		} catch (error) {
@@ -156,10 +182,12 @@ export async function applyManagedMutationPatch(input: {
 		}
 	}
 
-	const preflight = await runGitApply(["--check", "--binary"], input.patch);
+	input.signal?.throwIfAborted();
+	const preflight = await runGitApply(["--check", "--binary"], input.patch, input.signal);
 	if (preflight.exitCode !== 0)
 		throw new MutationPatchError(`Patch does not apply cleanly: ${errorDetail(preflight)}`);
-	const applied = await runGitApply(["--binary"], input.patch);
+	input.signal?.throwIfAborted();
+	const applied = await runGitApply(["--binary"], input.patch, input.signal);
 	if (applied.exitCode !== 0)
 		throw new MutationPatchError(`Patch application failed after preflight: ${errorDetail(applied)}`);
 	return { affectedPaths };

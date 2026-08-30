@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 
 import { appendBoundedOutput } from "./bounded-output";
 import { createClineRuntimeAdapter } from "./cline-runtime-adapter";
-import { runCodex, terminateCodexProcess } from "./codex-runner";
+import { ProcessTreeTerminationError, runCodex, terminateCodexProcess } from "./codex-runner";
 import {
 	createHarnessNativeRuntime,
 	type HarnessNativeModelProvider,
@@ -16,8 +16,35 @@ export const SCRIPT_ADAPTER_WORKTREE_ENV = "AGENTPATCHCHECK_AGENT_WORKTREE";
 export interface AgentAdapterContext {
 	policy: TaskPolicy;
 	worktreePath: string;
+	signal?: AbortSignal;
 	repository?: HarnessNativeRepositoryPrimitives;
 	repairContext: RepairContext;
+}
+
+export async function executeAgentAdapterUnderDeadline(
+	adapter: AgentAdapter,
+	context: Omit<AgentAdapterContext, "signal">,
+): Promise<AgentExecution> {
+	const controller = new AbortController();
+	const timeout = setTimeout(
+		() => controller.abort(new Error(`Agent wall-clock deadline reached (${context.policy.timeoutMs}ms).`)),
+		context.policy.timeoutMs,
+	);
+	try {
+		const execution = await adapter.execute({ ...context, signal: controller.signal });
+		if (controller.signal.aborted && !execution.timedOut)
+			throw new ProcessTreeTerminationError("Agent wall cancellation did not produce a confirmed timeout terminal.");
+		return execution;
+	} catch (error) {
+		if (controller.signal.aborted && !(error instanceof ProcessTreeTerminationError))
+			throw new ProcessTreeTerminationError(
+				"Agent wall cancellation cleanup could not be confirmed before terminal handling.",
+				{ cause: error },
+			);
+		throw error;
+	} finally {
+		clearTimeout(timeout);
+	}
 }
 
 export interface AgentAdapter {

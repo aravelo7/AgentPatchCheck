@@ -1,10 +1,13 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { createHarnessNativeAdapter } from "../../src/agentpatchcheck/agent-adapter";
+import { ProcessTreeTerminationError } from "../../src/agentpatchcheck/codex-runner";
+import { createHostRepositoryPrimitives } from "../../src/agentpatchcheck/harness-native-runtime";
+import { IsolatedWorkspaceCollisionError } from "../../src/agentpatchcheck/isolated-workspace";
 import {
 	AGENTPATCHCHECK_BASELINE_MODEL,
 	collectSWEbenchModelPatch,
@@ -16,8 +19,6 @@ import {
 	runSWEbenchInstance,
 	validateSWEbenchRepositoryRoot,
 } from "../../src/agentpatchcheck/swebench-adapter";
-import { IsolatedWorkspaceCollisionError } from "../../src/agentpatchcheck/isolated-workspace";
-import { createHostRepositoryPrimitives } from "../../src/agentpatchcheck/harness-native-runtime";
 import type { SWEbenchDockerTaskEnvironment } from "../../src/agentpatchcheck/swebench-docker-task-environment";
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
 import type { AgentExecution, IsolatedWorkspace, TaskPolicy } from "../../src/agentpatchcheck/types";
@@ -63,16 +64,12 @@ describe("SWE-bench Multilingual adapter", () => {
 
 	it("resolves and validates the repository root from instance metadata", async () => {
 		const projectRoot = await mkdtemp(join(tmpdir(), "apc-swebench-repository-resolution-"));
-		const repositoryRoot = join(
-			projectRoot,
-			".agentpatchcheck",
-			"swebench",
-			"repositories",
-			"gin-gonic__gin",
-		);
+		const repositoryRoot = join(projectRoot, ".agentpatchcheck", "swebench", "repositories", "gin-gonic__gin");
 		await mkdir(repositoryRoot, { recursive: true });
 		expect((await runGit(repositoryRoot, ["init"])).ok).toBe(true);
-		expect((await runGit(repositoryRoot, ["remote", "add", "origin", "https://github.com/gin-gonic/gin.git"])).ok).toBe(true);
+		expect(
+			(await runGit(repositoryRoot, ["remote", "add", "origin", "https://github.com/gin-gonic/gin.git"])).ok,
+		).toBe(true);
 
 		await expect(resolveSWEbenchRepositoryRoot(projectRoot, instance)).resolves.toBe(repositoryRoot);
 	});
@@ -399,7 +396,10 @@ describe("SWE-bench Multilingual adapter", () => {
 		await writeFile(join(repositoryRoot, "README.md"), "base\n");
 		expect((await runGit(repositoryRoot, ["add", "README.md"])).ok).toBe(true);
 		expect((await runGit(repositoryRoot, ["commit", "-m", "base"])).ok).toBe(true);
-		const safeInstance = { ...instance, base_commit: (await runGit(repositoryRoot, ["rev-parse", "HEAD"])).stdout.trim() };
+		const safeInstance = {
+			...instance,
+			base_commit: (await runGit(repositoryRoot, ["rev-parse", "HEAD"])).stdout.trim(),
+		};
 		let workspaceCalls = 0;
 		let cleanupCalls = 0;
 		let receivedMutationPaths: readonly string[] = [];
@@ -410,21 +410,39 @@ describe("SWE-bench Multilingual adapter", () => {
 				receivedMutationPaths = mutationPaths;
 				return {
 					modelPatch:
-						"diff --git a/src/created.ts b/src/created.ts\n" +
-						"diff --git a/src/existing.ts b/src/existing.ts\n",
+						"diff --git a/src/created.ts b/src/created.ts\n" + "diff --git a/src/existing.ts b/src/existing.ts\n",
 					changedFiles: ["src/created.ts", "src/existing.ts"],
 				};
 			},
-			cleanup: async () => { cleanupCalls += 1; },
+			cleanup: async () => {
+				cleanupCalls += 1;
+			},
 		};
 		const runtime = {
 			...createSWEbenchRuntimeConfiguration("deepseek-v4-flash"),
-			dockerTaskEnvironment: { image: { instanceId: safeInstance.instance_id, arch: "x86_64", namespace: "swebench", instanceImageTag: "latest" } },
+			dockerTaskEnvironment: {
+				image: {
+					instanceId: safeInstance.instance_id,
+					arch: "x86_64",
+					namespace: "swebench",
+					instanceImageTag: "latest",
+				},
+			},
 		};
 		const result = await runSWEbenchInstance(
-			{ instance: safeInstance, repositoryRoot, outputPath, runId: "docker-environment", sourceLabel: "engineering-validation-development", runtime },
 			{
-				createWorkspace: async () => { workspaceCalls += 1; throw new Error("Host workspace must not be created."); },
+				instance: safeInstance,
+				repositoryRoot,
+				outputPath,
+				runId: "docker-environment",
+				sourceLabel: "engineering-validation-development",
+				runtime,
+			},
+			{
+				createWorkspace: async () => {
+					workspaceCalls += 1;
+					throw new Error("Host workspace must not be created.");
+				},
 				createDockerTaskEnvironment: async () => environment,
 				executeAgent: async (_policy, path, repository): Promise<AgentExecution> => {
 					expect(path).toBe("/testbed");
@@ -544,5 +562,37 @@ describe("SWE-bench Multilingual adapter", () => {
 			message: "Runtime record failed: ENOENT D:\\testbed",
 		});
 		expect(result.agent.stderr).toContain("Runtime record failed: ENOENT");
+	});
+
+	it("fails closed instead of converting cancellation cleanup failure into an Agent result", async () => {
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cleanup-failure-"));
+		const repositoryRoot = join(root, "repository");
+		try {
+			await mkdir(repositoryRoot, { recursive: true });
+			expect((await runGit(repositoryRoot, ["init"])).ok).toBe(true);
+			expect((await runGit(repositoryRoot, ["config", "user.email", "test@example.com"])).ok).toBe(true);
+			expect((await runGit(repositoryRoot, ["config", "user.name", "Test"])).ok).toBe(true);
+			await writeFile(join(repositoryRoot, "README.md"), "base\n");
+			expect((await runGit(repositoryRoot, ["add", "README.md"])).ok).toBe(true);
+			expect((await runGit(repositoryRoot, ["commit", "-m", "base"])).ok).toBe(true);
+			const baseCommit = (await runGit(repositoryRoot, ["rev-parse", "HEAD"])).stdout.trim();
+			await expect(
+				runSWEbenchInstance(
+					{
+						instance: { ...instance, base_commit: baseCommit },
+						repositoryRoot,
+						outputPath: join(root, "prediction.jsonl"),
+						runId: "cleanup-failure",
+					},
+					{
+						executeAgent: async () => {
+							throw new ProcessTreeTerminationError("cleanup acknowledgement failed");
+						},
+					},
+				),
+			).rejects.toThrow("cleanup acknowledgement failed");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });

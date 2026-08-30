@@ -5,15 +5,17 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	createDockerCommandExecutor,
 	createSWEbenchDockerTaskEnvironment,
-	deriveSWEbenchInstanceImageKey,
 	type DockerCommandExecutor,
+	deriveSWEbenchInstanceImageKey,
 } from "../../src/agentpatchcheck/swebench-docker-task-environment";
 
 const childProcessMocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 const terminationMocks = vi.hoisted(() => ({ terminateCodexProcess: vi.fn() }));
 
 vi.mock("node:child_process", () => ({ spawn: childProcessMocks.spawn }));
-vi.mock("../../src/agentpatchcheck/codex-runner", () => ({ terminateCodexProcess: terminationMocks.terminateCodexProcess }));
+vi.mock("../../src/agentpatchcheck/codex-runner", () => ({
+	terminateCodexProcess: terminationMocks.terminateCodexProcess,
+}));
 
 function createFakeChild() {
 	const child = new EventEmitter() as EventEmitter & {
@@ -42,7 +44,12 @@ describe("SWE-bench Docker task environment", () => {
 		child.stderr.emit("data", Buffer.from("err"));
 		child.emit("close", 0);
 
-		await expect(resultPromise).resolves.toMatchObject({ exitCode: 0, stdout: "out", stderr: "err", timedOut: false });
+		await expect(resultPromise).resolves.toMatchObject({
+			exitCode: 0,
+			stdout: "out",
+			stderr: "err",
+			timedOut: false,
+		});
 		expect(child.stdin.end).toHaveBeenCalledOnce();
 	});
 
@@ -63,8 +70,67 @@ describe("SWE-bench Docker task environment", () => {
 		}
 	});
 
+	it("stops and restarts the Candidate container before acknowledging wall cancellation", async () => {
+		const calls: string[][] = [];
+		let settleBlockingExec: ((result: Awaited<ReturnType<DockerCommandExecutor["run"]>>) => void) | undefined;
+		const docker: DockerCommandExecutor = {
+			run: async ({ args }) => {
+				calls.push(args);
+				const joined = args.join(" ");
+				if (joined.includes(" stat -c %F:%s -- /testbed"))
+					return { exitCode: 0, stdout: "directory:0\n", stderr: "", durationMs: 1, timedOut: false };
+				if (joined.includes(" test -L /testbed"))
+					return { exitCode: 1, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+				if (joined.includes("sha256sum -z"))
+					return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+				if (joined.includes(" blocking-command"))
+					return await new Promise((resolve) => {
+						settleBlockingExec = resolve;
+					});
+				if (args[0] === "stop") {
+					settleBlockingExec?.({ exitCode: 137, stdout: "", stderr: "", durationMs: 2, timedOut: false });
+					return { exitCode: 0, stdout: "stopped", stderr: "", durationMs: 2, timedOut: false };
+				}
+				return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+			},
+		};
+		const environment = await createSWEbenchDockerTaskEnvironment({
+			runId: "wall-cancellation",
+			configuration: {
+				image: {
+					instanceId: "immutable-js__immutable-js-2006",
+					arch: "x86_64",
+					namespace: "swebench",
+					instanceImageTag: "latest",
+				},
+			},
+			docker,
+		});
+		const controller = new AbortController();
+		const unbind = environment.repository.bindCancellationSignal?.(controller.signal);
+		if (unbind === undefined) throw new Error("Docker cancellation binding is unavailable.");
+		const command = environment.repository.runCommand({
+			command: { command: "blocking-command", args: [], timeoutMs: 10_000 },
+			cwd: environment.path,
+			outputLimitBytes: 1_024,
+		});
+		while (settleBlockingExec === undefined) await new Promise((resolve) => setTimeout(resolve, 1));
+		controller.abort(new Error("agent wall timeout"));
+
+		await expect(command).rejects.toThrow("agent wall timeout");
+		await expect(environment.repository.acknowledgeCancellation?.()).resolves.toBeUndefined();
+		const stopIndex = calls.findIndex((args) => args[0] === "stop");
+		const restartIndex = calls.map((args) => args[0]).lastIndexOf("start");
+		expect(stopIndex).toBeGreaterThan(-1);
+		expect(restartIndex).toBeGreaterThan(stopIndex);
+		unbind();
+		await environment.cleanup();
+	});
+
 	function repositoryState(entries: Record<string, string>): string {
-		return Object.entries(entries).map(([path, hash]) => `${hash.repeat(64)}  ${path}\0`).join("");
+		return Object.entries(entries)
+			.map(([path, hash]) => `${hash.repeat(64)}  ${path}\0`)
+			.join("");
 	}
 
 	async function exportPatch(input: {
@@ -91,14 +157,34 @@ describe("SWE-bench Docker task environment", () => {
 				}
 				if (joined.includes("git -C /testbed") && joined.includes("read-tree"))
 					return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
-				if (joined.includes("git -C /testbed") && joined.includes("add") && joined.includes("--pathspec-file-nul")) {
+				if (
+					joined.includes("git -C /testbed") &&
+					joined.includes("add") &&
+					joined.includes("--pathspec-file-nul")
+				) {
 					stagedPathspecs.push(stdin ?? "");
 					return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
 				}
-				if (joined.includes("git -C /testbed") && joined.includes("diff") && joined.includes("--binary") && joined.includes("--cached"))
+				if (
+					joined.includes("git -C /testbed") &&
+					joined.includes("diff") &&
+					joined.includes("--binary") &&
+					joined.includes("--cached")
+				)
 					return { exitCode: 0, stdout: input.modelPatch, stderr: "", durationMs: 1, timedOut: false };
-				if (joined.includes("git -C /testbed") && joined.includes("diff") && joined.includes("--name-only") && joined.includes("--cached"))
-					return { exitCode: 0, stdout: input.changedFiles.join("\n"), stderr: "", durationMs: 1, timedOut: false };
+				if (
+					joined.includes("git -C /testbed") &&
+					joined.includes("diff") &&
+					joined.includes("--name-only") &&
+					joined.includes("--cached")
+				)
+					return {
+						exitCode: 0,
+						stdout: input.changedFiles.join("\n"),
+						stderr: "",
+						durationMs: 1,
+						timedOut: false,
+					};
 				if (joined.includes(" npm test"))
 					return { exitCode: 1, stdout: "test failure", stderr: "details", durationMs: 1, timedOut: false };
 				return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
@@ -106,7 +192,14 @@ describe("SWE-bench Docker task environment", () => {
 		};
 		const environment = await createSWEbenchDockerTaskEnvironment({
 			runId: "docker-test",
-			configuration: { image: { instanceId: "immutable-js__immutable-js-2006", arch: "x86_64", namespace: "swebench", instanceImageTag: "latest" } },
+			configuration: {
+				image: {
+					instanceId: "immutable-js__immutable-js-2006",
+					arch: "x86_64",
+					namespace: "swebench",
+					instanceImageTag: "latest",
+				},
+			},
 			docker,
 		});
 		const verification = await environment.repository.runCommand({
@@ -184,16 +277,18 @@ describe("SWE-bench Docker task environment", () => {
 
 	it("captures repository entries without passing directories to sha256sum as files", async () => {
 		const result = await exportPatch({
-			baseline: { "nested": "a" },
-			terminal: { "nested": "b" },
+			baseline: { nested: "a" },
+			terminal: { nested: "b" },
 			mutationPaths: ["nested"],
 			modelPatch: "diff --git a/nested b/nested\n",
 			changedFiles: ["nested"],
 		});
 
-		const captureCommand = result.calls.find((args) => args.some((arg) => arg.includes("sha256sum -z") && arg.includes("git ls-files")));
-		expect(captureCommand?.join(" ")).toContain("[ -f \"$path\" ]");
-		expect(captureCommand?.join(" ")).toContain("[ -d \"$path\" ]");
+		const captureCommand = result.calls.find((args) =>
+			args.some((arg) => arg.includes("sha256sum -z") && arg.includes("git ls-files")),
+		);
+		expect(captureCommand?.join(" ")).toContain('[ -f "$path" ]');
+		expect(captureCommand?.join(" ")).toContain('[ -d "$path" ]');
 	});
 
 	it("derives the official image key from safe execution metadata only", () => {
@@ -215,16 +310,27 @@ describe("SWE-bench Docker task environment", () => {
 				const joined = args.join(" ");
 				if (joined.includes(" stat -c %F:%s -- /testbed"))
 					return { exitCode: 0, stdout: "directory:0\n", stderr: "", durationMs: 1, timedOut: false };
-				if (joined.includes(" test -L /testbed")) return { exitCode: 1, stdout: "", stderr: "", durationMs: 1, timedOut: false };
-				if (joined.includes("sha256sum -z")) return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
-				if (joined.includes(" test -e /testbed/source.go")) return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
-				if (joined.includes(" stat -c %a -- /testbed/source.go")) return { exitCode: 0, stdout: "644\n", stderr: "", durationMs: 1, timedOut: false };
+				if (joined.includes(" test -L /testbed"))
+					return { exitCode: 1, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+				if (joined.includes("sha256sum -z"))
+					return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+				if (joined.includes(" test -e /testbed/source.go"))
+					return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+				if (joined.includes(" stat -c %a -- /testbed/source.go"))
+					return { exitCode: 0, stdout: "644\n", stderr: "", durationMs: 1, timedOut: false };
 				return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
 			},
 		};
 		const environment = await createSWEbenchDockerTaskEnvironment({
 			runId: "mode-preservation",
-			configuration: { image: { instanceId: "immutable-js__immutable-js-2006", arch: "x86_64", namespace: "swebench", instanceImageTag: "latest" } },
+			configuration: {
+				image: {
+					instanceId: "immutable-js__immutable-js-2006",
+					arch: "x86_64",
+					namespace: "swebench",
+					instanceImageTag: "latest",
+				},
+			},
 			docker,
 		});
 		await environment.repository.writeText("/testbed/source.go", "updated\n");

@@ -2,17 +2,18 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { getGitStdout, runGit } from "../workspace/git-utils";
-import { getAgentAdapter } from "./agent-adapter";
+import { executeAgentAdapterUnderDeadline, getAgentAdapter } from "./agent-adapter";
+import { ProcessTreeTerminationError } from "./codex-runner";
 import { type DeepSeekV4Model, parseDeepSeekV4Model } from "./deepseek-v4-model";
+import type { HarnessNativeRepositoryPrimitives } from "./harness-native-runtime";
 import { createIsolatedWorkspace } from "./isolated-workspace";
+import { createRunId, type RunIdentity } from "./run-identity";
+import { getHarnessNativeRuntimeRecordPath } from "./runtime-record";
 import {
 	createSWEbenchDockerTaskEnvironment,
 	type SWEbenchDockerTaskEnvironment,
 	type SWEbenchDockerTaskEnvironmentConfiguration,
 } from "./swebench-docker-task-environment";
-import type { HarnessNativeRepositoryPrimitives } from "./harness-native-runtime";
-import { createRunId, type RunIdentity } from "./run-identity";
-import { getHarnessNativeRuntimeRecordPath } from "./runtime-record";
 import { validateTaskPolicy } from "./task-policy";
 import type {
 	AgentExecution,
@@ -134,6 +135,7 @@ export interface SWEbenchAdapterDependencies {
 		policy: TaskPolicy,
 		worktreePath: string,
 		repository?: HarnessNativeRepositoryPrimitives,
+		signal?: AbortSignal,
 	) => Promise<AgentExecution>;
 	collectModelPatch: typeof collectSWEbenchModelPatch;
 	createDockerTaskEnvironment: typeof createSWEbenchDockerTaskEnvironment;
@@ -260,7 +262,9 @@ export async function validateSWEbenchRepositoryRoot(
 	let resolvedRepository = "<not-a-git-repository>";
 	try {
 		resolvedPath = resolve(await getStdout(["rev-parse", "--show-toplevel"], expectedPath));
-		resolvedRepository = normalizeRepositoryIdentity(await getStdout(["config", "--get", "remote.origin.url"], resolvedPath));
+		resolvedRepository = normalizeRepositoryIdentity(
+			await getStdout(["config", "--get", "remote.origin.url"], resolvedPath),
+		);
 	} catch (error) {
 		throw new SWEbenchRepositoryResolutionError(
 			instance.instance_id,
@@ -317,7 +321,10 @@ export async function collectSWEbenchModelPatch(
 			trimStdout: false,
 		}),
 	]);
-	const untrackedPaths = untrackedNames.split("\0").filter(Boolean).sort((left, right) => left.localeCompare(right));
+	const untrackedPaths = untrackedNames
+		.split("\0")
+		.filter(Boolean)
+		.sort((left, right) => left.localeCompare(right));
 	const untrackedPatches: string[] = [];
 	for (const path of untrackedPaths) {
 		const patch = await runGit(worktreePath, ["diff", "--no-index", "--binary", "--", "/dev/null", path], {
@@ -327,8 +334,8 @@ export async function collectSWEbenchModelPatch(
 			throw new Error(patch.error ?? `Could not export untracked SWE-bench mutation ${path}.`);
 		untrackedPatches.push(patch.stdout);
 	}
-	const changedFiles = [...new Set([...trackedNames.split("\n").filter(Boolean), ...untrackedPaths])].sort((left, right) =>
-		left.localeCompare(right),
+	const changedFiles = [...new Set([...trackedNames.split("\n").filter(Boolean), ...untrackedPaths])].sort(
+		(left, right) => left.localeCompare(right),
 	);
 	return { modelPatch: `${trackedPatch}${untrackedPatches.join("")}`, changedFiles };
 }
@@ -336,11 +343,12 @@ export async function collectSWEbenchModelPatch(
 const defaultDependencies: SWEbenchAdapterDependencies = {
 	validatePolicy: validateTaskPolicy,
 	createWorkspace: createIsolatedWorkspace,
-	executeAgent: async (policy, worktreePath, repository) =>
+	executeAgent: async (policy, worktreePath, repository, signal) =>
 		await getAgentAdapter(policy.agentAdapter).execute({
 			policy,
 			worktreePath,
 			repository,
+			signal,
 			repairContext: { phase: "initial", publicVerificationFeedback: null, repairInstruction: null },
 		}),
 	collectModelPatch: collectSWEbenchModelPatch,
@@ -389,23 +397,29 @@ export async function runSWEbenchInstance(
 		verification,
 		patchExpectation: "changes-required",
 	});
-	const dockerEnabled = options.sourceLabel?.startsWith("engineering-validation-") === true && runtime.dockerTaskEnvironment !== undefined;
+	const dockerEnabled =
+		options.sourceLabel?.startsWith("engineering-validation-") === true &&
+		runtime.dockerTaskEnvironment !== undefined;
 	const dockerConfiguration = runtime.dockerTaskEnvironment;
 	let dockerEnvironment: SWEbenchDockerTaskEnvironment | null = null;
 	if (dockerEnabled) {
 		if (dockerConfiguration === undefined)
 			throw new Error("Engineering Docker task environment requires an explicit safe image configuration.");
-		dockerEnvironment = await resolvedDependencies.createDockerTaskEnvironment({ runId, configuration: dockerConfiguration });
+		dockerEnvironment = await resolvedDependencies.createDockerTaskEnvironment({
+			runId,
+			configuration: dockerConfiguration,
+		});
 	}
-	const workspace = dockerEnvironment === null
-		? await resolvedDependencies.createWorkspace({
-				repositoryPath: policy.repositoryRoot,
-				runId,
-				baseRef: policy.baseRef,
-				baseCommit: policy.baseCommit,
-				worktreeRoot: policy.worktreeRoot,
-			})
-		: null;
+	const workspace =
+		dockerEnvironment === null
+			? await resolvedDependencies.createWorkspace({
+					repositoryPath: policy.repositoryRoot,
+					runId,
+					baseRef: policy.baseRef,
+					baseCommit: policy.baseCommit,
+					worktreeRoot: policy.worktreeRoot,
+				})
+			: null;
 	let agent: AgentExecution | undefined;
 	let prediction: SWEbenchPrediction | null = null;
 	let predictionPath: string | null = null;
@@ -413,17 +427,36 @@ export async function runSWEbenchInstance(
 	let predictionError: SWEbenchAdapterResult["predictionError"] = null;
 	let failure: SWEbenchAdapterFailure | null = null;
 	try {
-		agent = await resolvedDependencies.executeAgent(policy, dockerEnvironment?.path ?? workspace?.path ?? "", dockerEnvironment?.repository);
+		agent = await executeAgentAdapterUnderDeadline(
+			{
+				id: policy.agentAdapter,
+				execute: ({ signal }) =>
+					resolvedDependencies.executeAgent(
+						policy,
+						dockerEnvironment?.path ?? workspace?.path ?? "",
+						dockerEnvironment?.repository,
+						signal,
+					),
+			},
+			{
+				policy,
+				worktreePath: dockerEnvironment?.path ?? workspace?.path ?? "",
+				repository: dockerEnvironment?.repository,
+				repairContext: { phase: "initial", publicVerificationFeedback: null, repairInstruction: null },
+			},
+		);
 		const mutationPaths = collectSWEbenchMutationPaths(agent);
-		const collected = dockerEnvironment === null
-			? await resolvedDependencies.collectModelPatch(workspace?.path ?? "", instance.base_commit, mutationPaths)
-			: await dockerEnvironment.collectModelPatch(instance.base_commit, mutationPaths);
+		const collected =
+			dockerEnvironment === null
+				? await resolvedDependencies.collectModelPatch(workspace?.path ?? "", instance.base_commit, mutationPaths)
+				: await dockerEnvironment.collectModelPatch(instance.base_commit, mutationPaths);
 		changedFiles = collected.changedFiles;
 		prediction = createSWEbenchPrediction(instance.instance_id, collected.modelPatch, modelNameOrPath);
 		predictionPath = resolve(options.outputPath);
 		await mkdir(dirname(predictionPath), { recursive: true });
 		await writeFile(predictionPath, `${JSON.stringify(prediction)}\n`, "utf8");
 	} catch (error) {
+		if (error instanceof ProcessTreeTerminationError) throw error;
 		failure = {
 			stage: agent === undefined ? "agent-execution" : "prediction-export",
 			message: error instanceof Error ? error.message : String(error),

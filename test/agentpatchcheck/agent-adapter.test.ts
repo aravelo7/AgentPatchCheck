@@ -4,10 +4,83 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { getAgentAdapter, SCRIPT_ADAPTER_WORKTREE_ENV } from "../../src/agentpatchcheck/agent-adapter";
+import {
+	executeAgentAdapterUnderDeadline,
+	getAgentAdapter,
+	SCRIPT_ADAPTER_WORKTREE_ENV,
+} from "../../src/agentpatchcheck/agent-adapter";
+import { ProcessTreeTerminationError } from "../../src/agentpatchcheck/codex-runner";
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
 
 describe("AgentAdapter", () => {
+	it("owns one whole-agent deadline scope and awaits cancellation acknowledgement", async () => {
+		const policy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Wait for cancellation.",
+			agentAdapter: "codex",
+			timeoutMs: 10,
+		});
+		let invocations = 0;
+		let acknowledged = false;
+		const result = await executeAgentAdapterUnderDeadline(
+			{
+				id: "harness-native",
+				execute: async ({ signal }) => {
+					invocations += 1;
+					await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+					await new Promise((resolve) => setTimeout(resolve, 5));
+					acknowledged = true;
+					return {
+						executable: "synthetic",
+						args: [],
+						exitCode: 1,
+						signal: null,
+						stdout: "",
+						stderr: "timeout",
+						durationMs: 15,
+						timedOut: true,
+					};
+				},
+			},
+			{
+				policy,
+				worktreePath: process.cwd(),
+				repairContext: { phase: "initial", publicVerificationFeedback: null, repairInstruction: null },
+			},
+		);
+
+		expect(result.timedOut).toBe(true);
+		expect(acknowledged).toBe(true);
+		expect(invocations).toBe(1);
+	});
+
+	it("fails closed when deadline cancellation cannot produce a confirmed timeout terminal", async () => {
+		const policy = await validateTaskPolicy({
+			repositoryRoot: process.cwd(),
+			prompt: "Wait for cancellation.",
+			agentAdapter: "codex",
+			timeoutMs: 10,
+		});
+		await expect(
+			executeAgentAdapterUnderDeadline(
+				{
+					id: "harness-native",
+					execute: async ({ signal }) => {
+						await new Promise<void>((resolve) =>
+							signal?.addEventListener("abort", () => resolve(), { once: true }),
+						);
+						throw new Error("cleanup acknowledgement failed");
+					},
+				},
+				{
+					policy,
+					worktreePath: process.cwd(),
+					repairContext: { phase: "initial", publicVerificationFeedback: null, repairInstruction: null },
+				},
+			),
+		).rejects.toBeInstanceOf(ProcessTreeTerminationError);
+	});
+
 	it("registers the Cline control runtime without replacing Harness-native", () => {
 		expect(getAgentAdapter("cline-runtime").id).toBe("cline-runtime");
 		expect(getAgentAdapter("harness-native").id).toBe("harness-native");

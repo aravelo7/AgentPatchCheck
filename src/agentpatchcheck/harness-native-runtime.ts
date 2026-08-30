@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { runGit } from "../workspace/git-utils";
 import type { AgentRuntime } from "./agent-runtime";
 import { createHarnessNativeAttemptContinuation, reviewHarnessNativeAttempt } from "./attempt-controller";
+import { ProcessTreeTerminationError } from "./codex-runner";
 import { runVerificationCommand } from "./command-verifier";
 import { deriveHarnessNativeCompletionCheckpoint, HarnessNativeCompletionController } from "./completion-controller";
 import { deriveHarnessNativeContextViews } from "./context-view";
@@ -33,8 +34,8 @@ import {
 	fingerprintHarnessNativeWorktree,
 	getHarnessNativeRuntimeRecordPath,
 	HarnessNativeRuntimeRecord,
-	hashHarnessNativeTaskIdentity,
 	type HarnessNativeRuntimeRecordWorktree,
+	hashHarnessNativeTaskIdentity,
 	withHarnessNativeRuntimeRecordLock,
 } from "./runtime-record";
 import { redactSensitiveText } from "./sensitive-text";
@@ -232,7 +233,11 @@ export interface HarnessNativeRepositoryPrimitives {
 		maxObservationBytes: number;
 	}): Promise<ReadFileResult>;
 	writeText(path: string, content: string, options?: { exclusive?: boolean }): Promise<void>;
-	git(root: string, args: string[], options?: { trimStdout?: boolean }): ReturnType<typeof runGit>;
+	git(
+		root: string,
+		args: string[],
+		options?: { trimStdout?: boolean; signal?: AbortSignal },
+	): ReturnType<typeof runGit>;
 	runCommand(input: {
 		command: VerificationPolicy["commands"][number];
 		cwd: string;
@@ -243,7 +248,12 @@ export interface HarnessNativeRepositoryPrimitives {
 		root: string;
 		patch: unknown;
 		validateTarget: (relativePath: string) => Promise<void>;
+		signal?: AbortSignal;
 	}): ReturnType<typeof applyManagedMutationPatch>;
+	/** Bind the one caller-owned wall-cancellation scope to location-specific operations. */
+	bindCancellationSignal?(signal: AbortSignal): () => void;
+	/** Resolve only after location-specific work has stopped, or reject when that cannot be confirmed. */
+	acknowledgeCancellation?(): Promise<void>;
 	fingerprint(root: string): Promise<string>;
 	captureMutationSurface(root: string): ReturnType<typeof captureHarnessNativeWorktreeMutationSurface>;
 }
@@ -424,7 +434,7 @@ export function createHarnessNativeRuntime(
 ): AgentRuntime {
 	return {
 		id: "harness-native",
-		execute: async ({ policy, worktreePath, repairContext, repository }) => {
+		execute: async ({ policy, worktreePath, repairContext, repository, signal }) => {
 			if (policy.nativeAgent === null || policy.model === undefined)
 				throw new Error("Harness-native Runtime requires validated native policy and model.");
 			const repositoryPrimitives = repository ?? createHostRepositoryPrimitives();
@@ -527,9 +537,7 @@ export function createHarnessNativeRuntime(
 				for (; attempt <= phaseAttemptLimit; attempt += 1) {
 					const attemptStartedAt = Date.now();
 					const activeElapsedMs = initialActiveRuntimeMs + (attemptStartedAt - invocationStartedAt);
-					const remainingTimeMs = policy.timeoutMs - activeElapsedMs;
-					if (remainingTimeMs <= 0)
-						throw new Error("Harness-native task resource ledger exhausted wall-clock time.");
+					const remainingTimeMs = Math.max(1, policy.timeoutMs - activeElapsedMs);
 					const runtime = await runHarnessNativeRuntime({
 						policy: nativePolicy,
 						prompt: policy.prompt,
@@ -547,6 +555,7 @@ export function createHarnessNativeRuntime(
 						eventSpine,
 						resumeAttempt,
 						durableWorktreeCheckpoints: durable,
+						signal,
 					});
 					resumeAttempt = false;
 					const execution: AgentExecution = {
@@ -596,34 +605,40 @@ export function createHarnessNativeRuntime(
 					runtimeEvents: eventSpine.snapshot(),
 				};
 			};
-			const durable = options.durable ?? providerOverride === undefined;
-			if (!durable) return await executeWithRecord({ initialEvents: [], append: () => undefined }, false);
-			return await withHarnessNativeRuntimeRecordLock(recordPath, async () => {
-				const runtimeWorktree = createHarnessNativeRuntimeRecordWorktree(
-					repositoryPrimitives,
-					worktreePath,
-					policy.baseCommit,
-				);
-				const record = await HarnessNativeRuntimeRecord.open({
-					path: recordPath,
-					identity: {
-						version: 1,
-						kind: "agentpatchcheck-runtime",
-						runId,
-						taskSha256: hashHarnessNativeTaskIdentity({
-							prompt: policy.prompt,
-							model,
-							provider: provider.id,
-							policy: nativePolicy,
-						}),
-						worktreePath: resolve(worktreePath),
-						repositoryRoot: resolve(policy.repositoryRoot),
-						baseCommit: policy.baseCommit,
-					},
-					worktree: runtimeWorktree,
+			const unbindCancellation =
+				signal === undefined ? undefined : repositoryPrimitives.bindCancellationSignal?.(signal);
+			try {
+				const durable = options.durable ?? providerOverride === undefined;
+				if (!durable) return await executeWithRecord({ initialEvents: [], append: () => undefined }, false);
+				return await withHarnessNativeRuntimeRecordLock(recordPath, async () => {
+					const runtimeWorktree = createHarnessNativeRuntimeRecordWorktree(
+						repositoryPrimitives,
+						worktreePath,
+						policy.baseCommit,
+					);
+					const record = await HarnessNativeRuntimeRecord.open({
+						path: recordPath,
+						identity: {
+							version: 1,
+							kind: "agentpatchcheck-runtime",
+							runId,
+							taskSha256: hashHarnessNativeTaskIdentity({
+								prompt: policy.prompt,
+								model,
+								provider: provider.id,
+								policy: nativePolicy,
+							}),
+							worktreePath: resolve(worktreePath),
+							repositoryRoot: resolve(policy.repositoryRoot),
+							baseCommit: policy.baseCommit,
+						},
+						worktree: runtimeWorktree,
+					});
+					return await executeWithRecord(record, true);
 				});
-				return await executeWithRecord(record, true);
-			});
+			} finally {
+				unbindCancellation?.();
+			}
 		},
 	};
 }
@@ -653,12 +668,17 @@ async function safePath(repository: HarnessNativeRepositoryPrimitives, root: str
 	let currentPath = root;
 	for (const segment of relativePath.split(/[\\/]/u)) {
 		currentPath = repository.joinPath(currentPath, segment);
-		if ((await repository.stat(currentPath)).isSymbolicLink()) throw new Error("Tool path must not traverse a symbolic link.");
+		if ((await repository.stat(currentPath)).isSymbolicLink())
+			throw new Error("Tool path must not traverse a symbolic link.");
 	}
 	return candidate;
 }
 
-async function safeNewFile(repository: HarnessNativeRepositoryPrimitives, root: string, value: unknown): Promise<string> {
+async function safeNewFile(
+	repository: HarnessNativeRepositoryPrimitives,
+	root: string,
+	value: unknown,
+): Promise<string> {
 	const relativeValue = validateRelativeToolPath(value);
 	if (relativeValue === ".") throw new Error("New file path is invalid.");
 	const parentPath = await safePath(repository, root, repository.parentPath(relativeValue));
@@ -675,14 +695,22 @@ async function safeNewFile(repository: HarnessNativeRepositoryPrimitives, root: 
 	}
 }
 
-async function regularFile(repository: HarnessNativeRepositoryPrimitives, root: string, value: unknown): Promise<string> {
+async function regularFile(
+	repository: HarnessNativeRepositoryPrimitives,
+	root: string,
+	value: unknown,
+): Promise<string> {
 	const path = await safePath(repository, root, value);
 	const metadata = await repository.stat(path);
 	if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("Tool path is not a regular file.");
 	return path;
 }
 
-async function safePatchTarget(repository: HarnessNativeRepositoryPrimitives, root: string, value: string): Promise<void> {
+async function safePatchTarget(
+	repository: HarnessNativeRepositoryPrimitives,
+	root: string,
+	value: string,
+): Promise<void> {
 	try {
 		await regularFile(repository, root, value);
 	} catch (error) {
@@ -770,7 +798,8 @@ async function preparePatches(
 		}
 		const targets = appliedTargets.get(patch.path);
 		const original = originalContents.get(patch.path);
-		if (targets === undefined || original === undefined) throw new Error("Patch batch preflight state is unavailable.");
+		if (targets === undefined || original === undefined)
+			throw new Error("Patch batch preflight state is unavailable.");
 		if (targets.some((target) => target.expectedText === patch.expectedText))
 			throw new Error("Patch batch must not target the same text twice.");
 		const originalStart = original.indexOf(patch.expectedText);
@@ -899,7 +928,9 @@ async function scanTextFile(options: {
 	query: string;
 	maxBytes: number;
 	metadata: SearchMetadata;
+	signal?: AbortSignal;
 }): Promise<{ scannedBytes: number; stoppedForMatchLimit: boolean }> {
+	options.signal?.throwIfAborted();
 	const metadata = await options.repository.stat(options.path);
 	const displayPath = options.repository.relativePath(options.workspaceRoot, options.path);
 	if (!metadata.isFile() || metadata.isSymbolicLink()) {
@@ -918,6 +949,7 @@ async function scanTextFile(options: {
 	let stoppedForMatchLimit = false;
 	try {
 		const content = await options.repository.readText(options.path);
+		options.signal?.throwIfAborted();
 		for (const text of [Buffer.from(content, "utf8").subarray(0, scanBytes).toString("utf8")]) {
 			scannedBytes += Buffer.byteLength(text, "utf8");
 			if (text.includes("\0")) {
@@ -927,6 +959,7 @@ async function scanTextFile(options: {
 			const lines = `${pending}${text}`.split(/\r?\n/u);
 			pending = lines.pop() ?? "";
 			for (const line of lines) {
+				options.signal?.throwIfAborted();
 				lineNumber += 1;
 				if (!line.includes(options.query)) continue;
 				options.metadata.matches.push({ path: displayPath, line: lineNumber, text: line });
@@ -956,7 +989,9 @@ async function searchTextRecursively(
 	value: unknown,
 	query: string,
 	limit: number,
+	signal?: AbortSignal,
 ) {
+	signal?.throwIfAborted();
 	const searchRoot = await safePath(repository, root, value);
 	const searchRootMetadata = await repository.stat(searchRoot);
 	if (!searchRootMetadata.isDirectory() || searchRootMetadata.isSymbolicLink())
@@ -968,6 +1003,7 @@ async function searchTextRecursively(
 	let readBytes = 0;
 	let stop = false;
 	while (pendingDirectories.length > 0 && !stop) {
+		signal?.throwIfAborted();
 		const directory = pendingDirectories.pop();
 		if (directory === undefined) break;
 		if (visitedDirectories >= RECURSIVE_SEARCH_MAX_DIRECTORIES) {
@@ -979,8 +1015,13 @@ async function searchTextRecursively(
 		visitedDirectories += 1;
 		const entries = await repository.listDirectory(directory.path);
 		for (const entry of entries) {
+			signal?.throwIfAborted();
 			if (visitedFiles >= RECURSIVE_SEARCH_MAX_FILES) {
-				recordSearchSkip(search, repository.relativePath(root, repository.joinPath(directory.path, entry.name)), "file-limit");
+				recordSearchSkip(
+					search,
+					repository.relativePath(root, repository.joinPath(directory.path, entry.name)),
+					"file-limit",
+				);
 				stop = true;
 				break;
 			}
@@ -1007,6 +1048,7 @@ async function searchTextRecursively(
 				query,
 				maxBytes: RECURSIVE_SEARCH_MAX_TOTAL_BYTES - readBytes,
 				metadata: search,
+				signal,
 			});
 			readBytes += scanned.scannedBytes;
 			if (scanned.stoppedForMatchLimit) {
@@ -1016,7 +1058,15 @@ async function searchTextRecursively(
 		}
 	}
 	return {
-		observation: searchObservation(search.matches, repository, root, searchRoot, search.coverage, search.skippedCount, limit),
+		observation: searchObservation(
+			search.matches,
+			repository,
+			root,
+			searchRoot,
+			search.coverage,
+			search.skippedCount,
+			limit,
+		),
 		evidence: `Recursive search coverage=${search.coverage}; files=${visitedFiles}; matches=${search.matchCount}; skipped=${search.skippedCount}.`,
 		search,
 	};
@@ -1028,7 +1078,9 @@ async function searchTextDirectly(
 	value: unknown,
 	query: string,
 	limit: number,
+	signal?: AbortSignal,
 ) {
+	signal?.throwIfAborted();
 	const searchRoot = await safePath(repository, root, value);
 	const searchRootMetadata = await repository.stat(searchRoot);
 	if (searchRootMetadata.isSymbolicLink()) throw new Error("Search path must not be a symbolic link.");
@@ -1036,6 +1088,7 @@ async function searchTextDirectly(
 	let visitedFiles = 0;
 	let readBytes = 0;
 	const scan = async (path: string): Promise<boolean> => {
+		signal?.throwIfAborted();
 		const fileName = repository.baseName(path);
 		if (isExcludedRecursiveSearchFile(fileName)) {
 			recordSearchSkip(search, repository.relativePath(root, path), "excluded-path");
@@ -1053,6 +1106,7 @@ async function searchTextDirectly(
 			query,
 			maxBytes: RECURSIVE_SEARCH_MAX_TOTAL_BYTES - readBytes,
 			metadata: search,
+			signal,
 		});
 		readBytes += scanned.scannedBytes;
 		return scanned.stoppedForMatchLimit;
@@ -1062,10 +1116,15 @@ async function searchTextDirectly(
 	} else if (searchRootMetadata.isDirectory()) {
 		const entries = await repository.listDirectory(searchRoot);
 		for (const entry of entries) {
+			signal?.throwIfAborted();
 			if (!entry.isFile() || entry.isSymbolicLink()) continue;
 			const stopped = await scan(repository.joinPath(searchRoot, entry.name));
 			if (stopped) {
-				recordSearchSkip(search, repository.relativePath(root, repository.joinPath(searchRoot, entry.name)), "match-limit");
+				recordSearchSkip(
+					search,
+					repository.relativePath(root, repository.joinPath(searchRoot, entry.name)),
+					"match-limit",
+				);
 				break;
 			}
 		}
@@ -1074,7 +1133,15 @@ async function searchTextDirectly(
 	}
 	const displayRoot = searchRootMetadata.isFile() ? repository.parentPath(searchRoot) : searchRoot;
 	return {
-		observation: searchObservation(search.matches, repository, root, displayRoot, search.coverage, search.skippedCount, limit),
+		observation: searchObservation(
+			search.matches,
+			repository,
+			root,
+			displayRoot,
+			search.coverage,
+			search.skippedCount,
+			limit,
+		),
 		evidence: `Direct search coverage=${search.coverage}; files=${visitedFiles}; matches=${search.matchCount}; skipped=${search.skippedCount}.`,
 		search,
 	};
@@ -1090,6 +1157,7 @@ async function executeTool(
 ): Promise<RuntimeToolResult> {
 	const name = request.tool;
 	try {
+		signal?.throwIfAborted();
 		if (name === "read-file") {
 			const input = parseReadFileArguments(request.arguments);
 			const result = await repository.readWindow({
@@ -1136,7 +1204,7 @@ async function executeTool(
 			const query = request.arguments.query;
 			if (typeof query !== "string" || !query || query.length > 256 || query.includes("\0"))
 				throw new Error("Search query is invalid.");
-			const result = await searchTextDirectly(repository, root, request.arguments.path, query, limit);
+			const result = await searchTextDirectly(repository, root, request.arguments.path, query, limit, signal);
 			return {
 				status: "ok" as const,
 				...result,
@@ -1148,7 +1216,7 @@ async function executeTool(
 			const query = request.arguments.query;
 			if (typeof query !== "string" || !query || query.length > 256 || query.includes("\0"))
 				throw new Error("Search query is invalid.");
-			const result = await searchTextRecursively(repository, root, request.arguments.path, query, limit);
+			const result = await searchTextRecursively(repository, root, request.arguments.path, query, limit, signal);
 			return {
 				status: "ok" as const,
 				...result,
@@ -1159,6 +1227,7 @@ async function executeTool(
 		if (name === "git-status" || name === "git-diff") {
 			const result = await repository.git(root, name === "git-status" ? ["status", "--short"] : ["diff", "--"], {
 				trimStdout: false,
+				signal,
 			});
 			return result.ok
 				? {
@@ -1180,6 +1249,7 @@ async function executeTool(
 				root,
 				patch: request.arguments.patch,
 				validateTarget: async (path) => await safePatchTarget(repository, root, path),
+				signal,
 			});
 			return {
 				status: "ok" as const,
@@ -1199,6 +1269,7 @@ async function executeTool(
 				if (!before.includes(expectedText))
 					throw new Error("Single edit expectedText was not found in the target.");
 				const after = before.replaceAll(expectedText, replacementText);
+				signal?.throwIfAborted();
 				await repository.writeText(path, after);
 				const relativePath = normalizedWorkspacePath(repository, root, path);
 				return {
@@ -1217,6 +1288,7 @@ async function executeTool(
 			});
 			const [edit] = edits;
 			if (edit === undefined) throw new Error("Single edit input is invalid.");
+			signal?.throwIfAborted();
 			await repository.writeText(edit.path, edit.replacement);
 			const affectedPath = normalizedWorkspacePath(repository, root, edit.path);
 			return {
@@ -1233,7 +1305,10 @@ async function executeTool(
 		}
 		if (name === "apply-patch-batch") {
 			const patches = await preparePatchBatch(repository, root, request.arguments.patches);
-			for (const patch of patches) await repository.writeText(patch.path, patch.replacement);
+			for (const patch of patches) {
+				signal?.throwIfAborted();
+				await repository.writeText(patch.path, patch.replacement);
+			}
 			return {
 				status: "ok" as const,
 				observation: `Patch batch applied to ${patches.length} files.`,
@@ -1246,8 +1321,14 @@ async function executeTool(
 		}
 		if (name === "apply-edit-batch") {
 			const batch = await prepareEditBatch(repository, root, request.arguments);
-			for (const patch of batch.patches) await repository.writeText(patch.path, patch.replacement);
-			for (const file of batch.creates) await repository.writeText(file.path, file.content, { exclusive: true });
+			for (const patch of batch.patches) {
+				signal?.throwIfAborted();
+				await repository.writeText(patch.path, patch.replacement);
+			}
+			for (const file of batch.creates) {
+				signal?.throwIfAborted();
+				await repository.writeText(file.path, file.content, { exclusive: true });
+			}
 			return {
 				status: "ok" as const,
 				observation: `Edit batch applied to ${batch.patches.length} existing and ${batch.creates.length} new files.`,
@@ -1263,6 +1344,7 @@ async function executeTool(
 			if (typeof content !== "string" || content.length > 32_768 || content.includes("\0"))
 				throw new Error("New file content is invalid.");
 			const path = await safeNewFile(repository, root, request.arguments.path);
+			signal?.throwIfAborted();
 			await repository.writeText(path, content, { exclusive: true });
 			return {
 				status: "ok" as const,
@@ -1281,12 +1363,14 @@ async function executeTool(
 			try {
 				path = await regularFile(repository, root, request.arguments.path);
 				before = await repository.readText(path);
+				signal?.throwIfAborted();
 				await repository.writeText(path, content);
 				operation = "updated";
 			} catch (error) {
 				if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "ENOENT")
 					throw error;
 				path = await safeNewFile(repository, root, request.arguments.path);
+				signal?.throwIfAborted();
 				await repository.writeText(path, content, { exclusive: true });
 				operation = "created";
 				before = null;
@@ -1422,6 +1506,7 @@ async function executeTool(
 			facts: { kind: "other" as const },
 		};
 	} catch (error) {
+		if (signal?.aborted && error instanceof ProcessTreeTerminationError) throw error;
 		if (name === "apply-patch" && error instanceof MutationPatchError) {
 			return {
 				status: "rejected" as const,
@@ -1435,7 +1520,9 @@ async function executeTool(
 				status: "error" as const,
 				observation: "Tool request failed.",
 				evidence: error instanceof Error ? error.message : "Tool request failed.",
-				facts: isHarnessNativeRetrievalTool(request.tool) ? retrievalFacts(request, "error") : { kind: "other" as const },
+				facts: isHarnessNativeRetrievalTool(request.tool)
+					? retrievalFacts(request, "error")
+					: { kind: "other" as const },
 			};
 		}
 		return {
@@ -1458,6 +1545,7 @@ export async function executeHarnessNativeTool(input: {
 	maxObservationBytes: number;
 	verification: VerificationPolicy | undefined;
 	repository?: HarnessNativeRepositoryPrimitives;
+	signal?: AbortSignal;
 }): Promise<RuntimeToolResult> {
 	const result = await executeTool(
 		input.repository ?? createHostRepositoryPrimitives(),
@@ -1465,6 +1553,7 @@ export async function executeHarnessNativeTool(input: {
 		{ kind: "tool", tool: input.tool, arguments: input.arguments },
 		input.maxObservationBytes,
 		input.verification,
+		input.signal,
 	);
 	return result.facts.kind === "mutation" ? { ...result, affectedPaths: [...result.facts.affectedPaths] } : result;
 }
@@ -1511,6 +1600,8 @@ export async function runHarnessNativeRuntime(options: {
 	resumeAttempt?: boolean;
 	/** Enabled only when the Event Spine is backed by a durable Runtime record. */
 	durableWorktreeCheckpoints?: boolean;
+	/** Caller-owned whole-agent cancellation scope. */
+	signal?: AbortSignal;
 }): Promise<HarnessNativeRuntimeResult> {
 	const repository = options.repository ?? createHostRepositoryPrimitives();
 	const startedAt = Date.now();
@@ -1711,6 +1802,10 @@ export async function runHarnessNativeRuntime(options: {
 			).shadowControlPlane,
 		};
 	};
+	const timeout = async (): Promise<HarnessNativeRuntimeResult> => {
+		await repository.acknowledgeCancellation?.();
+		return fail("timeout");
+	};
 	const recordRejectedToolRequest = (input: {
 		request: Extract<ModelDecision, { kind: "tool" }>;
 		iteration: number;
@@ -1748,7 +1843,8 @@ export async function runHarnessNativeRuntime(options: {
 		rejectedToolCalls += 1;
 	};
 	for (let iteration = iterations + 1; iteration <= options.policy.maxIterations; iteration += 1) {
-		if (Date.now() - startedAt >= options.timeoutMs) return fail("timeout");
+		if (options.signal?.aborted || (options.signal === undefined && Date.now() - startedAt >= options.timeoutMs))
+			return await timeout();
 		let answer: Awaited<ReturnType<HarnessNativeModelProvider["decide"]>>;
 		iterations += 1;
 		planExecutor.synchronize(planner.currentRevision);
@@ -1785,7 +1881,9 @@ export async function runHarnessNativeRuntime(options: {
 					contextView: contextViews.executor,
 					protocolRecovery: contextViews.executor.protocolRecovery,
 					completionFeedback: contextViews.executor.completionFeedback,
+					signal: options.signal,
 				});
+				options.signal?.throwIfAborted();
 				eventSpine.append({
 					version: 1,
 					attempt,
@@ -1809,12 +1907,13 @@ export async function runHarnessNativeRuntime(options: {
 					type: "model-call-completed",
 					callId: modelCallId,
 					owner: "executor",
-					outcome: "failed",
+					outcome: options.signal?.aborted ? "interrupted" : "failed",
 					inputTokens: null,
 					outputTokens: null,
 					transportRetries: null,
 					actualModel: null,
 				});
+				if (options.signal?.aborted) return await timeout();
 				if (failure === null || !isRecoverableProtocolFailure(failure)) return fail("model-failed", failure);
 				const canRetry = executorRecoveries < options.policy.maxProtocolRecoveries;
 				if (canRetry) {
@@ -1895,6 +1994,7 @@ export async function runHarnessNativeRuntime(options: {
 		}
 		let planningTrigger: PlannerTrigger | null = null;
 		for (const [requestIndex, request] of requests.entries()) {
+			if (options.signal?.aborted) return await timeout();
 			const actionId = `attempt-${attempt}:iteration-${iteration}:action-${requestIndex + 1}`;
 			if (toolCalls >= options.policy.maxToolCalls) {
 				recordRejectedToolRequest({
@@ -1943,7 +2043,9 @@ export async function runHarnessNativeRuntime(options: {
 									facts: { kind: "other" },
 									rejectionReason: "invalid-input",
 								};
-							const beforeSurface = dshCompatible ? await repository.captureMutationSurface(options.worktreePath) : null;
+							const beforeSurface = dshCompatible
+								? await repository.captureMutationSurface(options.worktreePath)
+								: null;
 							const nestedOwnedPaths = new Set<string>();
 							const nestedOwnedSurfaceHashes = new Map<string, string | undefined>();
 							const collectDirectAffectedPaths = async (): Promise<string[]> => {
@@ -1961,6 +2063,7 @@ export async function runHarnessNativeRuntime(options: {
 									signal: AbortSignal | undefined,
 									serializeMutation: boolean,
 								): Promise<RuntimeToolResult | null> => {
+									if (signal?.aborted) return null;
 									const mapped = mapProgrammaticToolFacadeCall(call);
 									const nestedActionId = `${actionId}:code:${++nestedAction}`;
 									const nestedRequest: Extract<ModelDecision, { kind: "tool" }> = {
@@ -1993,19 +2096,19 @@ export async function runHarnessNativeRuntime(options: {
 												tool: mapped.tool,
 												arguments: nestedArguments,
 											});
-									const nested = await executeTool(
-										repository,
-										options.worktreePath,
-										nestedRequest,
-										options.policy.maxObservationBytes,
-										options.verification,
-										signal,
-									);
+											const nested = await executeTool(
+												repository,
+												options.worktreePath,
+												nestedRequest,
+												options.policy.maxObservationBytes,
+												options.verification,
+												signal,
+											);
 											if (nested.status === "rejected") rejectedToolCalls += 1;
 											else toolCalls += 1;
 											if (nested.facts.kind === "mutation") {
 												const nestedSurface = dshCompatible
-											? await repository.captureMutationSurface(options.worktreePath)
+													? await repository.captureMutationSurface(options.worktreePath)
 													: null;
 												for (const path of nested.facts.affectedPaths) {
 													nestedOwnedPaths.add(path);
@@ -2036,7 +2139,7 @@ export async function runHarnessNativeRuntime(options: {
 													iteration,
 													type: "worktree-checkpoint",
 													actionId: nestedActionId,
-											worktreeSha256: await repository.fingerprint(options.worktreePath),
+													worktreeSha256: await repository.fingerprint(options.worktreePath),
 												});
 											const candidate = planner.triggerFor(nested.facts, nested.status);
 											if (candidate !== null) planningTrigger = candidate;
@@ -2086,6 +2189,7 @@ export async function runHarnessNativeRuntime(options: {
 									tools: programmaticTools.map((definition) => definition.name),
 									maxWallMs: Math.max(1, options.timeoutMs - (Date.now() - startedAt)),
 									maxOutputBytes: options.policy.maxObservationBytes,
+									signal: options.signal,
 								};
 								const result = dshCompatible
 									? await runDshCompatibleCode({
@@ -2108,8 +2212,8 @@ export async function runHarnessNativeRuntime(options: {
 										})
 									: await runProgrammaticToolComposition({
 											...commonInput,
-											dispatch: async (call) => {
-												const nested = await executeNestedCall(call, undefined, true);
+											dispatch: async (call, signal) => {
+												const nested = await executeNestedCall(call, signal, true);
 												return nested === null
 													? { ok: false, observation: "Harness-native tool budget exhausted." }
 													: { ok: nested.status === "ok", observation: nested.observation };
@@ -2127,6 +2231,14 @@ export async function runHarnessNativeRuntime(options: {
 										affectedPaths.length > 0 ? mutationFacts("run-code", affectedPaths) : { kind: "other" },
 								};
 							} catch (error) {
+								if (error instanceof ProcessTreeTerminationError) throw error;
+								if (options.signal?.aborted)
+									return {
+										status: "error",
+										observation: "run-code was cancelled by the agent wall deadline.",
+										evidence: "run-code cancellation drained all started nested dispatches.",
+										facts: { kind: "other" },
+									};
 								const affectedPaths = await collectDirectAffectedPaths();
 								return {
 									status: "error",
@@ -2146,6 +2258,7 @@ export async function runHarnessNativeRuntime(options: {
 							request,
 							options.policy.maxObservationBytes,
 							options.verification,
+							options.signal,
 						);
 			if (tool.status === "rejected") rejectedToolCalls += 1;
 			else if (!compositionEnvelope) toolCalls += 1;
@@ -2164,7 +2277,7 @@ export async function runHarnessNativeRuntime(options: {
 				...(tool.status === "rejected" ? { rejectionReason: tool.rejectionReason ?? "workspace-policy" } : {}),
 				...(compositionEnvelope && tool.status !== "rejected" ? { countsTowardToolBudget: false } : {}),
 			});
-			if (options.durableWorktreeCheckpoints && tool.facts.kind === "mutation")
+			if (options.durableWorktreeCheckpoints && tool.facts.kind === "mutation" && !options.signal?.aborted)
 				eventSpine.append({
 					version: 1,
 					attempt,
@@ -2173,6 +2286,7 @@ export async function runHarnessNativeRuntime(options: {
 					actionId,
 					worktreeSha256: await repository.fingerprint(options.worktreePath),
 				});
+			if (options.signal?.aborted) return await timeout();
 			if (compositionTerminalReason !== null) return fail(compositionTerminalReason);
 			const candidateTrigger = compositionEnvelope ? null : planner.triggerFor(tool.facts, tool.status);
 			if (candidateTrigger !== null) planningTrigger = candidateTrigger;
@@ -2213,6 +2327,7 @@ export async function runHarnessNativeRuntime(options: {
 		}
 		if (detectHarnessNativeStuckPattern(eventSpine.forAttempt(attempt), attempt) !== null) return fail("stuck");
 		if (planningTrigger !== null) {
+			if (options.signal?.aborted) return await timeout();
 			let planningResult: Awaited<ReturnType<HarnessNativePlanner["update"]>>;
 			let plannerRecoveries = 0;
 			for (;;) {
@@ -2237,6 +2352,7 @@ export async function runHarnessNativeRuntime(options: {
 						attemptContinuation: options.attemptContinuation ?? null,
 						contextView: contextViews.planner,
 						protocolRecovery: contextViews.planner.protocolRecovery,
+						signal: options.signal,
 					});
 					eventSpine.append({
 						version: 1,
@@ -2261,12 +2377,13 @@ export async function runHarnessNativeRuntime(options: {
 						type: "model-call-completed",
 						callId: modelCallId,
 						owner: "planner",
-						outcome: "failed",
+						outcome: options.signal?.aborted ? "interrupted" : "failed",
 						inputTokens: null,
 						outputTokens: null,
 						transportRetries: null,
 						actualModel: null,
 					});
+					if (options.signal?.aborted) return await timeout();
 					if (failure === null || !isRecoverableProtocolFailure(failure)) return fail("model-failed", failure);
 					const canRetry = plannerRecoveries < options.policy.maxProtocolRecoveries;
 					if (canRetry) {

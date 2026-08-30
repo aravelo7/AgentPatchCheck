@@ -7,7 +7,7 @@ import {
 	type Message,
 	type ToolDefinition,
 } from "@clinebot/llms";
-import { fetch as undiciFetch, ProxyAgent, type RequestInit as UndiciRequestInit } from "undici";
+import { ProxyAgent, type RequestInit as UndiciRequestInit, fetch as undiciFetch } from "undici";
 import { type CredentialResolution, resolveCredential } from "./credential-resolver";
 import {
 	type DeepSeekAssistantMessage,
@@ -78,6 +78,8 @@ export interface ModelProviderContext {
 	protocolRecovery?: HarnessNativeProtocolRecoveryFeedback | null;
 	/** Latest denied finish feedback derived from the Runtime Event Spine. */
 	completionFeedback?: string | null;
+	/** Caller-owned whole-agent cancellation scope. */
+	signal?: AbortSignal;
 }
 
 export interface ModelProviderDecision {
@@ -811,10 +813,12 @@ async function requestJson(
 	body: Record<string, unknown>,
 	dependencies: ModelProviderDependencies,
 	maxTransportRetries: number,
+	signal?: AbortSignal,
 ): Promise<{ payload: unknown; requestId: string | null; transportRetries: number }> {
 	let response: Response | null = null;
 	let transportRetries = 0;
 	for (;;) {
+		signal?.throwIfAborted();
 		try {
 			response = await dependencies.fetcher(endpoint(configuration.baseUrl, path), {
 				method: "POST",
@@ -823,8 +827,10 @@ async function requestJson(
 					"Content-Type": "application/json",
 				},
 				body: JSON.stringify(body),
+				signal,
 			});
 		} catch (error) {
+			if (signal?.aborted) throw signal.reason;
 			if (error instanceof ModelProviderFailureError) throw error;
 			const cause = typeof error === "object" && error !== null && "cause" in error ? error.cause : undefined;
 			const code = errorCode(cause) ?? errorCode(error);
@@ -846,7 +852,9 @@ async function requestJson(
 	let payload: unknown;
 	try {
 		payload = await response.json();
+		signal?.throwIfAborted();
 	} catch {
+		if (signal?.aborted) throw signal.reason;
 		throw providerFailure(response.ok ? "malformed-response" : "provider-error", {
 			httpStatus: response.ok ? null : response.status,
 			requestId,
@@ -1219,6 +1227,7 @@ function createOpenAICompatibleProvider(
 				},
 				dependencies,
 				options.maxTransportRetries,
+				context.signal,
 			);
 			return {
 				...parseResponsesPlan(result.payload, result.requestId),
@@ -1249,6 +1258,7 @@ function createOpenAICompatibleProvider(
 			},
 			dependencies,
 			options.maxTransportRetries,
+			context.signal,
 		);
 		return {
 			...parseChatPlan(result.payload, result.requestId),
@@ -1269,6 +1279,7 @@ function createOpenAICompatibleProvider(
 				},
 				dependencies,
 				maxTransportRetries,
+				context.signal,
 			);
 			return {
 				...parseResponsesDecision(result.payload, result.requestId),
@@ -1293,6 +1304,7 @@ function createOpenAICompatibleProvider(
 			},
 			dependencies,
 			maxTransportRetries,
+			context.signal,
 		);
 		const { assistantMessage: _assistantMessage, ...decision } = parseChatDecision(result.payload, result.requestId);
 		return {
@@ -1354,6 +1366,7 @@ function createOpenAICompatibleProvider(
 						},
 						dependencies,
 						maxTransportRetries,
+						context.signal,
 					);
 					const parsed = parseChatDecision(result.payload, result.requestId);
 					pendingInteraction = {
@@ -1466,6 +1479,7 @@ function createDeepSeekProvider(
 		messages: DeepSeekMessage[],
 		tools: ReturnType<typeof chatTools>,
 		maxTransportRetries: number,
+		signal?: AbortSignal,
 	) =>
 		requestJson(
 			configuration,
@@ -1479,6 +1493,7 @@ function createDeepSeekProvider(
 			}),
 			dependencies,
 			maxTransportRetries,
+			signal,
 		);
 	const plan = async (context: PlannerProviderContext): Promise<PlannerProviderResult> => {
 		const result = await request(
@@ -1493,6 +1508,7 @@ function createDeepSeekProvider(
 			],
 			[{ type: "function", function: planToolDefinition }],
 			options.maxTransportRetries,
+			context.signal,
 		);
 		return {
 			...parseDeepSeekPlan(result.payload, result.requestId),
@@ -1508,6 +1524,7 @@ function createDeepSeekProvider(
 			],
 			chatTools(context.tools),
 			options.maxTransportRetries,
+			context.signal,
 		);
 		const { assistantMessage: _assistantMessage, ...decision } = parseDeepSeekDecision(
 			result.payload,
@@ -1561,6 +1578,7 @@ function createDeepSeekProvider(
 						],
 						chatTools(context.tools),
 						maxTransportRetries,
+						context.signal,
 					);
 					const parsed = parseDeepSeekDecision(result.payload, result.requestId);
 					pendingInteraction = {
@@ -1672,6 +1690,7 @@ function createGeminiNativeProvider(
 				modelId: geminiModelId(context.model),
 				capabilities: ["streaming", "tools"],
 				fetch: dependencies.fetcher,
+				abortSignal: context.signal,
 				onRetryAttempt: () => {
 					retryCount += 1;
 				},
@@ -1718,6 +1737,7 @@ function createGeminiNativeProvider(
 				...(retryCount === 0 ? {} : { transportRetries: retryCount }),
 			};
 		} catch (error) {
+			if (context.signal?.aborted) throw context.signal.reason;
 			if (error instanceof ModelProviderFailureError) throw error;
 			throw providerFailure("provider-unavailable");
 		}
@@ -1738,6 +1758,7 @@ function createGeminiNativeProvider(
 				modelId: geminiModelId(context.model),
 				capabilities: ["streaming", "tools"],
 				fetch: dependencies.fetcher,
+				abortSignal: context.signal,
 				onRetryAttempt: () => {
 					retryCount += 1;
 				},
@@ -1762,6 +1783,7 @@ function createGeminiNativeProvider(
 					let streamFailure: string | undefined | null = null;
 					let toolIndex = 0;
 					const activeHandler = getHandler(context);
+					activeHandler.setAbortSignal?.(context.signal);
 
 					for await (const chunk of activeHandler.createMessage(
 						executorSystemInstruction(context),
@@ -1808,6 +1830,7 @@ function createGeminiNativeProvider(
 							: { transportRetries: retryCount - retriesBeforeRequest }),
 					};
 				} catch (error) {
+					if (context.signal?.aborted) throw context.signal.reason;
 					if (error instanceof ModelProviderFailureError) throw error;
 					throw providerFailure("provider-unavailable");
 				}
@@ -1892,7 +1915,8 @@ export function createModelProvider(
 	overrides: Partial<ModelProviderDependencies> = {},
 	options: ModelProviderOptions = {},
 ): ModelProvider {
-	const proxyUrl = configuration.provider === "deepseek" && overrides.fetcher === undefined ? resolveDeepSeekProxyUrl() : null;
+	const proxyUrl =
+		configuration.provider === "deepseek" && overrides.fetcher === undefined ? resolveDeepSeekProxyUrl() : null;
 	const dependencies = {
 		...defaultDependencies,
 		...overrides,

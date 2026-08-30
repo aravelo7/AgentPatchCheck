@@ -32,6 +32,8 @@ export interface RunCodexOptions {
 
 export type ProcessTreeKiller = (pid: number, callback: (error?: Error) => void) => void;
 
+export class ProcessTreeTerminationError extends Error {}
+
 export function terminateCodexProcess(
 	child: Pick<ChildProcess, "pid" | "kill">,
 	platform: NodeJS.Platform = process.platform,
@@ -42,6 +44,32 @@ export function terminateCodexProcess(
 		return;
 	}
 	child.kill();
+}
+
+/** Terminates the complete process tree and resolves only after the owned child exits. */
+export async function terminateCodexProcessAndWait(
+	child: ChildProcess,
+	platform: NodeJS.Platform = process.platform,
+	killTree: ProcessTreeKiller = (pid, callback) => treeKill(pid, "SIGKILL", callback),
+): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) return;
+	const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+	if (child.pid === undefined) {
+		child.kill();
+		await exited;
+		return;
+	}
+	const terminationError = await new Promise<Error | null>((resolve) =>
+		killTree(child.pid as number, (error) => resolve(error ?? null)),
+	);
+	if (terminationError !== null) {
+		child.kill();
+		await exited;
+		throw new ProcessTreeTerminationError(
+			`Could not confirm ${platform} process-tree termination: ${terminationError.message}`,
+		);
+	}
+	await exited;
 }
 
 export function buildCodexLaunchPlan(options: {

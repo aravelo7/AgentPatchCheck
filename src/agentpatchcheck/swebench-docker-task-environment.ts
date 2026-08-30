@@ -3,13 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { terminateCodexProcess } from "./codex-runner";
 import type {
 	HarnessNativeRepositoryDirectoryEntry,
 	HarnessNativeRepositoryMetadata,
 	HarnessNativeRepositoryPrimitives,
 } from "./harness-native-runtime";
-import { terminateCodexProcess } from "./codex-runner";
 import { applyManagedMutationPatch, type ManagedMutationPatchGitResult } from "./mutation-patch";
 import { readBoundedTextWindow } from "./read-file";
 import type { VerificationCommand } from "./types";
@@ -101,14 +100,28 @@ export function createDockerCommandExecutor(): DockerCommandExecutor {
 }
 
 function dockerFailure(stage: string, result: DockerCommandResult): Error {
-	return new Error(`SWE-bench Docker task environment ${stage} failed: ${result.stderr.trim() || `exit ${result.exitCode ?? "unavailable"}`}`);
+	return new Error(
+		`SWE-bench Docker task environment ${stage} failed: ${result.stderr.trim() || `exit ${result.exitCode ?? "unavailable"}`}`,
+	);
 }
 
-function metadata(kind: "file" | "directory" | "other", symlink: boolean, size: number): HarnessNativeRepositoryMetadata {
-	return { isFile: () => kind === "file", isDirectory: () => kind === "directory", isSymbolicLink: () => symlink, size };
+function metadata(
+	kind: "file" | "directory" | "other",
+	symlink: boolean,
+	size: number,
+): HarnessNativeRepositoryMetadata {
+	return {
+		isFile: () => kind === "file",
+		isDirectory: () => kind === "directory",
+		isSymbolicLink: () => symlink,
+		size,
+	};
 }
 
 export class DockerRepositoryPrimitives implements HarnessNativeRepositoryPrimitives {
+	private cancellationSignal: AbortSignal | null = null;
+	private quiescence: Promise<void> | null = null;
+
 	constructor(
 		private readonly containerId: string,
 		private readonly docker: DockerCommandExecutor,
@@ -118,16 +131,61 @@ export class DockerRepositoryPrimitives implements HarnessNativeRepositoryPrimit
 	resolvePath(root: string, relativePath: string): string {
 		return relativePath === "." ? root : `${root}/${relativePath.replaceAll("\\", "/")}`;
 	}
-	joinPath(...parts: string[]): string { return parts.join("/").replaceAll(/\/{2,}/gu, "/"); }
-	relativePath(root: string, path: string): string { return path === root ? "" : path.slice(root.length + 1); }
+	joinPath(...parts: string[]): string {
+		return parts.join("/").replaceAll(/\/{2,}/gu, "/");
+	}
+	relativePath(root: string, path: string): string {
+		return path === root ? "" : path.slice(root.length + 1);
+	}
 	parentPath(path: string): string {
 		const separator = path.lastIndexOf("/");
 		return separator < 0 ? "." : path.slice(0, separator) || "/";
 	}
-	baseName(path: string): string { return path.slice(path.lastIndexOf("/") + 1); }
+	baseName(path: string): string {
+		return path.slice(path.lastIndexOf("/") + 1);
+	}
+
+	bindCancellationSignal(signal: AbortSignal): () => void {
+		if (this.cancellationSignal !== null) throw new Error("Docker repository cancellation scope is already bound.");
+		this.cancellationSignal = signal;
+		const onAbort = (): void => {
+			this.quiescence ??= this.stopAndRestartContainer();
+		};
+		if (signal.aborted) onAbort();
+		else signal.addEventListener("abort", onAbort, { once: true });
+		return () => {
+			signal.removeEventListener("abort", onAbort);
+			this.cancellationSignal = null;
+			this.quiescence = null;
+		};
+	}
+
+	async acknowledgeCancellation(): Promise<void> {
+		await this.quiescence;
+	}
+
+	private async stopAndRestartContainer(): Promise<void> {
+		const stopped = await this.docker.run({ args: ["stop", "--time", "0", this.containerId] });
+		if (stopped.exitCode !== 0 || stopped.timedOut) throw dockerFailure("wall cancellation stop", stopped);
+		const restarted = await this.docker.run({ args: ["start", this.containerId] });
+		if (restarted.exitCode !== 0 || restarted.timedOut) throw dockerFailure("wall cancellation restart", restarted);
+	}
 
 	private async exec(args: string[], stdin?: string, timeoutMs?: number): Promise<DockerCommandResult> {
-		return await this.docker.run({ args: ["exec", "--workdir", this.root, this.containerId, ...args], stdin, timeoutMs });
+		if (this.cancellationSignal?.aborted) {
+			await this.acknowledgeCancellation();
+			throw this.cancellationSignal.reason;
+		}
+		const result = await this.docker.run({
+			args: ["exec", "--workdir", this.root, this.containerId, ...args],
+			stdin,
+			timeoutMs,
+		});
+		if (this.cancellationSignal?.aborted) {
+			await this.acknowledgeCancellation();
+			throw this.cancellationSignal.reason;
+		}
+		return result;
 	}
 
 	async stat(path: string): Promise<HarnessNativeRepositoryMetadata> {
@@ -139,7 +197,11 @@ export class DockerRepositoryPrimitives implements HarnessNativeRepositoryPrimit
 		}
 		const [kindValue, sizeValue] = result.stdout.trim().split(":");
 		const symlink = (await this.exec(["test", "-L", path])).exitCode === 0;
-		return metadata(kindValue === "regular file" ? "file" : kindValue === "directory" ? "directory" : "other", symlink, Number(sizeValue) || 0);
+		return metadata(
+			kindValue === "regular file" ? "file" : kindValue === "directory" ? "directory" : "other",
+			symlink,
+			Number(sizeValue) || 0,
+		);
 	}
 
 	async listDirectory(path: string): Promise<HarnessNativeRepositoryDirectoryEntry[]> {
@@ -150,7 +212,12 @@ export class DockerRepositoryPrimitives implements HarnessNativeRepositoryPrimit
 		for (let index = 0; index + 1 < values.length; index += 2) {
 			const name = values[index] as string;
 			const type = values[index + 1];
-			entries.push({ name, isFile: () => type === "f", isDirectory: () => type === "d", isSymbolicLink: () => type === "l" });
+			entries.push({
+				name,
+				isFile: () => type === "f",
+				isDirectory: () => type === "d",
+				isSymbolicLink: () => type === "l",
+			});
 		}
 		return entries;
 	}
@@ -161,7 +228,12 @@ export class DockerRepositoryPrimitives implements HarnessNativeRepositoryPrimit
 		return result.stdout;
 	}
 
-	async readWindow(input: { path: string; displayPath: string; input: { path: string; offset: number; limit: number }; maxObservationBytes: number }) {
+	async readWindow(input: {
+		path: string;
+		displayPath: string;
+		input: { path: string; offset: number; limit: number };
+		maxObservationBytes: number;
+	}) {
 		return await readBoundedTextWindow({
 			content: await this.readText(input.path),
 			displayPath: input.displayPath,
@@ -200,20 +272,53 @@ export class DockerRepositoryPrimitives implements HarnessNativeRepositoryPrimit
 		const result = await this.exec(["git", "-C", root, "-c", "core.quotepath=false", ...args]);
 		const stdout = options?.trimStdout === false ? result.stdout : result.stdout.trim();
 		const stderr = result.stderr.trim();
-		return { ok: result.exitCode === 0 && !result.timedOut, stdout, stderr, output: [stdout, stderr].filter(Boolean).join("\n"), error: result.exitCode === 0 ? null : `git ${args.join(" ")} failed`, exitCode: result.exitCode ?? -1 };
+		return {
+			ok: result.exitCode === 0 && !result.timedOut,
+			stdout,
+			stderr,
+			output: [stdout, stderr].filter(Boolean).join("\n"),
+			error: result.exitCode === 0 ? null : `git ${args.join(" ")} failed`,
+			exitCode: result.exitCode ?? -1,
+		};
 	}
 
-	async runCommand(input: { command: VerificationCommand; cwd: string; outputLimitBytes: number; signal?: AbortSignal }) {
-		const result = await this.exec(input.command.args.length === 0 ? [input.command.command] : [input.command.command, ...input.command.args], undefined, input.command.timeoutMs);
-		return { command: input.command.command, args: input.command.args, exitCode: result.exitCode, signal: null, stdout: result.stdout.slice(0, input.outputLimitBytes), stderr: result.stderr.slice(0, input.outputLimitBytes), durationMs: result.durationMs, timedOut: result.timedOut };
+	async runCommand(input: {
+		command: VerificationCommand;
+		cwd: string;
+		outputLimitBytes: number;
+		signal?: AbortSignal;
+	}) {
+		const result = await this.exec(
+			input.command.args.length === 0 ? [input.command.command] : [input.command.command, ...input.command.args],
+			undefined,
+			input.command.timeoutMs,
+		);
+		return {
+			command: input.command.command,
+			args: input.command.args,
+			exitCode: result.exitCode,
+			signal: null,
+			stdout: result.stdout.slice(0, input.outputLimitBytes),
+			stderr: result.stderr.slice(0, input.outputLimitBytes),
+			durationMs: result.durationMs,
+			timedOut: result.timedOut,
+		};
 	}
 
 	async applyPatch(input: { root: string; patch: unknown; validateTarget: (relativePath: string) => Promise<void> }) {
 		return await applyManagedMutationPatch({
 			...input,
 			runGitApply: async (args, patch): Promise<ManagedMutationPatchGitResult> => {
-				const result = await this.exec(["git", "-C", input.root, "-c", "core.quotepath=false", "apply", ...args, "--"], patch);
-				return { exitCode: result.exitCode ?? -1, stdout: Buffer.from(result.stdout), stderr: Buffer.from(result.stderr), outputTruncated: false };
+				const result = await this.exec(
+					["git", "-C", input.root, "-c", "core.quotepath=false", "apply", ...args, "--"],
+					patch,
+				);
+				return {
+					exitCode: result.exitCode ?? -1,
+					stdout: Buffer.from(result.stdout),
+					stderr: Buffer.from(result.stderr),
+					outputTruncated: false,
+				};
 			},
 		});
 	}
@@ -240,7 +345,10 @@ export class DockerRepositoryPrimitives implements HarnessNativeRepositoryPrimit
 export interface SWEbenchDockerTaskEnvironment {
 	path: string;
 	repository: HarnessNativeRepositoryPrimitives;
-	collectModelPatch(baseCommit: string, mutationPaths: readonly string[]): Promise<{ modelPatch: string; changedFiles: string[] }>;
+	collectModelPatch(
+		baseCommit: string,
+		mutationPaths: readonly string[],
+	): Promise<{ modelPatch: string; changedFiles: string[] }>;
 	cleanup(): Promise<void>;
 }
 
@@ -253,7 +361,8 @@ function parseRepositoryFileState(output: string): RepositoryFileState {
 		const match = /^([a-f\d]{64}) {2}(.*)$/su.exec(record);
 		if (match === null) throw new Error("Could not parse SWE-bench repository baseline state.");
 		const [, sha256, path] = match;
-		if (sha256 === undefined || path === undefined || !path) throw new Error("SWE-bench repository baseline state is invalid.");
+		if (sha256 === undefined || path === undefined || !path)
+			throw new Error("SWE-bench repository baseline state is invalid.");
 		files.set(path, sha256);
 	}
 	return files;
@@ -261,7 +370,9 @@ function parseRepositoryFileState(output: string): RepositoryFileState {
 
 function changedRepositoryPaths(baseline: RepositoryFileState, terminal: RepositoryFileState): string[] {
 	const paths = new Set([...baseline.keys(), ...terminal.keys()]);
-	return [...paths].filter((path) => baseline.get(path) !== terminal.get(path)).sort((left, right) => left.localeCompare(right));
+	return [...paths]
+		.filter((path) => baseline.get(path) !== terminal.get(path))
+		.sort((left, right) => left.localeCompare(right));
 }
 
 export async function createSWEbenchDockerTaskEnvironment(input: {
@@ -273,16 +384,21 @@ export async function createSWEbenchDockerTaskEnvironment(input: {
 	const containerId = `apc-swebench-${input.runId.replace(/[^a-zA-Z0-9_.-]/gu, "-")}-${randomUUID().slice(0, 8)}`;
 	const image = deriveSWEbenchInstanceImageKey(input.configuration.image);
 	let created = false;
-	const cleanup = async (): Promise<void> => { if (created) await docker.run({ args: ["rm", "-f", containerId] }).catch(() => undefined); };
+	const cleanup = async (): Promise<void> => {
+		if (created) await docker.run({ args: ["rm", "-f", containerId] }).catch(() => undefined);
+	};
 	try {
-		const create = await docker.run({ args: ["create", "--name", containerId, "--network", "none", image, "/bin/sh", "-c", "sleep infinity"] });
+		const create = await docker.run({
+			args: ["create", "--name", containerId, "--network", "none", image, "/bin/sh", "-c", "sleep infinity"],
+		});
 		if (create.exitCode !== 0) throw dockerFailure("create", create);
 		created = true;
 		const start = await docker.run({ args: ["start", containerId] });
 		if (start.exitCode !== 0) throw dockerFailure("start", start);
 		const repository = new DockerRepositoryPrimitives(containerId, docker);
 		const ready = await repository.stat(TESTBED);
-		if (!ready.isDirectory() || ready.isSymbolicLink()) throw new Error("SWE-bench Docker task environment /testbed is not a regular directory.");
+		if (!ready.isDirectory() || ready.isSymbolicLink())
+			throw new Error("SWE-bench Docker task environment /testbed is not a regular directory.");
 		const captureState = async (): Promise<RepositoryFileState> => {
 			const result = await docker.run({
 				args: [
@@ -292,7 +408,7 @@ export async function createSWEbenchDockerTaskEnvironment(input: {
 					containerId,
 					"sh",
 					"-c",
-					"git ls-files -co --exclude-standard -z | xargs -0 -r -n1 sh -c 'path=$1; index=$(git ls-files --stage -- \"$path\"); mode=$(printf \"%s\\n\" \"$index\" | cut -d \" \" -f1); object=$(printf \"%s\\n\" \"$index\" | cut -d \" \" -f2); if [ \"$mode\" = 160000 ]; then identity=\"gitlink:$object\"; elif [ -f \"$path\" ] && [ ! -L \"$path\" ]; then sha256sum -z -- \"$path\"; exit 0; elif [ -L \"$path\" ]; then identity=\"symlink:$(readlink -- \"$path\")\"; elif [ -d \"$path\" ]; then identity=directory; else identity=other; fi; printf \"%s\" \"$identity\" | sha256sum -z | sed \"s/  -$/  $path/\"' sh",
+					'git ls-files -co --exclude-standard -z | xargs -0 -r -n1 sh -c \'path=$1; index=$(git ls-files --stage -- "$path"); mode=$(printf "%s\\n" "$index" | cut -d " " -f1); object=$(printf "%s\\n" "$index" | cut -d " " -f2); if [ "$mode" = 160000 ]; then identity="gitlink:$object"; elif [ -f "$path" ] && [ ! -L "$path" ]; then sha256sum -z -- "$path"; exit 0; elif [ -L "$path" ]; then identity="symlink:$(readlink -- "$path")"; elif [ -d "$path" ]; then identity=directory; else identity=other; fi; printf "%s" "$identity" | sha256sum -z | sed "s/  -$/  $path/"\' sh',
 				],
 			});
 			if (result.exitCode !== 0 || result.timedOut) throw dockerFailure("capture repository state", result);
@@ -305,18 +421,35 @@ export async function createSWEbenchDockerTaskEnvironment(input: {
 			collectModelPatch: async (baseCommit, mutationPaths) => {
 				const terminalState = await captureState();
 				const ownedPaths = new Set(mutationPaths);
-				const changedPaths = changedRepositoryPaths(baselineState, terminalState).filter((path) => ownedPaths.has(path));
+				const changedPaths = changedRepositoryPaths(baselineState, terminalState).filter((path) =>
+					ownedPaths.has(path),
+				);
 				if (changedPaths.length === 0) return { modelPatch: "", changedFiles: [] };
 				const indexPath = `/tmp/apc-swebench-export-${randomUUID()}.index`;
 				const indexedGit = async (args: string[], stdin?: string) =>
 					await docker.run({
-						args: ["exec", "--workdir", TESTBED, containerId, "env", `GIT_INDEX_FILE=${indexPath}`, "git", "-C", TESTBED, ...args],
+						args: [
+							"exec",
+							"--workdir",
+							TESTBED,
+							containerId,
+							"env",
+							`GIT_INDEX_FILE=${indexPath}`,
+							"git",
+							"-C",
+							TESTBED,
+							...args,
+						],
 						stdin,
 					});
 				try {
 					const initialize = await indexedGit(["read-tree", baseCommit]);
-					if (initialize.exitCode !== 0 || initialize.timedOut) throw dockerFailure("initialize patch export", initialize);
-					const stage = await indexedGit(["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul", "--"], changedPaths.join("\0"));
+					if (initialize.exitCode !== 0 || initialize.timedOut)
+						throw dockerFailure("initialize patch export", initialize);
+					const stage = await indexedGit(
+						["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul", "--"],
+						changedPaths.join("\0"),
+					);
 					if (stage.exitCode !== 0 || stage.timedOut) throw dockerFailure("stage patch export", stage);
 					const [patch, files] = await Promise.all([
 						indexedGit(["diff", "--binary", "--cached", baseCommit, "--"]),
@@ -326,10 +459,16 @@ export async function createSWEbenchDockerTaskEnvironment(input: {
 						throw new Error("Could not export Docker task environment patch.");
 					return {
 						modelPatch: patch.stdout,
-						changedFiles: files.stdout.split("\n").map((path) => path.trim()).filter(Boolean).sort((left, right) => left.localeCompare(right)),
+						changedFiles: files.stdout
+							.split("\n")
+							.map((path) => path.trim())
+							.filter(Boolean)
+							.sort((left, right) => left.localeCompare(right)),
 					};
 				} finally {
-					await docker.run({ args: ["exec", "--workdir", TESTBED, containerId, "rm", "-f", "--", indexPath] }).catch(() => undefined);
+					await docker
+						.run({ args: ["exec", "--workdir", TESTBED, containerId, "rm", "-f", "--", indexPath] })
+						.catch(() => undefined);
 				}
 			},
 			cleanup,

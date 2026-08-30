@@ -4,15 +4,16 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createHarnessNativeAdapter } from "../../src/agentpatchcheck/agent-adapter";
+import { createHarnessNativeAdapter, executeAgentAdapterUnderDeadline } from "../../src/agentpatchcheck/agent-adapter";
 import {
 	createHostRepositoryPrimitives,
 	executeHarnessNativeTool,
-	type HarnessNativeRepositoryPrimitives,
 	type HarnessNativeModelProvider,
+	type HarnessNativeRepositoryPrimitives,
 	runHarnessNativeRuntime,
 } from "../../src/agentpatchcheck/harness-native-runtime";
 import { createModelProvider, ModelProviderFailureError } from "../../src/agentpatchcheck/model-provider";
+import { HarnessNativeRuntimeEventSpine } from "../../src/agentpatchcheck/runtime-events";
 import { replayHarnessNativeRuntimeMechanicalState } from "../../src/agentpatchcheck/shadow-control-plane";
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
 import { runGit } from "../../src/workspace/git-utils";
@@ -52,7 +53,12 @@ describe("Harness-native Agent Runtime", () => {
 					error.code = "ENOENT";
 					throw error;
 				}
-				return { isFile: () => isFile, isDirectory: () => isDirectory, isSymbolicLink: () => false, size: files.get(path)?.length ?? 0 };
+				return {
+					isFile: () => isFile,
+					isDirectory: () => isDirectory,
+					isSymbolicLink: () => false,
+					size: files.get(path)?.length ?? 0,
+				};
 			},
 			listDirectory: async (path) => {
 				const names = new Set<string>();
@@ -79,17 +85,41 @@ describe("Harness-native Agent Runtime", () => {
 			readWindow: async ({ path, displayPath, input }) => {
 				const content = files.get(path) ?? "";
 				const allLines = content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
-				const lines = allLines.slice(input.offset - 1, input.offset - 1 + input.limit).map((text, index) => ({ number: input.offset + index, text }));
-				return { ...input, lines, totalLines: allLines.length, truncatedByBytes: false, observation: `<path>${displayPath}</path>` };
+				const lines = allLines
+					.slice(input.offset - 1, input.offset - 1 + input.limit)
+					.map((text, index) => ({ number: input.offset + index, text }));
+				return {
+					...input,
+					lines,
+					totalLines: allLines.length,
+					truncatedByBytes: false,
+					observation: `<path>${displayPath}</path>`,
+				};
 			},
 			writeText: async (path, content, options) => {
 				if (options?.exclusive && files.has(path)) throw new Error("exists");
 				files.set(path, content);
 			},
-			git: async (_root, args) => ({ ok: true, stdout: args[0] === "status" ? " M README.md\n" : "diff --git a/README.md", stderr: "", output: "", error: null, exitCode: 0 }),
+			git: async (_root, args) => ({
+				ok: true,
+				stdout: args[0] === "status" ? " M README.md\n" : "diff --git a/README.md",
+				stderr: "",
+				output: "",
+				error: null,
+				exitCode: 0,
+			}),
 			runCommand: async ({ command }) => {
 				commands.push(command.command);
-				return { command: command.command, args: command.args, exitCode: 1, signal: null, stdout: "test failure", stderr: "details", durationMs: 1, timedOut: false };
+				return {
+					command: command.command,
+					args: command.args,
+					exitCode: 1,
+					signal: null,
+					stdout: "test failure",
+					stderr: "details",
+					durationMs: 1,
+					timedOut: false,
+				};
 			},
 			applyPatch: async () => ({ affectedPaths: [] }),
 			fingerprint: async () => "virtual-fingerprint",
@@ -118,7 +148,12 @@ describe("Harness-native Agent Runtime", () => {
 			tool: "run-public-verification",
 			arguments: { index: 0 },
 			maxObservationBytes: 1_024,
-			verification: { commands: [{ command: "test", args: [], timeoutMs: 100 }], outputLimitBytes: 1_024, allowShell: false, allowNetwork: false },
+			verification: {
+				commands: [{ command: "test", args: [], timeoutMs: 100 }],
+				outputLimitBytes: 1_024,
+				allowShell: false,
+				allowNetwork: false,
+			},
 		});
 
 		expect(edit.facts).toMatchObject({ kind: "mutation", affectedPaths: ["README.md"] });
@@ -133,32 +168,70 @@ describe("Harness-native Agent Runtime", () => {
 		try {
 			await mkdir(join(worktree, "src"));
 			await writeFile(join(worktree, "src", "present.txt"), "needle\n", "utf8");
-        const common = {
-          root: worktree,
-          repository: createHostRepositoryPrimitives(),
-          maxObservationBytes: 1024,
-          verification: undefined,
-        } as const;
+			const common = {
+				root: worktree,
+				repository: createHostRepositoryPrimitives(),
+				maxObservationBytes: 1024,
+				verification: undefined,
+			} as const;
 
-			expect((await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: "src/present.txt" } })).status).toBe("ok");
-			expect((await executeHarnessNativeTool({ ...common, tool: "list-directory", arguments: { path: "src" } })).status).toBe("ok");
-			expect((await executeHarnessNativeTool({ ...common, tool: "search-text", arguments: { path: "src", query: "needle" } })).status).toBe("ok");
-			expect((await executeHarnessNativeTool({ ...common, tool: "search-text-recursive", arguments: { path: ".", query: "needle" } })).status).toBe("ok");
+			expect(
+				(await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: "src/present.txt" } }))
+					.status,
+			).toBe("ok");
+			expect(
+				(await executeHarnessNativeTool({ ...common, tool: "list-directory", arguments: { path: "src" } })).status,
+			).toBe("ok");
+			expect(
+				(
+					await executeHarnessNativeTool({
+						...common,
+						tool: "search-text",
+						arguments: { path: "src", query: "needle" },
+					})
+				).status,
+			).toBe("ok");
+			expect(
+				(
+					await executeHarnessNativeTool({
+						...common,
+						tool: "search-text-recursive",
+						arguments: { path: ".", query: "needle" },
+					})
+				).status,
+			).toBe("ok");
 
-			const missing = await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: "src/missing.txt" } });
+			const missing = await executeHarnessNativeTool({
+				...common,
+				tool: "read-file",
+				arguments: { path: "src/missing.txt" },
+			});
 			expect(missing).toMatchObject({ status: "error", facts: { kind: "retrieval" } });
 			expect(missing).not.toHaveProperty("rejectionReason");
 
-			const traversal = await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: "../outside.txt" } });
+			const traversal = await executeHarnessNativeTool({
+				...common,
+				tool: "read-file",
+				arguments: { path: "../outside.txt" },
+			});
 			expect(traversal.status).toBe("rejected");
-			const absolute = await executeHarnessNativeTool({ ...common, tool: "read-file", arguments: { path: join(worktree, "outside.txt") } });
+			const absolute = await executeHarnessNativeTool({
+				...common,
+				tool: "read-file",
+				arguments: { path: join(worktree, "outside.txt") },
+			});
 			expect(absolute.status).toBe("rejected");
 			const empty = await executeHarnessNativeTool({ ...common, tool: "list-directory", arguments: { path: "" } });
 			expect(empty.status).toBe("rejected");
 
 			let decision = 0;
 			const result = await runHarnessNativeRuntime({
-				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1, maxRejectedToolCalls: 1, plannerEnabled: false }),
+				policy: testNativePolicy({
+					maxIterations: 2,
+					maxToolCalls: 1,
+					maxRejectedToolCalls: 1,
+					plannerEnabled: false,
+				}),
 				prompt: "Inspect the workspace.",
 				model: "test-model",
 				worktreePath: worktree,
@@ -1421,7 +1494,12 @@ describe("Harness-native Agent Runtime", () => {
 								decision: {
 									kind: "tool",
 									tool: "dsh-shell",
-									arguments: { command: "hang", description: "Exercise timeout settlement", dialect: "pwsh", timeoutMs: 10 },
+									arguments: {
+										command: "hang",
+										description: "Exercise timeout settlement",
+										dialect: "pwsh",
+										timeoutMs: 10,
+									},
 								},
 							}
 						: { decision: { kind: "finish" } },
@@ -2092,7 +2170,7 @@ describe("Harness-native Agent Runtime", () => {
 		}
 	});
 
-		it("rejects new-file overwrite and workspace-escape attempts while reporting missing parents normally", async () => {
+	it("rejects new-file overwrite and workspace-escape attempts while reporting missing parents normally", async () => {
 		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-native-runtime-"));
 		try {
 			await writeFile(join(worktree, "existing.txt"), "original\\n", "utf8");
@@ -3149,6 +3227,193 @@ describe("Harness-native Agent Runtime", () => {
 					terminationReason,
 					decision,
 				});
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("persists the caller-owned wall deadline as a structured timed-out Agent execution", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-adapter-wall-timeout-"));
+		try {
+			const policy = await validateTaskPolicy({
+				repositoryRoot: process.cwd(),
+				prompt: "Wait for the deadline.",
+				agentAdapter: "harness-native",
+				model: "test-model",
+				nativeAgent: {
+					credentialRef: "openai-primary",
+					maxIterations: 1,
+					maxToolCalls: 1,
+					plannerEnabled: false,
+				},
+				timeoutMs: 10,
+			});
+			let invocations = 0;
+			const adapter = createHarnessNativeAdapter({
+				id: "blocking-provider",
+				decide: async ({ signal }) => {
+					invocations += 1;
+					return await new Promise((_, reject) =>
+						signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
+					);
+				},
+			});
+			const result = await executeAgentAdapterUnderDeadline(adapter, {
+				policy,
+				worktreePath: worktree,
+				repairContext: { phase: "initial", publicVerificationFeedback: null, repairInstruction: null },
+			});
+
+			expect(invocations).toBe(1);
+			expect(result).toMatchObject({
+				exitCode: 1,
+				timedOut: true,
+				runtime: { status: "failed", terminationReason: "timeout" },
+			});
+			expect(result.runtimeEvents?.find((event) => event.type === "attempt-ended")).toMatchObject({
+				terminationReason: "timeout",
+			});
+		} finally {
+			await rm(worktree, { recursive: true, force: true });
+		}
+	});
+
+	it("cancels blocking Provider, Planner, and native Tool awaits before persisting timeout", async () => {
+		const worktree = await mkdtemp(join(tmpdir(), "agentpatchcheck-wall-timeout-"));
+		try {
+			await writeFile(join(worktree, "README.md"), "before\n", "utf8");
+			const blockingProvider = new AbortController();
+			setTimeout(() => blockingProvider.abort(new Error("agent wall timeout")), 10);
+			const providerResult = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 1, maxToolCalls: 1, plannerEnabled: false }),
+				prompt: "Wait.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider: {
+					id: "blocking-provider",
+					decide: async ({ signal }) =>
+						await new Promise((_, reject) =>
+							signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
+						),
+				},
+				timeoutMs: 1_000,
+				signal: blockingProvider.signal,
+			});
+			expect(providerResult).toMatchObject({ status: "failed", terminationReason: "timeout" });
+			expect(providerResult.runtimeEvents?.at(-1)).toMatchObject({
+				type: "attempt-ended",
+				terminationReason: "timeout",
+			});
+			expect(
+				providerResult.runtimeEvents?.find(
+					(event) => event.type === "model-call-completed" && event.owner === "executor",
+				),
+			).toMatchObject({ outcome: "interrupted" });
+
+			const failedCleanup = new AbortController();
+			const cleanupEvents = new HarnessNativeRuntimeEventSpine();
+			failedCleanup.abort(new Error("agent wall timeout"));
+			await expect(
+				runHarnessNativeRuntime({
+					policy: testNativePolicy({ maxIterations: 1, maxToolCalls: 1, plannerEnabled: false }),
+					prompt: "Wait.",
+					model: "test-model",
+					worktreePath: worktree,
+					provider: { id: "unused", decide: async () => ({ decision: { kind: "finish" } }) },
+					repository: {
+						...createHostRepositoryPrimitives(),
+						acknowledgeCancellation: async () => {
+							throw new Error("cleanup acknowledgement failed");
+						},
+					},
+					timeoutMs: 1_000,
+					signal: failedCleanup.signal,
+					eventSpine: cleanupEvents,
+				}),
+			).rejects.toThrow("cleanup acknowledgement failed");
+			expect(cleanupEvents.snapshot().some((event) => event.type === "attempt-ended")).toBe(false);
+
+			const blockingPlanner = new AbortController();
+			let plannerAborted = false;
+			setTimeout(() => blockingPlanner.abort(new Error("agent wall timeout")), 10);
+			const plannerResult = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 2, maxToolCalls: 1, plannerEnabled: true }),
+				prompt: "Inspect.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider: {
+					id: "blocking-planner",
+					decide: async () => ({
+						decision: { kind: "tool", tool: "read-file", arguments: { path: "README.md" } },
+					}),
+					plan: async ({ signal }) =>
+						await new Promise((_, reject) =>
+							signal?.addEventListener(
+								"abort",
+								() => {
+									plannerAborted = true;
+									reject(signal.reason);
+								},
+								{ once: true },
+							),
+						),
+				},
+				timeoutMs: 1_000,
+				signal: blockingPlanner.signal,
+			});
+			expect(plannerAborted).toBe(true);
+			expect(plannerResult.terminationReason).toBe("timeout");
+
+			const blockingTool = new AbortController();
+			let toolDrained = false;
+			let toolCancellationAcknowledged = false;
+			const hostRepository = createHostRepositoryPrimitives();
+			const repository: HarnessNativeRepositoryPrimitives = {
+				...hostRepository,
+				runCommand: async ({ command, signal }) => {
+					await new Promise<void>((resolve) =>
+						signal?.addEventListener("abort", () => setTimeout(resolve, 5), { once: true }),
+					);
+					toolDrained = true;
+					return {
+						command: command.command,
+						args: command.args,
+						exitCode: null,
+						signal: "SIGKILL",
+						stdout: "",
+						stderr: "",
+						durationMs: 15,
+						timedOut: false,
+					};
+				},
+				acknowledgeCancellation: async () => {
+					expect(toolDrained).toBe(true);
+					toolCancellationAcknowledged = true;
+				},
+			};
+			setTimeout(() => blockingTool.abort(new Error("agent wall timeout")), 10);
+			const toolResult = await runHarnessNativeRuntime({
+				policy: testNativePolicy({ maxIterations: 1, maxToolCalls: 1, plannerEnabled: false }),
+				prompt: "Run.",
+				model: "test-model",
+				worktreePath: worktree,
+				provider: {
+					id: "blocking-tool",
+					decide: async () => ({
+						decision: {
+							kind: "tool",
+							tool: "dsh-shell",
+							arguments: { command: "wait", description: "wait", dialect: "pwsh" },
+						},
+					}),
+				},
+				repository,
+				timeoutMs: 1_000,
+				signal: blockingTool.signal,
+			});
+			expect(toolDrained).toBe(true);
+			expect(toolCancellationAcknowledged).toBe(true);
+			expect(toolResult.terminationReason).toBe("timeout");
 		} finally {
 			await rm(worktree, { recursive: true, force: true });
 		}

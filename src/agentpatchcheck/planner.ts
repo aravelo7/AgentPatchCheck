@@ -24,6 +24,8 @@ export interface PlannerProviderContext {
 	contextView?: HarnessNativePlannerContextView;
 	/** Safe same-decision correction derived from the latest protocol-recovery event. */
 	protocolRecovery?: HarnessNativeProtocolRecoveryFeedback | null;
+	/** Caller-owned whole-agent cancellation scope. */
+	signal?: AbortSignal;
 }
 
 export interface PlannerProviderResult {
@@ -99,6 +101,7 @@ export class HarnessNativePlanner {
 		if (this.#provider === null || this.#revisions.length >= this.#maxRevisions) return null;
 		const previousPlan = this.currentPlan ?? (this.#initialPlan === null ? null : clonePlan(this.#initialPlan));
 		const result = await this.#provider.plan({ ...context, previousPlan });
+		context.signal?.throwIfAborted();
 		const plan = clonePlan(result.plan);
 		if (context.trigger === "mutation-applied") this.#firstMutationPlanned = true;
 		this.#revisions.push({

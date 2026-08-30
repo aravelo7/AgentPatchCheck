@@ -56,4 +56,27 @@ return { failure, processType: typeof process, requireType: typeof require };
 			}),
 		).rejects.toThrow("output exceeded 5 bytes");
 	});
+
+	it("aborts the worker, rejects new dispatches, and drains a started nested mutation", async () => {
+		const controller = new AbortController();
+		let started = false;
+		let drained = false;
+		const run = runProgrammaticToolComposition({
+			code: `await tools["apply-edit"]({ path: "README.md" }); return "done";`,
+			tools: ["apply-edit"],
+			signal: controller.signal,
+			dispatch: async (_call, signal) => {
+				started = true;
+				await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				drained = true;
+				return { ok: false, observation: "cancelled" };
+			},
+		});
+		while (!started) await new Promise((resolve) => setTimeout(resolve, 1));
+		controller.abort(new Error("agent wall timeout"));
+
+		await expect(run).rejects.toThrow("agent wall timeout");
+		expect(drained).toBe(true);
+	});
 });

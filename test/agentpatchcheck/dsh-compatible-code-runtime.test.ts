@@ -103,6 +103,31 @@ return await Promise.all([first, mutation, verification]);
 		expect(dispatchSettled).toBe(true);
 	});
 
+	it("propagates an outer abort and drains an active exclusive dispatch", async () => {
+		const controller = new AbortController();
+		let started = false;
+		let drained = false;
+		const run = runDshCompatibleCode(
+			runtimeInput({
+				tools: ["edit"],
+				code: `await tools.edit({ file_path: "a.txt" });`,
+				signal: controller.signal,
+				dispatch: async (_call, signal) => {
+					started = true;
+					await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+					await new Promise((resolve) => setTimeout(resolve, 5));
+					drained = true;
+					return { ok: false, error: "cancelled" };
+				},
+			}),
+		);
+		while (!started) await new Promise((resolve) => setTimeout(resolve, 1));
+		controller.abort(new Error("agent wall timeout"));
+
+		await expect(run).rejects.toThrow("code run failed (abort)");
+		expect(drained).toBe(true);
+	});
+
 	it("reports program exceptions, output limits, and wall-clock timeouts through the DSH failure taxonomy", async () => {
 		await expect(runDshCompatibleCode(runtimeInput({ code: 'throw new Error("boom")' }))).rejects.toThrow(
 			"code run failed (exception)",

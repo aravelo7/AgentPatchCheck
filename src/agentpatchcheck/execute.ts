@@ -1,5 +1,6 @@
-import { getAgentAdapter } from "./agent-adapter";
+import { executeAgentAdapterUnderDeadline, getAgentAdapter } from "./agent-adapter";
 import { assessEvidenceBundle } from "./assessment-report";
+import { ProcessTreeTerminationError } from "./codex-runner";
 import { createPublicVerificationFeedback, runCommandVerification } from "./command-verifier";
 import { createEvidenceBundle, getEvidenceBundlePath, writeEvidenceBundle } from "./evidence-bundle";
 
@@ -33,7 +34,12 @@ export interface HeadlessCoreDependencies {
 	resumeWorkspace: typeof resumeIsolatedWorkspace;
 	runBootstrap: typeof runExecutionBootstrap;
 	collectPatch: typeof collectPatchSnapshot;
-	runAgent: (policy: TaskPolicy, worktreePath: string, repairContext: RepairContext) => Promise<AgentExecution>;
+	runAgent: (
+		policy: TaskPolicy,
+		worktreePath: string,
+		repairContext: RepairContext,
+		signal?: AbortSignal,
+	) => Promise<AgentExecution>;
 	runVerification: typeof runCommandVerification;
 	runHiddenOracle: typeof runHiddenOracle;
 	writeEvidence: typeof writeEvidenceBundle;
@@ -49,8 +55,8 @@ const defaultDependencies: HeadlessCoreDependencies = {
 	resumeWorkspace: resumeIsolatedWorkspace,
 	runBootstrap: runExecutionBootstrap,
 	collectPatch: collectPatchSnapshot,
-	runAgent: async (policy, worktreePath, repairContext) =>
-		await getAgentAdapter(policy.agentAdapter).execute({ policy, worktreePath, repairContext }),
+	runAgent: async (policy, worktreePath, repairContext, signal) =>
+		await getAgentAdapter(policy.agentAdapter).execute({ policy, worktreePath, repairContext, signal }),
 	runVerification: runCommandVerification,
 	runHiddenOracle,
 	writeEvidence: writeEvidenceBundle,
@@ -109,8 +115,12 @@ async function runAgentSafely(
 	repairContext: RepairContext,
 ): Promise<AgentExecution> {
 	try {
-		return await runAgent(policy, worktreePath, repairContext);
+		return await executeAgentAdapterUnderDeadline(
+			{ id: policy.agentAdapter, execute: ({ signal }) => runAgent(policy, worktreePath, repairContext, signal) },
+			{ policy, worktreePath, repairContext },
+		);
 	} catch (error) {
+		if (error instanceof ProcessTreeTerminationError) throw error;
 		return failedAgentExecution(policy, error instanceof Error ? error.message : String(error));
 	}
 }
@@ -199,9 +209,12 @@ async function executeUnfinalizedAgentPatchCheck(
 		repairInstruction: null,
 	});
 	let agent = initialAgent;
-	let commandVerification = await runVerificationSafely(resolvedDependencies.runVerification, policy, workspace.path);
-	const feedback = createPublicVerificationFeedback(commandVerification);
-	if (policy.agentAdapter === "harness-native" || policy.agentAdapter === "cline-runtime") {
+	const timedOut = initialAgent.timedOut;
+	let commandVerification: CommandVerification = { status: "not-run", cwd: workspace.path, commands: [] };
+	if (!timedOut)
+		commandVerification = await runVerificationSafely(resolvedDependencies.runVerification, policy, workspace.path);
+	const feedback = timedOut ? null : createPublicVerificationFeedback(commandVerification);
+	if (!timedOut && (policy.agentAdapter === "harness-native" || policy.agentAdapter === "cline-runtime")) {
 		const initialPatch =
 			initialAgent.exitCode === 0 && !initialAgent.timedOut && feedback !== null
 				? await resolvedDependencies.collectPatch(workspace.path)
@@ -241,7 +254,9 @@ async function executeUnfinalizedAgentPatchCheck(
 		}
 	}
 	const patch = await resolvedDependencies.collectPatch(workspace.path);
-	const hiddenOracle = await resolvedDependencies.runHiddenOracle(policy.hiddenOracle, workspace.path);
+	const hiddenOracle = timedOut
+		? null
+		: await resolvedDependencies.runHiddenOracle(policy.hiddenOracle, workspace.path);
 	const execution: AgentPatchCheckExecutionResult = {
 		status: agent.exitCode === 0 && !agent.timedOut ? "succeeded" : "failed",
 		workspace,

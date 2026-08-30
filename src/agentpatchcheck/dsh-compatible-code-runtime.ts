@@ -18,7 +18,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { stripTypeScriptTypes } from "node:module";
 
-import { terminateCodexProcess } from "./codex-runner";
+import { terminateCodexProcessAndWait } from "./codex-runner";
 import type { ProgrammaticToolDispatch, ProgrammaticToolRunResult } from "./programmatic-tool-runtime";
 
 export type DshCodeJsonValue =
@@ -390,8 +390,12 @@ async function waitForExit(child: ChildProcess): Promise<void> {
 	});
 }
 
-async function terminateAndWait(child: ChildProcess): Promise<void> {
+async function terminateAndWait(child: ChildProcess, forceProcessTree: boolean): Promise<void> {
 	if (child.exitCode !== null || child.signalCode !== null) return;
+	if (forceProcessTree) {
+		await terminateCodexProcessAndWait(child);
+		return;
+	}
 	const exited = waitForExit(child);
 	if (child.connected) child.send({ type: "shutdown" });
 	const graceful = await Promise.race([
@@ -399,8 +403,7 @@ async function terminateAndWait(child: ChildProcess): Promise<void> {
 		new Promise<false>((resolve) => setTimeout(() => resolve(false), 2_000)),
 	]);
 	if (graceful) return;
-	terminateCodexProcess(child);
-	await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
+	await terminateCodexProcessAndWait(child);
 }
 
 export async function runDshCompatibleCode(input: DshCompatibleCodeInput): Promise<ProgrammaticToolRunResult> {
@@ -517,7 +520,7 @@ export async function runDshCompatibleCode(input: DshCompatibleCodeInput): Promi
 	input.signal?.removeEventListener("abort", onAbort);
 	scheduler.abort(result.error?.message ?? "run_code settled");
 	await scheduler.drain();
-	await terminateAndWait(child);
+	await terminateAndWait(child, result.error?.kind === "abort" || result.error?.kind === "timeout");
 	if (result.error !== undefined) {
 		const logsText = logs.length > 0 ? `\nCaptured output:\n${logs.join("\n")}` : "";
 		throw new Error(`code run failed (${result.error.kind}): ${result.error.message}${logsText}`);
