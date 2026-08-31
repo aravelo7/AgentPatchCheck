@@ -22,12 +22,7 @@ import {
 const SWE_BENCH_EVALUATOR_BRIDGE_PATH = fileURLToPath(
 	new URL("../../scripts/swebench-verification-bridge.mjs", import.meta.url),
 );
-const SWE_BENCH_BOOTSTRAP_MANIFEST = join(
-	".agentpatchcheck",
-	"swebench",
-	"datasets",
-	"APC-Pilot-10-v1-formal.manifest.json",
-);
+const SWE_BENCH_MANIFEST_ENV = "AGENTPATCHCHECK_SWEBENCH_MANIFEST";
 const SWE_BENCH_EVALUATOR_ROOT_ENV = "AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT";
 const SWE_BENCH_EVALUATOR_PYTHON_ENV = "AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON";
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u;
@@ -156,7 +151,10 @@ export async function loadSWEbenchBootstrapConfiguration(
 	projectRoot: string,
 	environment: NodeJS.ProcessEnv = process.env,
 ): Promise<SWEbenchBootstrapConfiguration> {
-	const manifestPath = resolve(projectRoot, SWE_BENCH_BOOTSTRAP_MANIFEST);
+	const configuredManifestPath = environment[SWE_BENCH_MANIFEST_ENV]?.trim();
+	if (!configuredManifestPath)
+		throw new Error(`SWE-bench machine prerequisite is not configured: ${SWE_BENCH_MANIFEST_ENV}`);
+	const manifestPath = resolve(projectRoot, configuredManifestPath);
 	let value: unknown;
 	try {
 		value = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
