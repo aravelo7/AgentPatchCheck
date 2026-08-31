@@ -18,6 +18,11 @@ import {
 	SWE_BENCH_STANDARD_BASELINE_TAG,
 	type SWEbenchAdapterResult,
 } from "./swebench-adapter";
+import {
+	prepareSWEbenchEvaluatorDataset,
+	type SWEbenchEvaluatorMetadataAuthority,
+	type SWEbenchSourceDatasetIdentity,
+} from "./swebench-evaluator-dataset";
 
 const SWE_BENCH_EVALUATOR_BRIDGE_PATH = fileURLToPath(
 	new URL("../../scripts/swebench-verification-bridge.mjs", import.meta.url),
@@ -75,15 +80,19 @@ export interface SWEbenchBootstrapConfiguration {
 	classification: "formal-frozen" | "engineering-validation";
 	engineeringValidation: boolean;
 	instanceIds: readonly string[];
+	sourceDataset?: SWEbenchSourceDatasetIdentity;
+	sourceDatasetSha256: string;
+	metadataAuthority?: SWEbenchEvaluatorMetadataAuthority;
 }
 
 interface SWEbenchBootstrapManifest {
 	name: string;
 	version: string;
-	fullSubset: { path: string };
-	evaluator: { dataset: string; revision: string; timeoutSeconds: number };
+	fullSubset: { path: string; sha256?: string };
+	evaluator: { dataset: string; revision: string; timeoutSeconds: number; metadataAuthority?: SWEbenchEvaluatorMetadataAuthority };
 	execution: { classification: "formal-frozen" | "engineering-validation"; deepseekModel: string };
 	instanceIds: string[];
+	sourceDataset?: SWEbenchSourceDatasetIdentity;
 }
 
 type SWEbenchSourceIdentity =
@@ -147,6 +156,36 @@ function resolveManifestPath(manifestDirectory: string, value: unknown, field: s
 	return resolve(manifestDirectory, path);
 }
 
+function parseSourceDatasetIdentity(value: unknown): SWEbenchSourceDatasetIdentity | undefined {
+	if (value === undefined) return undefined;
+	if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("SWE-bench bootstrap manifest sourceDataset must be an object.");
+	const source = value as Record<string, unknown>;
+	const revision = requireManifestString(source.revision, "sourceDataset.revision");
+	const sha256 = requireManifestString(source.sha256, "sourceDataset.sha256");
+	if (!/^[0-9a-f]{40}$/u.test(revision)) throw new Error("SWE-bench bootstrap sourceDataset revision must be a full commit SHA.");
+	if (!/^[0-9a-f]{64}$/u.test(sha256)) throw new Error("SWE-bench bootstrap sourceDataset sha256 must be a SHA-256.");
+	return {
+		name: requireManifestString(source.name, "sourceDataset.name"),
+		split: requireManifestString(source.split, "sourceDataset.split"),
+		revision,
+		sha256,
+	};
+}
+
+function parseMetadataAuthority(value: unknown): SWEbenchEvaluatorMetadataAuthority | undefined {
+	if (value === undefined) return undefined;
+	if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("SWE-bench bootstrap metadataAuthority must be an object.");
+	const authority = value as Record<string, unknown>;
+	const revision = requireManifestString(authority.revision, "evaluator.metadataAuthority.revision");
+	if (!/^[0-9a-f]{40}$/u.test(revision)) throw new Error("SWE-bench bootstrap metadataAuthority revision must be a full commit SHA.");
+	return {
+		dataset: requireManifestString(authority.dataset, "evaluator.metadataAuthority.dataset"),
+		split: requireManifestString(authority.split, "evaluator.metadataAuthority.split"),
+		revision,
+		primitive: requireManifestString(authority.primitive, "evaluator.metadataAuthority.primitive"),
+	};
+}
+
 export async function loadSWEbenchBootstrapConfiguration(
 	projectRoot: string,
 	environment: NodeJS.ProcessEnv = process.env,
@@ -176,6 +215,10 @@ export async function loadSWEbenchBootstrapConfiguration(
 		throw new Error("SWE-bench bootstrap evaluator timeoutSeconds must be a positive integer.");
 	if (manifest.execution.classification !== "formal-frozen" && manifest.execution.classification !== "engineering-validation")
 		throw new Error("SWE-bench bootstrap execution classification is invalid.");
+	const sourceDataset = parseSourceDatasetIdentity(manifest.sourceDataset);
+	const metadataAuthority = parseMetadataAuthority(manifest.evaluator.metadataAuthority);
+	const sourceDatasetSha256 = requireManifestString(manifest.fullSubset.sha256, "fullSubset.sha256");
+	if (!/^[0-9a-f]{64}$/u.test(sourceDatasetSha256)) throw new Error("SWE-bench bootstrap fullSubset sha256 must be a SHA-256.");
 	const manifestDirectory = dirname(manifestPath);
 	return {
 		manifestPath,
@@ -191,6 +234,9 @@ export async function loadSWEbenchBootstrapConfiguration(
 		classification: manifest.execution.classification,
 		engineeringValidation: manifest.execution.classification === "engineering-validation",
 		instanceIds: [...manifest.instanceIds],
+		sourceDataset,
+		sourceDatasetSha256,
+		metadataAuthority,
 	};
 }
 
@@ -279,6 +325,7 @@ interface SWEbenchCliDependencies {
 	runEvaluatorPreflight: typeof preflightSWEbenchEvaluator;
 	runInstance: typeof runSWEbenchInstance;
 	runPostRunEvaluator: typeof runSWEbenchPostRunEvaluator;
+	prepareEvaluatorDataset: typeof prepareSWEbenchEvaluatorDataset;
 }
 
 const defaultDependencies: SWEbenchCliDependencies = {
@@ -291,6 +338,7 @@ const defaultDependencies: SWEbenchCliDependencies = {
 	runEvaluatorPreflight: preflightSWEbenchEvaluator,
 	runInstance: runSWEbenchInstance,
 	runPostRunEvaluator: runSWEbenchPostRunEvaluator,
+	prepareEvaluatorDataset: prepareSWEbenchEvaluatorDataset,
 };
 
 function optionValue(argv: string[], name: string, required = true): string | undefined {
@@ -587,13 +635,29 @@ export async function runSWEbenchCli(
 		attempt: options.attempt,
 	});
 	let grading: SWEbenchGradingResult;
+	let preparedEvaluatorDatasetPath: string | null = null;
+	let preparedEvaluatorDatasetProvenancePath: string | null = null;
 	if (result.prediction === null || result.predictionPath === null) {
 		grading = createNotRunGradingResult(result);
 	} else {
 		try {
+			if (bootstrap.sourceDataset === undefined) throw new Error("SWE-bench bootstrap sourceDataset provenance is required for grading.");
+			const preparedEvaluatorDataset = await resolvedDependencies.prepareEvaluatorDataset({
+				sourceDatasetPath: bootstrap.evaluatorDatasetPath,
+				sourceDatasetSha256: bootstrap.sourceDatasetSha256,
+				sourceDataset: bootstrap.sourceDataset,
+				evaluatorRevision: bootstrap.evaluatorRevision,
+				evaluatorPythonPath: evaluator.evaluatorPythonPath,
+				evaluatorSourceRoot: evaluator.evaluatorSourceRoot,
+				metadataAuthority: bootstrap.metadataAuthority,
+				outputPath: join(artifactRoot, "evaluator-input.jsonl"),
+				provenancePath: join(artifactRoot, "evaluator-input.provenance.json"),
+			});
+			preparedEvaluatorDatasetPath = preparedEvaluatorDataset.datasetPath;
+			preparedEvaluatorDatasetProvenancePath = preparedEvaluatorDataset.provenancePath;
 			grading = await resolvedDependencies.runPostRunEvaluator({
 				predictionPath: result.predictionPath,
-				datasetPath: bootstrap.evaluatorDatasetPath,
+				datasetPath: preparedEvaluatorDataset.datasetPath,
 				instanceId: result.instance.instance_id,
 				configuration: evaluator,
 			});
@@ -602,7 +666,7 @@ export async function runSWEbenchCli(
 				version: 2,
 				instanceId: result.instance.instance_id,
 				normalizedStatus: "infrastructure_error",
-				reason: "post_run_evaluator_invocation_failed",
+				reason: preparedEvaluatorDatasetPath === null ? "evaluator_input_preparation_failed" : "post_run_evaluator_invocation_failed",
 				officialReportPath: null,
 				officialRunId: null,
 				evaluatorVersion: evaluator.evaluatorVersion,
@@ -636,6 +700,8 @@ export async function runSWEbenchCli(
 					evaluatorVersion: evaluator.evaluatorVersion,
 					outputDirectory,
 					evaluatorArtifactRoot: artifactRoot,
+					evaluatorInputPath: preparedEvaluatorDatasetPath,
+					evaluatorInputProvenancePath: preparedEvaluatorDatasetProvenancePath,
 				},
 				workspacePath: result.workspace?.path ?? null,
 				runtimeRecordPath: result.runtimeRecordPath,

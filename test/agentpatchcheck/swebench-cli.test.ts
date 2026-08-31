@@ -21,6 +21,10 @@ import {
 	type SWEbenchBootstrapConfiguration,
 	type SWEbenchGradingResult,
 } from "../../src/agentpatchcheck/swebench-cli";
+import type {
+	SWEbenchEvaluatorDatasetPreparationInput,
+	SWEbenchEvaluatorDatasetPreparationResult,
+} from "../../src/agentpatchcheck/swebench-evaluator-dataset";
 import type { AgentExecution, IsolatedWorkspace, VerificationPolicy } from "../../src/agentpatchcheck/types";
 import { runGit } from "../../src/workspace/git-utils";
 
@@ -104,8 +108,26 @@ function bootstrapConfiguration(root: string, overrides: Partial<SWEbenchBootstr
 		classification: "engineering-validation",
 		engineeringValidation: true,
 		instanceIds: [instance.instance_id],
+		sourceDataset: {
+			name: "test/source",
+			split: "test",
+			revision: "a".repeat(40),
+			sha256: "source-upstream-sha256",
+		},
+		sourceDatasetSha256: "source-dataset-sha256",
 		...overrides,
 	};
+}
+
+function passThroughEvaluatorDataset(
+	input: SWEbenchEvaluatorDatasetPreparationInput,
+): Promise<SWEbenchEvaluatorDatasetPreparationResult> {
+	return Promise.resolve({
+		datasetPath: input.sourceDatasetPath,
+		provenancePath: input.provenancePath,
+		sha256: input.sourceDatasetSha256,
+		rowCount: 1,
+	});
 }
 
 function outputDirectoryFor(root: string): string {
@@ -158,7 +180,7 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			JSON.stringify({
 				name: "APC-Pilot-10",
 				version: "v1",
-				fullSubset: { path: "agent.jsonl" },
+				fullSubset: { path: "agent.jsonl", sha256: "a".repeat(64) },
 				evaluator: { dataset: "official.jsonl", revision: evaluatorRevision, timeoutSeconds: 120 },
 				execution: { classification: "formal-frozen", deepseekModel: "deepseek-v4-flash" },
 				instanceIds: [instance.instance_id],
@@ -629,8 +651,9 @@ describe("SWE-bench CLI post-run orchestration", () => {
 				});
 				await writeFile(outputPath, `${JSON.stringify(prediction)}\n`, "utf8");
 				order.push("writePrediction");
-				return adapterResult(root, outputPath, prediction, execution({ timedOut: true, exitCode: null }));
-			},
+					return adapterResult(root, outputPath, prediction, execution({ timedOut: true, exitCode: null }));
+				},
+			prepareEvaluatorDataset: passThroughEvaluatorDataset,
 			runPostRunEvaluator: async (input) => {
 				order.push("evaluator");
 				expect(input.datasetPath).toBe(officialDatasetPath);
@@ -726,10 +749,11 @@ describe("SWE-bench CLI post-run orchestration", () => {
 				getGitStdout: baselineGitStdout(),
 				loadInstance: async () => instance,
 				resolveRepositoryRoot: async () => join(root, "repository"),
-				runInstance: async () => {
+					runInstance: async () => {
 					await writeFile(outputPath, `${JSON.stringify(prediction)}\n`, "utf8");
 					return adapterResult(root, outputPath, prediction, agent);
 				},
+				prepareEvaluatorDataset: passThroughEvaluatorDataset,
 				runPostRunEvaluator: async () => resolvedGrading(normalizedStatus),
 			});
 
