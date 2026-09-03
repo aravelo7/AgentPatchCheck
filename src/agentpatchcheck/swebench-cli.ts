@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -89,7 +89,12 @@ interface SWEbenchBootstrapManifest {
 	name: string;
 	version: string;
 	fullSubset: { path: string; sha256?: string };
-	evaluator: { dataset: string; revision: string; timeoutSeconds: number; metadataAuthority?: SWEbenchEvaluatorMetadataAuthority };
+	evaluator: {
+		dataset: string;
+		revision: string;
+		timeoutSeconds: number;
+		metadataAuthority?: SWEbenchEvaluatorMetadataAuthority;
+	};
 	execution: { classification: "formal-frozen" | "engineering-validation"; deepseekModel: string };
 	instanceIds: string[];
 	sourceDataset?: SWEbenchSourceDatasetIdentity;
@@ -141,7 +146,8 @@ const defaultSWEbenchEvaluatorRevisionProbe: SWEbenchEvaluatorRevisionProbe = as
 	await getGitStdout(["-c", `safe.directory=${resolve(sourceRoot)}`, "rev-parse", "HEAD"], resolve(sourceRoot));
 
 function requireManifestString(value: unknown, field: string): string {
-	if (typeof value !== "string" || !value.trim()) throw new Error(`SWE-bench bootstrap manifest ${field} is required.`);
+	if (typeof value !== "string" || !value.trim())
+		throw new Error(`SWE-bench bootstrap manifest ${field} is required.`);
 	return value.trim();
 }
 
@@ -158,11 +164,13 @@ function resolveManifestPath(manifestDirectory: string, value: unknown, field: s
 
 function parseSourceDatasetIdentity(value: unknown): SWEbenchSourceDatasetIdentity | undefined {
 	if (value === undefined) return undefined;
-	if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("SWE-bench bootstrap manifest sourceDataset must be an object.");
+	if (value === null || typeof value !== "object" || Array.isArray(value))
+		throw new Error("SWE-bench bootstrap manifest sourceDataset must be an object.");
 	const source = value as Record<string, unknown>;
 	const revision = requireManifestString(source.revision, "sourceDataset.revision");
 	const sha256 = requireManifestString(source.sha256, "sourceDataset.sha256");
-	if (!/^[0-9a-f]{40}$/u.test(revision)) throw new Error("SWE-bench bootstrap sourceDataset revision must be a full commit SHA.");
+	if (!/^[0-9a-f]{40}$/u.test(revision))
+		throw new Error("SWE-bench bootstrap sourceDataset revision must be a full commit SHA.");
 	if (!/^[0-9a-f]{64}$/u.test(sha256)) throw new Error("SWE-bench bootstrap sourceDataset sha256 must be a SHA-256.");
 	return {
 		name: requireManifestString(source.name, "sourceDataset.name"),
@@ -174,10 +182,12 @@ function parseSourceDatasetIdentity(value: unknown): SWEbenchSourceDatasetIdenti
 
 function parseMetadataAuthority(value: unknown): SWEbenchEvaluatorMetadataAuthority | undefined {
 	if (value === undefined) return undefined;
-	if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("SWE-bench bootstrap metadataAuthority must be an object.");
+	if (value === null || typeof value !== "object" || Array.isArray(value))
+		throw new Error("SWE-bench bootstrap metadataAuthority must be an object.");
 	const authority = value as Record<string, unknown>;
 	const revision = requireManifestString(authority.revision, "evaluator.metadataAuthority.revision");
-	if (!/^[0-9a-f]{40}$/u.test(revision)) throw new Error("SWE-bench bootstrap metadataAuthority revision must be a full commit SHA.");
+	if (!/^[0-9a-f]{40}$/u.test(revision))
+		throw new Error("SWE-bench bootstrap metadataAuthority revision must be a full commit SHA.");
 	return {
 		dataset: requireManifestString(authority.dataset, "evaluator.metadataAuthority.dataset"),
 		split: requireManifestString(authority.split, "evaluator.metadataAuthority.split"),
@@ -207,18 +217,26 @@ export async function loadSWEbenchBootstrapConfiguration(
 	const manifestVersion = requireManifestString(manifest.version, "version");
 	if (manifest.fullSubset === undefined || manifest.evaluator === undefined || manifest.execution === undefined)
 		throw new Error("SWE-bench bootstrap manifest is missing its dataset, evaluator, or execution contract.");
-	if (!Array.isArray(manifest.instanceIds) || manifest.instanceIds.some((instanceId) => typeof instanceId !== "string"))
+	if (
+		!Array.isArray(manifest.instanceIds) ||
+		manifest.instanceIds.some((instanceId) => typeof instanceId !== "string")
+	)
 		throw new Error("SWE-bench bootstrap manifest instanceIds must be an array of strings.");
 	const revision = requireManifestString(manifest.evaluator.revision, "evaluator.revision");
-	if (!/^[0-9a-f]{40}$/u.test(revision)) throw new Error("SWE-bench bootstrap evaluator revision must be a full commit SHA.");
+	if (!/^[0-9a-f]{40}$/u.test(revision))
+		throw new Error("SWE-bench bootstrap evaluator revision must be a full commit SHA.");
 	if (!Number.isSafeInteger(manifest.evaluator.timeoutSeconds) || manifest.evaluator.timeoutSeconds <= 0)
 		throw new Error("SWE-bench bootstrap evaluator timeoutSeconds must be a positive integer.");
-	if (manifest.execution.classification !== "formal-frozen" && manifest.execution.classification !== "engineering-validation")
+	if (
+		manifest.execution.classification !== "formal-frozen" &&
+		manifest.execution.classification !== "engineering-validation"
+	)
 		throw new Error("SWE-bench bootstrap execution classification is invalid.");
 	const sourceDataset = parseSourceDatasetIdentity(manifest.sourceDataset);
 	const metadataAuthority = parseMetadataAuthority(manifest.evaluator.metadataAuthority);
 	const sourceDatasetSha256 = requireManifestString(manifest.fullSubset.sha256, "fullSubset.sha256");
-	if (!/^[0-9a-f]{64}$/u.test(sourceDatasetSha256)) throw new Error("SWE-bench bootstrap fullSubset sha256 must be a SHA-256.");
+	if (!/^[0-9a-f]{64}$/u.test(sourceDatasetSha256))
+		throw new Error("SWE-bench bootstrap fullSubset sha256 must be a SHA-256.");
 	const manifestDirectory = dirname(manifestPath);
 	return {
 		manifestPath,
@@ -230,7 +248,9 @@ export async function loadSWEbenchBootstrapConfiguration(
 		evaluatorTimeoutSeconds: manifest.evaluator.timeoutSeconds,
 		evaluatorSourceRoot: requireProjectEnvironmentValue(environment, SWE_BENCH_EVALUATOR_ROOT_ENV),
 		evaluatorPythonPath: requireProjectEnvironmentValue(environment, SWE_BENCH_EVALUATOR_PYTHON_ENV),
-		deepseekModel: parseDeepSeekV4Model(requireManifestString(manifest.execution.deepseekModel, "execution.deepseekModel")),
+		deepseekModel: parseDeepSeekV4Model(
+			requireManifestString(manifest.execution.deepseekModel, "execution.deepseekModel"),
+		),
 		classification: manifest.execution.classification,
 		engineeringValidation: manifest.execution.classification === "engineering-validation",
 		instanceIds: [...manifest.instanceIds],
@@ -297,7 +317,10 @@ export async function preflightSWEbenchEvaluator(
 	}
 	if (failedChecks.length === 0 && !(await dependencyProbe(evaluatorPythonPath)))
 		failedChecks.push("evaluator-python-docker-module-unavailable");
-	if (!failedChecks.includes("evaluator-source-root-missing") && !failedChecks.includes("evaluator-source-root-not-directory")) {
+	if (
+		!failedChecks.includes("evaluator-source-root-missing") &&
+		!failedChecks.includes("evaluator-source-root-not-directory")
+	) {
 		try {
 			actualRevision = (await revisionProbe(evaluatorSourceRoot)).trim();
 			if (actualRevision !== input.expectedRevision) failedChecks.push("evaluator-revision-mismatch");
@@ -372,9 +395,12 @@ const CONFIGURED_OPTIONS = new Set([
 function assertCanonicalOperatorArguments(argv: string[]): void {
 	for (let index = 0; index < argv.length; index += 2) {
 		const name = argv[index];
-		if (name === undefined || !name.startsWith("--")) throw new Error(`Unexpected SWE-bench CLI argument: ${name ?? "<missing>"}`);
+		if (name === undefined || !name.startsWith("--"))
+			throw new Error(`Unexpected SWE-bench CLI argument: ${name ?? "<missing>"}`);
 		if (CONFIGURED_OPTIONS.has(name))
-			throw new Error(`${name} is owned by the canonical SWE-bench bootstrap configuration and is no longer accepted.`);
+			throw new Error(
+				`${name} is owned by the canonical SWE-bench bootstrap configuration and is no longer accepted.`,
+			);
 		if (!OPERATOR_OPTIONS.has(name)) throw new Error(`Unknown SWE-bench CLI option: ${name}`);
 		const value = argv[index + 1];
 		if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for option: ${name}`);
@@ -472,7 +498,10 @@ function createNotRunGradingResult(result: SWEbenchAdapterResult): SWEbenchGradi
 	};
 }
 
-function deriveCandidateValidity(result: SWEbenchAdapterResult, grading: SWEbenchGradingResult): {
+function deriveCandidateValidity(
+	result: SWEbenchAdapterResult,
+	grading: SWEbenchGradingResult,
+): {
 	executionValidity: "valid" | "invalid";
 	pass1Eligible: boolean;
 	predictionStatus: "generated" | "not_generated";
@@ -485,7 +514,8 @@ function deriveCandidateValidity(result: SWEbenchAdapterResult, grading: SWEbenc
 		pass1Eligible: executionValidity === "valid",
 		predictionStatus: result.prediction === null ? "not_generated" : "generated",
 		gradingValidity:
-			grading.normalizedStatus === "infrastructure_error" || grading.normalizedStatus === "grading_error_or_ambiguous"
+			grading.normalizedStatus === "infrastructure_error" ||
+			grading.normalizedStatus === "grading_error_or_ambiguous"
 				? "grading_invalid"
 				: grading.normalizedStatus === "not_run"
 					? "not_run"
@@ -578,7 +608,9 @@ export async function runSWEbenchCli(
 	const bootstrap = await resolvedDependencies.loadBootstrapConfiguration(projectRoot);
 	const options = parseOptions(argv);
 	if (!bootstrap.instanceIds.includes(options.instance))
-		throw new Error(`SWE-bench instance is not part of ${bootstrap.manifestName} ${bootstrap.manifestVersion}: ${options.instance}`);
+		throw new Error(
+			`SWE-bench instance is not part of ${bootstrap.manifestName} ${bootstrap.manifestVersion}: ${options.instance}`,
+		);
 	const outputVariant = options.variant ?? `${bootstrap.manifestName}-${bootstrap.manifestVersion}`;
 	const outputDirectory = resolve(
 		projectRoot,
@@ -611,7 +643,11 @@ export async function runSWEbenchCli(
 		bootstrap.engineeringValidation,
 	);
 	const instance = await resolvedDependencies.loadInstance(bootstrap.datasetPath, options.instance);
-	const repositoryRoot = await resolvedDependencies.resolveRepositoryRoot(projectRoot, instance, resolvedDependencies.getGitStdout);
+	const repositoryRoot = await resolvedDependencies.resolveRepositoryRoot(
+		projectRoot,
+		instance,
+		resolvedDependencies.getGitStdout,
+	);
 	const runtime = createSWEbenchRuntimeConfiguration(bootstrap.deepseekModel);
 	if (bootstrap.engineeringValidation) {
 		runtime.dockerTaskEnvironment = {
@@ -622,7 +658,7 @@ export async function runSWEbenchCli(
 				instanceImageTag: "latest",
 			},
 		};
-	};
+	}
 	const result = await resolvedDependencies.runInstance({
 		instance,
 		repositoryRoot,
@@ -641,7 +677,8 @@ export async function runSWEbenchCli(
 		grading = createNotRunGradingResult(result);
 	} else {
 		try {
-			if (bootstrap.sourceDataset === undefined) throw new Error("SWE-bench bootstrap sourceDataset provenance is required for grading.");
+			if (bootstrap.sourceDataset === undefined)
+				throw new Error("SWE-bench bootstrap sourceDataset provenance is required for grading.");
 			const preparedEvaluatorDataset = await resolvedDependencies.prepareEvaluatorDataset({
 				sourceDatasetPath: bootstrap.evaluatorDatasetPath,
 				sourceDatasetSha256: bootstrap.sourceDatasetSha256,
@@ -666,7 +703,10 @@ export async function runSWEbenchCli(
 				version: 2,
 				instanceId: result.instance.instance_id,
 				normalizedStatus: "infrastructure_error",
-				reason: preparedEvaluatorDatasetPath === null ? "evaluator_input_preparation_failed" : "post_run_evaluator_invocation_failed",
+				reason:
+					preparedEvaluatorDatasetPath === null
+						? "evaluator_input_preparation_failed"
+						: "post_run_evaluator_invocation_failed",
 				officialReportPath: null,
 				officialRunId: null,
 				evaluatorVersion: evaluator.evaluatorVersion,

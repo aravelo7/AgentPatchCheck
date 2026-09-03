@@ -67,12 +67,14 @@ describe("Harness-native repetition report", () => {
 				passedRuns: 1,
 				publicVerificationFalsePositives: 0,
 				statusCounts: { "hidden-oracle-error": 1, passed: 1 },
+				failureClassification: { byExecution: {}, byCompletion: {}, bySemantic: {} },
 			},
 			{
 				id: "exact",
 				passedRuns: 1,
 				publicVerificationFalsePositives: 1,
 				statusCounts: { "hidden-oracle-failed": 1, passed: 1 },
+				failureClassification: { byExecution: {}, byCompletion: {}, bySemantic: {} },
 			},
 		]);
 		expect(sumNativeQuality(outputs)).toMatchObject({ nativeTasks: 4, hiddenOraclePassed: 2 });

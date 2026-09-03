@@ -128,7 +128,9 @@ describe("Harness-native durable Runtime record", () => {
 		};
 
 		const record = await HarnessNativeRuntimeRecord.open({ path: recordPath, identity, worktree });
-		expect((await loadHarnessNativeRuntimeRecord(recordPath)).header.initialWorktreeSha256).toBe("initial-fingerprint");
+		expect((await loadHarnessNativeRuntimeRecord(recordPath)).header.initialWorktreeSha256).toBe(
+			"initial-fingerprint",
+		);
 		new HarnessNativeRuntimeEventSpine([], record).append({
 			version: 1,
 			attempt: 1,

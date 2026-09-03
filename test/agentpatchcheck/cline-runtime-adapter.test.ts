@@ -42,7 +42,7 @@ describe("Cline control runtime adapter", () => {
 
 			const captured = capturedConfigurations[0];
 			if (captured === undefined) throw new Error("Cline runtime factory was not called.");
-			expect(captured).toMatchObject({ providerId: "openai-native", modelId: "test-model", maxIterations: 12 });
+			expect(captured).toMatchObject({ providerId: "openai-native", modelId: "test-model", maxIterations: 24 });
 			expect(captured.tools?.map((tool) => tool.name)).toContain("finish");
 			expect(captured.tools?.map((tool) => tool.name)).toContain("apply-patch");
 			expect(result).toMatchObject({

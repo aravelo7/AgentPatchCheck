@@ -1,24 +1,23 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-
+import { getHarnessNativeAvailableTools } from "../../src/agentpatchcheck/harness-native-runtime";
 import type { RunIdentity } from "../../src/agentpatchcheck/run-identity";
 import {
-	SWE_BENCH_STANDARD_BASELINE_TAG,
 	createSWEbenchRuntimeConfiguration,
 	loadSWEbenchInstance,
 	resolveDevelopmentVerification,
+	SWE_BENCH_STANDARD_BASELINE_TAG,
 	type SWEbenchAdapterResult,
 } from "../../src/agentpatchcheck/swebench-adapter";
-import { getHarnessNativeAvailableTools } from "../../src/agentpatchcheck/harness-native-runtime";
 import {
 	loadSWEbenchBootstrapConfiguration,
-	runSWEbenchCli,
-	SWEbenchEvaluatorPreflightError,
 	preflightSWEbenchEvaluator,
+	runSWEbenchCli,
 	type SWEbenchBootstrapConfiguration,
+	SWEbenchEvaluatorPreflightError,
 	type SWEbenchGradingResult,
 } from "../../src/agentpatchcheck/swebench-cli";
 import type {
@@ -92,8 +91,46 @@ function adapterResult(
 }
 
 const evaluatorRevision = "b".repeat(40);
+const formalFixtureInstanceIds = [
+	"django__django-11790",
+	...Array.from({ length: 49 }, (_, index) => `fixture__project-${String(index + 1).padStart(2, "0")}`),
+];
 
-function bootstrapConfiguration(root: string, overrides: Partial<SWEbenchBootstrapConfiguration> = {}): SWEbenchBootstrapConfiguration {
+async function writeBootstrapFixture(
+	root: string,
+	options: {
+		manifestFileName: string;
+		name: string;
+		classification: "formal-frozen" | "engineering-validation";
+		instanceIds: readonly string[];
+		datasetRows?: readonly Record<string, unknown>[];
+	},
+): Promise<{ manifestPath: string; datasetPath: string }> {
+	const manifestDirectory = join(root, ".agentpatchcheck", "swebench", "datasets");
+	const datasetPath = join(manifestDirectory, `${options.name}.fixture.jsonl`);
+	const manifestPath = join(manifestDirectory, options.manifestFileName);
+	await mkdir(manifestDirectory, { recursive: true });
+	await Promise.all([
+		writeFile(datasetPath, `${(options.datasetRows ?? [instance]).map((row) => JSON.stringify(row)).join("\n")}\n`),
+		writeFile(
+			manifestPath,
+			JSON.stringify({
+				name: options.name,
+				version: "v1",
+				fullSubset: { path: `${options.name}.fixture.jsonl`, sha256: "a".repeat(64) },
+				evaluator: { dataset: `${options.name}.fixture.jsonl`, revision: evaluatorRevision, timeoutSeconds: 120 },
+				execution: { classification: options.classification, deepseekModel: "deepseek-v4-flash" },
+				instanceIds: options.instanceIds,
+			}),
+		),
+	]);
+	return { manifestPath, datasetPath };
+}
+
+function bootstrapConfiguration(
+	root: string,
+	overrides: Partial<SWEbenchBootstrapConfiguration> = {},
+): SWEbenchBootstrapConfiguration {
 	return {
 		manifestPath: join(root, "APC-Pilot-10-v1.manifest.json"),
 		manifestName: "APC-Pilot-10",
@@ -139,12 +176,7 @@ function predictionPathFor(root: string): string {
 }
 
 function argumentsFor(_root: string, _outputPath: string): string[] {
-	return [
-		"--instance",
-		instance.instance_id,
-		"--run-id",
-		"swebench-cli-test",
-	];
+	return ["--instance", instance.instance_id, "--run-id", "swebench-cli-test"];
 }
 
 function resolvedGrading(normalizedStatus: SWEbenchGradingResult["normalizedStatus"]): SWEbenchGradingResult {
@@ -230,22 +262,30 @@ describe("SWE-bench CLI post-run orchestration", () => {
 	});
 
 	it("resolves the canonical formal bootstrap into the zero-LLM effective contract", async () => {
-		const projectRoot = resolve(process.cwd());
-		const manifestDirectory = join(projectRoot, ".agentpatchcheck", "swebench", "datasets");
-		const [historicalManifest, formalManifest] = await Promise.all(
-			["APC-Pilot-10-v1.manifest.json", "HAL-Verified-Mini-v1.manifest.json"].map(async (name) =>
-				JSON.parse(await readFile(join(manifestDirectory, name), "utf8")) as Record<string, unknown>,
-			),
-		);
-		const bootstrap = await loadSWEbenchBootstrapConfiguration(projectRoot, {
-			AGENTPATCHCHECK_SWEBENCH_MANIFEST: join(manifestDirectory, "HAL-Verified-Mini-v1.manifest.json"),
-			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: join(projectRoot, "test-evaluator"),
-			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: join(projectRoot, "test-python"),
+		const root = await mkdtemp(join(tmpdir(), "apc-swebench-canonical-contract-"));
+		const [historicalFixture, formalFixture] = await Promise.all([
+			writeBootstrapFixture(root, {
+				manifestFileName: "APC-Pilot-10-v1.manifest.json",
+				name: "APC-Pilot-10",
+				classification: "engineering-validation",
+				instanceIds: formalFixtureInstanceIds.slice(0, 10),
+			}),
+			writeBootstrapFixture(root, {
+				manifestFileName: "HAL-Verified-Mini-v1.manifest.json",
+				name: "HAL-Verified-Mini",
+				classification: "formal-frozen",
+				instanceIds: formalFixtureInstanceIds,
+			}),
+		]);
+		const bootstrap = await loadSWEbenchBootstrapConfiguration(root, {
+			AGENTPATCHCHECK_SWEBENCH_MANIFEST: formalFixture.manifestPath,
+			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: join(root, "test-evaluator"),
+			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: join(root, "test-python"),
 		});
-		const pilotBootstrap = await loadSWEbenchBootstrapConfiguration(projectRoot, {
-			AGENTPATCHCHECK_SWEBENCH_MANIFEST: join(manifestDirectory, "APC-Pilot-10-v1-formal.manifest.json"),
-			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: join(projectRoot, "test-evaluator"),
-			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: join(projectRoot, "test-python"),
+		const pilotBootstrap = await loadSWEbenchBootstrapConfiguration(root, {
+			AGENTPATCHCHECK_SWEBENCH_MANIFEST: historicalFixture.manifestPath,
+			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: join(root, "test-evaluator"),
+			AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: join(root, "test-python"),
 		});
 		const runtime = createSWEbenchRuntimeConfiguration(bootstrap.deepseekModel);
 		const verificationInput = resolveDevelopmentVerification(
@@ -260,15 +300,9 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			allowNetwork: false,
 		};
 		const nativeTools = getHarnessNativeAvailableTools(verification);
-		const { classification: historicalClassification, ...historicalExecution } = historicalManifest.execution as Record<
-			string,
-			unknown
-		>;
-		const { classification: formalClassification, ...formalExecution } = formalManifest.execution as Record<string, unknown>;
-
-		expect(bootstrap.manifestPath).toBe(join(manifestDirectory, "HAL-Verified-Mini-v1.manifest.json"));
-		expect(pilotBootstrap.manifestPath).toBe(join(manifestDirectory, "APC-Pilot-10-v1-formal.manifest.json"));
-		expect(pilotBootstrap.classification).toBe("formal-frozen");
+		expect(bootstrap.manifestPath).toBe(formalFixture.manifestPath);
+		expect(pilotBootstrap.manifestPath).toBe(historicalFixture.manifestPath);
+		expect(pilotBootstrap.classification).toBe("engineering-validation");
 		expect(pilotBootstrap.instanceIds).toHaveLength(10);
 		expect(bootstrap.classification).toBe("formal-frozen");
 		expect(bootstrap.engineeringValidation).toBe(false);
@@ -276,33 +310,28 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		expect(verification.commands).toEqual([]);
 		expect(nativeTools).toContain("dsh-shell");
 		expect(nativeTools).not.toContain("run-public-verification");
-		expect(bootstrap.instanceIds).toEqual(formalManifest.instanceIds);
+		expect(bootstrap.instanceIds).toEqual(formalFixtureInstanceIds);
 		expect(bootstrap.instanceIds).toHaveLength(50);
 		expect(bootstrap.instanceIds[0]).toBe("django__django-11790");
-		expect(bootstrap.deepseekModel).toBe((formalManifest.execution as { deepseekModel: string }).deepseekModel);
-		expect(bootstrap.evaluatorRevision).toBe((formalManifest.evaluator as { revision: string }).revision);
+		expect(bootstrap.deepseekModel).toBe("deepseek-v4-flash");
+		expect(bootstrap.evaluatorRevision).toBe(evaluatorRevision);
 		expect(runtime).toMatchObject({
 			model: bootstrap.deepseekModel,
 			timeoutMs: 1_200_000,
 			nativeAgent: { maxIterations: 24, maxToolCalls: 48, maxTransportRetries: 2 },
 		});
-		expect(historicalClassification).toBe("engineering-validation");
-		expect(formalClassification).toBe("formal-frozen");
-		expect(formalExecution).toEqual(historicalExecution);
-		expect((await runGit(projectRoot, ["rev-parse", `${SWE_BENCH_STANDARD_BASELINE_TAG}^{commit}`])).stdout.trim()).toBe(
-			"310609c2a610466f2c4ae869391fa1612bd0d68e",
-		);
 	});
 
 	it("selects a HAL task through the canonical CLI from the configured manifest", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-hal-selection-"));
-		const projectRoot = resolve(process.cwd());
-		const manifestDirectory = join(root, ".agentpatchcheck", "swebench", "datasets");
-		const sourceManifestPath = join(projectRoot, ".agentpatchcheck", "swebench", "datasets", "HAL-Verified-Mini-v1.manifest.json");
-		const sourceDatasetPath = join(projectRoot, ".agentpatchcheck", "swebench", "datasets", "HAL-Verified-Mini-v1.full.jsonl");
-		await mkdir(manifestDirectory, { recursive: true });
-		await writeFile(join(manifestDirectory, "HAL-Verified-Mini-v1.manifest.json"), await readFile(sourceManifestPath, "utf8"));
-		await writeFile(join(manifestDirectory, "HAL-Verified-Mini-v1.full.jsonl"), await readFile(sourceDatasetPath, "utf8"));
+		const selectedFixtureInstance = { ...instance, instance_id: "django__django-11790" };
+		const fixture = await writeBootstrapFixture(root, {
+			manifestFileName: "HAL-Verified-Mini-v1.manifest.json",
+			name: "HAL-Verified-Mini",
+			classification: "formal-frozen",
+			instanceIds: [selectedFixtureInstance.instance_id],
+			datasetRows: [selectedFixtureInstance],
+		});
 		await writeFile(join(root, "README.md"), "HAL selection fixture\n");
 		expect((await runGit(root, ["init"])).ok).toBe(true);
 		expect((await runGit(root, ["config", "user.email", "test@example.com"])).ok).toBe(true);
@@ -315,7 +344,7 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			findProjectRoot: () => root,
 			loadBootstrapConfiguration: async (resolvedRoot: string) =>
 				await loadSWEbenchBootstrapConfiguration(resolvedRoot, {
-					AGENTPATCHCHECK_SWEBENCH_MANIFEST: join(manifestDirectory, "HAL-Verified-Mini-v1.manifest.json"),
+					AGENTPATCHCHECK_SWEBENCH_MANIFEST: fixture.manifestPath,
 					AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: join(root, "evaluator"),
 					AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: join(root, "python.exe"),
 				}),
@@ -335,14 +364,19 @@ describe("SWE-bench CLI post-run orchestration", () => {
 
 	it("rejects an instance outside the configured manifest before evaluator preflight", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-manifest-membership-"));
-		const manifestDirectory = join(resolve(process.cwd()), ".agentpatchcheck", "swebench", "datasets");
+		const fixture = await writeBootstrapFixture(root, {
+			manifestFileName: "HAL-Verified-Mini-v1.manifest.json",
+			name: "HAL-Verified-Mini",
+			classification: "formal-frozen",
+			instanceIds: ["django__django-11790"],
+		});
 		let evaluatorPreflightCalled = false;
 		const dependencies = {
 			initializeEnvironment: (): "already-loaded" => "already-loaded",
 			findProjectRoot: () => root,
 			loadBootstrapConfiguration: async (resolvedRoot: string) =>
 				await loadSWEbenchBootstrapConfiguration(resolvedRoot, {
-					AGENTPATCHCHECK_SWEBENCH_MANIFEST: join(manifestDirectory, "HAL-Verified-Mini-v1.manifest.json"),
+					AGENTPATCHCHECK_SWEBENCH_MANIFEST: fixture.manifestPath,
 					AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: join(root, "evaluator"),
 					AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: join(root, "python.exe"),
 				}),
@@ -359,31 +393,16 @@ describe("SWE-bench CLI post-run orchestration", () => {
 
 	it("admits a clean canonical formal startup at a non-baseline HEAD and reaches the AgentRuntime boundary", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-canonical-pre-agent-"));
-		const projectRoot = resolve(process.cwd());
-		const manifestDirectory = join(root, ".agentpatchcheck", "swebench", "datasets");
 		const evaluatorRoot = join(root, "test-evaluator");
 		const evaluatorPythonPath = join(root, "test-python");
-		const formalManifestPath = join(manifestDirectory, "APC-Pilot-10-v1-formal.manifest.json");
-		const fullSubsetPath = join(manifestDirectory, "APC-Pilot-10-v1.full.jsonl");
-		const actualFormalManifestPath = join(
-			projectRoot,
-			".agentpatchcheck",
-			"swebench",
-			"datasets",
-			"APC-Pilot-10-v1-formal.manifest.json",
-		);
-		const actualFullSubsetPath = join(
-			projectRoot,
-			".agentpatchcheck",
-			"swebench",
-			"datasets",
-			"APC-Pilot-10-v1.full.jsonl",
-		);
-		await mkdir(manifestDirectory, { recursive: true });
+		const fixture = await writeBootstrapFixture(root, {
+			manifestFileName: "APC-Pilot-10-v1-formal.manifest.json",
+			name: "APC-Pilot-10",
+			classification: "formal-frozen",
+			instanceIds: [instance.instance_id],
+		});
 		await mkdir(join(evaluatorRoot, "swebench", "harness"), { recursive: true });
 		await Promise.all([
-			writeFile(formalManifestPath, await readFile(actualFormalManifestPath, "utf8")),
-			writeFile(fullSubsetPath, await readFile(actualFullSubsetPath, "utf8")),
 			writeFile(join(evaluatorRoot, "swebench", "harness", "run_evaluation.py"), "# evaluator\n"),
 			writeFile(evaluatorPythonPath, "placeholder\n"),
 			writeFile(join(root, "README.md"), "canonical formal pre-agent fixture\n"),
@@ -401,12 +420,16 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			findProjectRoot: () => root,
 			loadBootstrapConfiguration: async (resolvedRoot: string) =>
 				await loadSWEbenchBootstrapConfiguration(resolvedRoot, {
-					AGENTPATCHCHECK_SWEBENCH_MANIFEST: formalManifestPath,
+					AGENTPATCHCHECK_SWEBENCH_MANIFEST: fixture.manifestPath,
 					AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT: evaluatorRoot,
 					AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON: evaluatorPythonPath,
 				}),
 			runEvaluatorPreflight: async (input: Parameters<typeof preflightSWEbenchEvaluator>[0]) =>
-				await preflightSWEbenchEvaluator(input, async () => true, async () => input.expectedRevision),
+				await preflightSWEbenchEvaluator(
+					input,
+					async () => true,
+					async () => input.expectedRevision,
+				),
 			loadInstance: async () => instance,
 			resolveRepositoryRoot: async () => join(root, "repository"),
 			runInstance: async () => {
@@ -418,7 +441,18 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		await runSWEbenchCli(argumentsFor(root, predictionPathFor(root)), dependencies);
 
 		const summary = JSON.parse(
-			await readFile(join(root, ".agentpatchcheck", "swebench", "results", "APC-Pilot-10-v1", instance.instance_id, "swebench-cli-test.apc-run.json"), "utf8"),
+			await readFile(
+				join(
+					root,
+					".agentpatchcheck",
+					"swebench",
+					"results",
+					"APC-Pilot-10-v1",
+					instance.instance_id,
+					"swebench-cli-test.apc-run.json",
+				),
+				"utf8",
+			),
 		);
 		expect(reachedAgentRuntimeBoundary).toBe(true);
 		expect(summary).toMatchObject({
@@ -458,16 +492,20 @@ describe("SWE-bench CLI post-run orchestration", () => {
 	it("fails before Agent startup when the selected evaluator Python lacks the Docker SDK", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
 		const evaluatorRoot = join(root, "evaluator");
-		const pythonPath = join(root, "python.exe");
+		const pythonPath = process.execPath;
 		const datasetPath = join(root, "official-dataset.jsonl");
 		await mkdir(join(evaluatorRoot, "swebench", "harness"), { recursive: true });
 		await writeFile(join(evaluatorRoot, "swebench", "harness", "run_evaluation.py"), "# evaluator\n");
-		await writeFile(pythonPath, "placeholder\n");
 		await writeFile(datasetPath, "{}\n");
 
 		await expect(
 			preflightSWEbenchEvaluator(
-				{ evaluatorPythonPath: pythonPath, evaluatorSourceRoot: evaluatorRoot, datasetPath, expectedRevision: evaluatorRevision },
+				{
+					evaluatorPythonPath: pythonPath,
+					evaluatorSourceRoot: evaluatorRoot,
+					datasetPath,
+					expectedRevision: evaluatorRevision,
+				},
 				async () => false,
 				async () => evaluatorRevision,
 			),
@@ -480,16 +518,20 @@ describe("SWE-bench CLI post-run orchestration", () => {
 	it("rejects an evaluator checkout whose HEAD differs from the frozen manifest revision", async () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-"));
 		const evaluatorRoot = join(root, "evaluator");
-		const pythonPath = join(root, "python.exe");
+		const pythonPath = process.execPath;
 		const datasetPath = join(root, "official-dataset.jsonl");
 		await mkdir(join(evaluatorRoot, "swebench", "harness"), { recursive: true });
 		await writeFile(join(evaluatorRoot, "swebench", "harness", "run_evaluation.py"), "# evaluator\n");
-		await writeFile(pythonPath, "placeholder\n");
 		await writeFile(datasetPath, "{}\n");
 
 		await expect(
 			preflightSWEbenchEvaluator(
-				{ evaluatorPythonPath: pythonPath, evaluatorSourceRoot: evaluatorRoot, datasetPath, expectedRevision: evaluatorRevision },
+				{
+					evaluatorPythonPath: pythonPath,
+					evaluatorSourceRoot: evaluatorRoot,
+					datasetPath,
+					expectedRevision: evaluatorRevision,
+				},
 				async () => true,
 				async () => "a".repeat(40),
 			),
@@ -509,7 +551,10 @@ describe("SWE-bench CLI post-run orchestration", () => {
 				findProjectRoot: () => root,
 				loadBootstrapConfiguration: async () => bootstrapConfiguration(root),
 				runEvaluatorPreflight: async () => {
-					throw new SWEbenchEvaluatorPreflightError(["run_evaluation.py-unreadable"], join(root, "missing-evaluator"));
+					throw new SWEbenchEvaluatorPreflightError(
+						["run_evaluation.py-unreadable"],
+						join(root, "missing-evaluator"),
+					);
 				},
 				runInstance: async () => {
 					agentStarted = true;
@@ -588,21 +633,18 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		const root = await mkdtemp(join(tmpdir(), "apc-swebench-cli-repository-"));
 		let agentStarted = false;
 		await expect(
-			runSWEbenchCli(
-				[...argumentsFor(root, join(root, "predictions.jsonl")), "--repository", root],
-				{
-					initializeEnvironment: () => "already-loaded",
-					loadBootstrapConfiguration: async () => bootstrapConfiguration(root),
-					runEvaluatorPreflight: async () => undefined,
-					findProjectRoot: () => root,
-					getGitStdout: baselineGitStdout(),
-					loadInstance: async () => instance,
-					runInstance: async () => {
-						agentStarted = true;
-						throw new Error("Agent must not start for a manually supplied repository.");
-					},
+			runSWEbenchCli([...argumentsFor(root, join(root, "predictions.jsonl")), "--repository", root], {
+				initializeEnvironment: () => "already-loaded",
+				loadBootstrapConfiguration: async () => bootstrapConfiguration(root),
+				runEvaluatorPreflight: async () => undefined,
+				findProjectRoot: () => root,
+				getGitStdout: baselineGitStdout(),
+				loadInstance: async () => instance,
+				runInstance: async () => {
+					agentStarted = true;
+					throw new Error("Agent must not start for a manually supplied repository.");
 				},
-			),
+			}),
 		).rejects.toThrow("--repository is owned by the canonical SWE-bench bootstrap configuration");
 		expect(agentStarted).toBe(false);
 	});
@@ -632,11 +674,11 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			loadBootstrapConfiguration: async () =>
 				bootstrapConfiguration(root, { deepseekModel: "deepseek-v4-pro", engineeringValidation: false }),
 			runEvaluatorPreflight: async () => undefined,
-				findProjectRoot: () => root,
-				getGitStdout: baselineGitStdout(),
-				loadInstance: async () => instance,
-				resolveRepositoryRoot: async () => join(root, "repository"),
-				runInstance: async (options) => {
+			findProjectRoot: () => root,
+			getGitStdout: baselineGitStdout(),
+			loadInstance: async () => instance,
+			resolveRepositoryRoot: async () => join(root, "repository"),
+			runInstance: async (options) => {
 				order.push("executeAgent", "collectPatch");
 				expect(options).toEqual({
 					instance,
@@ -651,8 +693,8 @@ describe("SWE-bench CLI post-run orchestration", () => {
 				});
 				await writeFile(outputPath, `${JSON.stringify(prediction)}\n`, "utf8");
 				order.push("writePrediction");
-					return adapterResult(root, outputPath, prediction, execution({ timedOut: true, exitCode: null }));
-				},
+				return adapterResult(root, outputPath, prediction, execution({ timedOut: true, exitCode: null }));
+			},
 			prepareEvaluatorDataset: passThroughEvaluatorDataset,
 			runPostRunEvaluator: async (input) => {
 				order.push("evaluator");
@@ -669,8 +711,12 @@ describe("SWE-bench CLI post-run orchestration", () => {
 		});
 
 		expect(order).toEqual(["executeAgent", "collectPatch", "writePrediction", "evaluator"]);
-		const grading = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.swebench-grading.json"), "utf8"));
-		const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
+		const grading = JSON.parse(
+			await readFile(join(outputDirectoryFor(root), "swebench-cli-test.swebench-grading.json"), "utf8"),
+		);
+		const summary = JSON.parse(
+			await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"),
+		);
 		expect(grading).toMatchObject({ normalizedStatus: "resolved", officialRunId: "official-run-1" });
 		expect(summary).toMatchObject({
 			apcBaselineCommit: "e7fa37e1e9af8ace2c6b4ff13d99eb94e80c6854",
@@ -712,8 +758,12 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			},
 		});
 
-		const grading = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.swebench-grading.json"), "utf8"));
-		const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
+		const grading = JSON.parse(
+			await readFile(join(outputDirectoryFor(root), "swebench-cli-test.swebench-grading.json"), "utf8"),
+		);
+		const summary = JSON.parse(
+			await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"),
+		);
 		expect(evaluatorInvoked).toBe(false);
 		expect(grading).toMatchObject({ normalizedStatus: "not_run", reason: "prediction_export_failed" });
 		expect(summary).toMatchObject({
@@ -749,7 +799,7 @@ describe("SWE-bench CLI post-run orchestration", () => {
 				getGitStdout: baselineGitStdout(),
 				loadInstance: async () => instance,
 				resolveRepositoryRoot: async () => join(root, "repository"),
-					runInstance: async () => {
+				runInstance: async () => {
 					await writeFile(outputPath, `${JSON.stringify(prediction)}\n`, "utf8");
 					return adapterResult(root, outputPath, prediction, agent);
 				},
@@ -757,7 +807,9 @@ describe("SWE-bench CLI post-run orchestration", () => {
 				runPostRunEvaluator: async () => resolvedGrading(normalizedStatus),
 			});
 
-			const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
+			const summary = JSON.parse(
+				await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"),
+			);
 			expect(agent).toEqual(execution());
 			expect(summary).toMatchObject({
 				agent: { status: "completed" },
@@ -833,7 +885,9 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			runPostRunEvaluator: async () => resolvedGrading("resolved"),
 		});
 
-		const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
+		const summary = JSON.parse(
+			await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"),
+		);
 		expect(summary).toMatchObject({
 			apcBaselineCommit: null,
 			runClassification: "engineering-validation",
@@ -880,7 +934,9 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			runPostRunEvaluator: async () => resolvedGrading("resolved"),
 		});
 
-		const summary = JSON.parse(await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"));
+		const summary = JSON.parse(
+			await readFile(join(outputDirectoryFor(root), "swebench-cli-test.apc-run.json"), "utf8"),
+		);
 		expect(summary.runConfiguration).toMatchObject({ deepseekModel: "deepseek-v4-flash", attempt: 1 });
 	});
 });

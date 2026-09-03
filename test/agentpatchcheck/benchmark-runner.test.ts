@@ -88,8 +88,11 @@ function createResult(options: {
 
 describe("Benchmark Runner", () => {
 	it("writes reports beside the runner-managed evidence and runtime roots, not below the BenchmarkSpec", () => {
-		expect(getBenchmarkReportPath("D:\\runtime\\b2-c01\\worktrees", "benchmark-output-boundary")).toBe(
-			"D:\\runtime\\b2-c01\\benchmarks\\benchmark-output-boundary.json",
+		const worktreeRoot = "D:\\runtime\\b2-c01\\worktrees";
+		expect(getBenchmarkReportPath(worktreeRoot, "benchmark-output-boundary")).toBe(
+			process.platform === "win32"
+				? join("D:\\runtime\\b2-c01", "benchmarks", "benchmark-output-boundary.json")
+				: join("benchmarks", "benchmark-output-boundary.json"),
 		);
 	});
 

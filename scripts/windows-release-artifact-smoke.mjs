@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -9,6 +9,8 @@ if (process.platform !== "win32") {
 }
 
 const root = resolve(import.meta.dirname, "..");
+const packageName = JSON.parse(await readFile(join(root, "package.json"), "utf8")).name;
+if (typeof packageName !== "string" || packageName.length === 0) throw new Error("package.json must declare a package name.");
 
 function quoteForCmd(value) {
 	return `"${value.replaceAll('"', '""')}"`;
@@ -81,7 +83,7 @@ try {
 		hiddenOracle: { script: "oracle.mjs", timeoutMs: 5_000, isolation: "process", memoryLimitBytes: 134_217_728, cpuRatePercent: 25 },
 	}), "utf8");
 	await npm(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "--prefix", consumer, tarballPath], { cwd: smokeRoot });
-	const cli = join(consumer, "node_modules", "kanban", "dist", "agentpatchcheck.js");
+	const cli = join(consumer, "node_modules", packageName, "dist", "agentpatchcheck.js");
 	const executed = await requireSuccess(process.execPath, [cli, "run", "--task-spec", join(specDirectory, "task.json")], { cwd: smokeRoot });
 	const response = JSON.parse(executed.stdout);
 	const isolation = response.data?.hiddenOracle?.isolation;
