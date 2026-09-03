@@ -1,93 +1,141 @@
 # AgentPatchCheck
 
-AgentPatchCheck (APC) is an evidence-oriented runtime and evaluation toolkit
-for bounded software-repair agents. It separates agent execution, public
-verification, hidden evaluation, risk review, patch application, and official
-benchmark grading so that a completed agent turn is not mistaken for a correct
-repair.
+> **Coding Agent Runtime & Evaluation Harness** for controlled, repository-level software repair.
 
-The project is a research preview. It is intended for controlled local and CI
-experiments, not unattended modification of production repositories.
+[![CI](https://github.com/aravelo7/agentpatchcheck/actions/workflows/test.yml/badge.svg)](https://github.com/aravelo7/agentpatchcheck/actions/workflows/test.yml)
+![Node.js 22+](https://img.shields.io/badge/node-%3E%3D22-339933)
+![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-## Overview
+## HAL SWE-bench Verified Mini fixed-50
 
-APC runs a repair task in an isolated Git worktree, exposes a bounded tool
-surface to the selected agent, records structured execution evidence, verifies
-the resulting patch, and keeps application to the target repository behind a
-separate approval step. Benchmark results preserve execution validity and
-grading validity independently from termination status.
+| Metric | Result |
+| --- | ---: |
+| Official resolved | **35 / 50** |
+| Resolution rate | **70.0%** |
+| Valid executions | **50 / 50** |
+| Harness-invalid | **0** |
+| Grading-invalid | **0** |
 
-## Key Capabilities
+This is the end-to-end result of **deepseek-v4-flash + APC Runtime/tooling +
+frozen execution policy**, graded by the official SWE-bench evaluator. It is
+not a full SWE-bench Verified score, a model-only score, or an independently
+measured APC causal uplift.
 
-- Isolated, per-run Git worktrees and deterministic run identities.
-- Bounded agent iterations, tool calls, output, deadlines, and cancellation.
-- Harness-native, Codex, Cline, and script adapter boundaries already present
-  in the repository.
-- Structured trajectories, evidence bundles, assessment reports, and risk
-  policy checks with credential and sensitive-text redaction.
-- Public verification, hidden Oracle evaluation, patch capture, guarded apply,
-  and evidence retention workflows.
-- Sequential benchmark orchestration, report comparison, SWE-bench prediction
-  generation, and official evaluator integration.
+**Agent Loop · Tool Calling · Workspace Isolation · Budget & Termination ·
+Verification · Trace · Official Evaluation**
 
-## Architecture
+## Why AgentPatchCheck
 
-The ordinary headless repair path is:
+A completed agent turn or emitted diff is not proof of a correct repair. APC
+bounds the runtime, controls repository tools and workspaces, records the
+execution trace, verifies the patch, and keeps application behind a separate
+approval gate. It is a practical harness for building, testing, and evaluating
+coding agents without conflating completion with correctness.
 
-```text
-TaskSpec
-  -> policy validation
-  -> isolated Git worktree
-  -> selected agent adapter and bounded runtime
-  -> public verification
-  -> hidden Oracle / assessment
-  -> EvidenceBundle and patch
-  -> explicit approval and guarded apply
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    task[TaskSpec] --> policy[Policy validation]
+    policy --> workspace[Isolated Git workspace]
+    workspace --> runtime[Agent Runtime]
+    runtime --> loop[Agent loop]
+    runtime --> broker[Tool broker]
+    runtime --> state[Attempts, budget, termination]
+    broker --> tools[File, search, shell, Git]
+    tools --> verify[Public verification]
+    verify --> evidence[Evidence, trace, patch]
+    evidence --> assess[Assessment and approval]
+    assess --> apply[Guarded apply]
 ```
 
-The frozen SWE-bench path is:
+Frozen SWE-bench execution remains a distinct upstream-evaluator path:
 
-```text
-tracked manifest + operator environment
-  -> src/agentpatchcheck/swebench-cli.ts
-  -> APC Harness-native runtime and tooling
-  -> prediction JSONL
-  -> external official SWE-bench evaluator
-  -> resolved / unresolved grading evidence
+```mermaid
+flowchart LR
+    manifest[Frozen manifest] --> runtime[APC Runtime and tooling]
+    runtime --> prediction[Prediction JSONL]
+    prediction --> evaluator[Official SWE-bench evaluator]
+    evaluator --> outcome[Resolved or unresolved]
 ```
 
-APC does not introduce a second evaluator or alternate runtime for published
-benchmark results.
+## Core Capabilities
 
-## What APC Implements
+- **Agent loop and tool calling:** bounded iterations, calls, output, deadlines, cancellation, and recovery.
+- **Workspace isolation:** per-run Git worktrees plus constrained file, search, shell, and Git tools.
+- **Verification and assessment:** public verification, hidden Oracle evaluation, risk checks, approval, and guarded apply.
+- **Evidence and trace:** structured trajectories, execution results, patches, EvidenceBundles, assessment reports, and benchmark reports with sensitive-text redaction.
+- **Evaluation orchestration:** sequential benchmark execution, prediction generation, evaluator bridging, and independent execution/grading validity tracking.
 
-APC implements the bounded repair lifecycle, tool brokerage, execution and
-cancellation controls, evidence model, verification and assessment gates,
-risk-aware apply workflow, benchmark runner, SWE-bench adapter, dataset
-preparation boundary, prediction generation, and evaluator bridge contained
-under `src/agentpatchcheck/`, `scripts/`, and their tests.
+## 📊 Benchmark
 
-## What APC Reuses
+### HAL SWE-bench Verified Mini fixed-50
 
-- Cline Kanban's Apache-2.0 CLI, desktop, web UI, worktree, and task-management
-  foundations. The original copyright and license are retained.
-- Selected DeepSeek Harness Code Mode mechanisms adapted under the MIT License.
-  Details and the required notice are in `THIRD_PARTY_NOTICES.md`.
-- Installed provider SDKs and CLIs through explicit adapter boundaries.
-- The external official SWE-bench evaluator and upstream benchmark datasets.
-  APC does not claim authorship of the evaluator and does not redistribute the
-  complete benchmark datasets.
+| Metric | Result |
+| --- | ---: |
+| Official resolved | **35 / 50** |
+| Resolution rate | **70.0%** |
+| Valid executions | **50 / 50** |
+| Harness-invalid | **0** |
+| Grading-invalid | **0** |
 
-## Quick Start
+#### Notes
+
+This fixed-50 result is one frozen end-to-end configuration:
+`deepseek-v4-flash` with APC Runtime/tooling and the declared execution
+policy. It is neither a complete SWE-bench Verified score nor evidence that APC
+independently causes a given uplift.
+
+#### Observed non-resolved categories
+
+| Observed non-resolved category | Count |
+| --- | ---: |
+| Budget-bound termination | **11** |
+| Incorrect / incomplete fix | **3** |
+| Provider failure | **1** |
+
+Budget-bound is an observed terminal category; it does not mean that raising a
+budget would solve the task.
+
+#### Termination and correctness
+
+| Observed pairing | Count |
+| --- | ---: |
+| `iteration-limit` → officially resolved | **7** |
+| `tool-limit` → officially resolved | **1** |
+| `model-failed` → officially resolved | **1** |
+| `finished` → officially unresolved | **3** |
+
+> **Termination status is not a correctness proxy.** Official grading remains
+> the correctness authority for this benchmark.
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-- Node.js 22 or newer.
-- npm 10 or newer.
-- Git.
-- An installed agent/provider required by the TaskSpec you choose to run.
+- Node.js 22 or newer
+- npm 10 or newer
+- Git
+- An installed agent/provider required by the TaskSpec
 
-Install the repository dependencies and build the existing CLIs:
+### Headless development path
+
+Install root dependencies and run the existing development CLI with a TaskSpec
+that points to your own checkout and target repository:
+
+```bash
+npm install
+npm run agentpatchcheck:run -- --task-spec ./path/to/task-spec.json
+```
+
+The script invokes `tsx src/agentpatchcheck/cli.ts run`. Read the
+[Headless Core guide](docs/agentpatchcheck-headless-core.md) before preparing a
+TaskSpec or applying a patch.
+
+### Full repository / release build
+
+The web UI, desktop package, and release artifacts are outside the minimal
+headless path:
 
 ```bash
 npm run install:all
@@ -95,107 +143,90 @@ npm run build
 node dist/agentpatchcheck.js --help
 ```
 
-Run the smallest headless flow with a TaskSpec whose paths refer to your own
-checkout and target repository:
+## How It Works
 
-```bash
-node dist/agentpatchcheck.js run --task-spec ./path/to/task-spec.json
+```text
+TaskSpec → Runtime → Tool Calls → Verification → Evidence → Assessment → Apply
 ```
 
-See `docs/agentpatchcheck-headless-core.md` for the TaskSpec, evidence,
-assessment, approval, cleanup-preview, and guarded-apply contracts.
+1. A TaskSpec becomes a policy with repository, provider, verification, and risk boundaries.
+2. APC creates an isolated worktree and executes the selected adapter through its bounded runtime.
+3. Tool calls and verification results become structured evidence; patches are captured separately.
+4. Assessment and approval determine whether a guarded apply is permitted.
 
-### Provider environment variables
+See [Headless Core](docs/agentpatchcheck-headless-core.md) for CLI, evidence,
+retention, and guarded-apply contracts.
 
-Credentials are resolved at execution time from fixed logical references. Do
-not store credential values in TaskSpecs, manifests, evidence, or source files.
+## APC vs. Reused Components
 
-| Logical credential reference | Environment variable |
+| Area | APC implements | Reused / integrated |
+| --- | --- | --- |
+| Repair execution | Agent runtime/loop, tool broker, attempts, budgets, termination, evidence, assessment, guarded apply | Provider model reasoning and installed SDK/CLI integrations |
+| Repository operations | Policy-controlled worktree lifecycle and repair orchestration | Git and worktree primitives |
+| Product foundations | Release-facing headless repair workflow | Cline Kanban UI, desktop, CLI, and task-management foundations |
+| Benchmarking | Manifest orchestration, prediction bridge, validity tracking, reports | Official SWE-bench evaluator and upstream datasets |
+| Code Mode | APC integration boundary and runtime use | Selected DeepSeek Harness mechanisms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
+
+APC retains upstream attribution and does not claim authorship of the official
+evaluator or complete benchmark datasets.
+
+## Frozen Benchmark Reproduction Contract
+
+The repository preserves the portable reproduction contract, not a one-command
+replica of the published run. Complete datasets, evaluator checkout and Python
+environment, repositories, Docker images, predictions, logs, and scored
+artifacts are external to this repository.
+
+| Contract item | Frozen value / requirement |
 | --- | --- |
-| `openai-primary` | `OPENAI_API_KEY` |
-| `openai-secondary` | `OPENAI_API_KEY_SECONDARY` |
-| `deepseek-primary` | `DEEPSEEK_API_KEY` |
-| `gemini-primary` | `GEMINI_API_KEY` |
-| `provider-a-primary` | `AGENTPATCHCHECK_KEY_PROVIDER_A` |
-| `provider-b-primary` | `AGENTPATCHCHECK_KEY_PROVIDER_B` |
+| Dataset source | `MariusHobbhahn/swe-bench-verified-mini`, `test` split, revision `b316c349947c29963fce3f4a65967c9807a4b673` |
+| Selected subset | `HAL-Verified-Mini-v1.full.jsonl`, 50 rows, SHA-256 in the tracked manifest |
+| Evaluator | official SWE-bench checkout at `7d92bde324b9b96d41fb3e5e1023c8476f17b0bf` |
+| Model profile | `deepseek-v4-flash` |
+| Entry point | `node_modules/.bin/tsx src/agentpatchcheck/swebench-cli.ts` |
 
-Only configure the credential required by the selected TaskSpec or frozen
-provider profile.
+Set these existing bootstrap variables in the operator environment; do not put
+credential values in manifests, source, or evidence:
 
-## Benchmark
+```text
+DEEPSEEK_API_KEY
+AGENTPATCHCHECK_SWEBENCH_MANIFEST
+AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT
+AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON
+```
 
-HAL SWE-bench Verified Mini fixed-50:
+For one manifest-selected instance and a fresh run identity:
 
-- 35/50 official resolved (70.0%).
-- 50/50 valid executions.
-- 0 Harness-invalid.
-- 0 grading-invalid.
+```powershell
+node_modules/.bin/tsx src/agentpatchcheck/swebench-cli.ts `
+  --instance <instance-id-from-the-manifest> `
+  --run-id <fresh-run-id>
+```
 
-This is the end-to-end result of `deepseek-v4-flash + APC Runtime/tooling +
-frozen execution policy`, as judged by the official SWE-bench evaluator. It is
-not a full SWE-bench Verified score, a DeepSeek model-only score, or evidence of
-an independently quantified APC uplift.
+The manifest owns dataset identity, evaluator revision, model, timeout, and
+classification. Operator arguments cannot override them; this is not an
+instruction to rerun the published fixed-50 result.
 
-### Reproducing the frozen SWE-bench path
+## Documentation
 
-The repository tracks portable manifests, task identities, source revisions,
-and expected SHA-256 values. It intentionally does not track complete benchmark
-JSONL data, evaluator source, evaluator environments, repositories, images,
-predictions, logs, or scored artifacts.
-
-1. Obtain the HAL fixed-50 source data from the upstream
-   `MariusHobbhahn/swe-bench-verified-mini` test split at revision
-   `b316c349947c29963fce3f4a65967c9807a4b673`. Materialize the exact 50-row
-   JSONL selected by the tracked manifest at
-   `.agentpatchcheck/swebench/datasets/HAL-Verified-Mini-v1.full.jsonl` and
-   verify its SHA-256 against the manifest before running.
-2. Clone or otherwise prepare the official SWE-bench evaluator outside this
-   repository and check out frozen revision
-   `7d92bde324b9b96d41fb3e5e1023c8476f17b0bf`. Use a Python environment that
-   can import its Docker dependency and provide the evaluator's required Docker
-   images separately.
-3. In the same shell, configure the existing bootstrap variables using paths
-   on your machine:
-
-   ```powershell
-   $env:DEEPSEEK_API_KEY = "<secret>"
-   $env:AGENTPATCHCHECK_SWEBENCH_MANIFEST = ".agentpatchcheck/swebench/datasets/HAL-Verified-Mini-v1.manifest.json"
-   $env:AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT = "<path-to-swe-bench-checkout>"
-   $env:AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON = "<path-to-evaluator-python>"
-   ```
-
-4. From the AgentPatchCheck repository root, invoke the existing source
-   entrypoint for exactly one instance and a fresh run identity:
-
-   ```powershell
-   node_modules/.bin/tsx src/agentpatchcheck/swebench-cli.ts `
-     --instance <instance-id-from-the-manifest> `
-     --run-id <fresh-run-id>
-   ```
-
-The manifest owns the dataset, evaluator revision, model, timeout, and frozen
-classification. Operator arguments cannot override those fields. Formal runs
-must follow the predeclared ordering and retry policy; the command above is not
-an instruction to rerun the published fixed-50 result.
+- [Headless Core](docs/agentpatchcheck-headless-core.md) — TaskSpec, CLI, evidence, assessment, approval, cleanup, and apply.
+- [Formal Runtime Contract](docs/formal-runtime-contract.md) — lifecycle and terminal-state semantics.
+- [Harness-native Benchmark Suite](docs/harness-native-benchmark-suite.md) — deterministic suite boundaries and reports.
+- [Third-party notices](THIRD_PARTY_NOTICES.md) — retained attribution and license notices.
 
 ## Limitations
 
-- APC does not prove a patch correct merely because an agent finishes or emits
-  a diff; correctness depends on verification and, for SWE-bench, official
-  grading.
-- Provider access, evaluator setup, Docker images, upstream repositories, and
-  benchmark data are external prerequisites.
-- The fixed-50 result measures one frozen end-to-end configuration and does not
-  establish general performance, causal uplift, or state of the art.
-- The desktop and web UI foundations remain inherited from Cline Kanban while
-  APC's release-facing workflow is centered on the headless repair runtime.
+- Fixed-50 is not a complete SWE-bench Verified score.
+- This result has no alternative-runtime ablation and does not isolate APC Runtime causal uplift.
+- Budget-bound termination is not proof that additional budget would resolve a task.
+- Provider access, evaluator setup, Docker images, upstream repositories, and benchmark data are external dependencies.
 
 ## Project Status
 
-AgentPatchCheck is an open-source research preview. The current release target
-focuses on auditable, bounded software-repair execution and truthful benchmark
-reporting. Interfaces and operational requirements may change before a stable
-release.
+AgentPatchCheck is an open-source research preview focused on auditable,
+bounded software-repair execution and truthful benchmark reporting. Interfaces
+and operational requirements may change before a stable release.
 
-AgentPatchCheck is distributed under the Apache License 2.0. See `LICENSE` and
-`THIRD_PARTY_NOTICES.md` for retained upstream copyright and attribution.
+Licensed under [Apache-2.0](LICENSE). See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for retained upstream copyright
+and attribution.
