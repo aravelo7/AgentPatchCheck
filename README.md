@@ -226,7 +226,7 @@ Frozen Manifest → APC Runtime / Tooling → Prediction → Official SWE-bench 
 See [Headless Core](docs/agentpatchcheck-headless-core.md) for CLI, evidence,
 retention, and guarded-apply contracts.
 
-## APC vs. Reused Components
+## Implementation Boundaries
 
 | Area | APC implements | Reused / integrated |
 | --- | --- | --- |
@@ -292,7 +292,7 @@ instruction to rerun the published fixed-50 result.
 
 ## Project Status
 
-AgentPatchCheck is an open-source research preview focused on auditable,
+AgentPatchCheck is an open-source engineering project focused on auditable,
 bounded software-repair execution and truthful benchmark reporting. Interfaces
 and operational requirements may change before a stable release.
 
