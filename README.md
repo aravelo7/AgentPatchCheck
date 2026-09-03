@@ -45,6 +45,7 @@ flowchart LR
     broker --> tools[File, search, shell, Git]
     tools --> verify[Public verification]
     verify --> evidence[Evidence, trace, patch]
+    evidence --> console[APC Console: local read-only viewer]
     evidence --> assess[Assessment and approval]
     assess --> apply[Guarded apply]
 ```
@@ -66,6 +67,55 @@ flowchart LR
 - **Verification and assessment:** public verification, hidden Oracle evaluation, risk checks, approval, and guarded apply.
 - **Evidence and trace:** structured trajectories, execution results, patches, EvidenceBundles, assessment reports, and benchmark reports with sensitive-text redaction.
 - **Evaluation orchestration:** sequential benchmark execution, prediction generation, evaluator bridging, and independent execution/grading validity tracking.
+
+## APC Console
+
+APC Console is a local, read-only Runtime & Evaluation viewer for imported
+Agent runs, verification results, artifacts, and benchmark analysis. It uses
+browser-authorized folder import and recursive discovery to consume existing
+artifacts only.
+
+It supports:
+
+- **Open Local Workspace** with recursive artifact discovery.
+- **Runs** browsing and Run Detail with verification facts.
+- An **Artifact explorer and preview** for imported runtime and evaluator
+  outputs.
+- **Benchmark Evaluation** with the canonical P2 failure taxonomy and P3
+  termination × correctness analysis.
+
+The Console is the observation and evaluation layer after controlled execution
+and independent evaluation; it is not an execution control plane. It never
+writes back to the workspace, launches a Candidate, executes a Provider or
+benchmark, or exposes Apply, Retry, or mutation controls.
+
+### Runs
+
+The Runs browser presents imported execution records, outcomes, termination,
+model, runtime, attempts, and mutation facts from the local workspace.
+
+![APC Console Runs browser](docs/assets/apc-console/runs.png)
+
+### Run inspection
+
+Run Detail exposes the imported verification facts for an individual real run.
+
+![APC Console Run Detail verification](docs/assets/apc-console/run-detail-verification.png)
+
+### Benchmark evaluation
+
+The frozen aggregate view makes the official HAL result, execution validity,
+P2 failure taxonomy, and P3 termination × correctness analysis directly
+inspectable.
+
+![APC Console benchmark evaluation](docs/assets/apc-console/evaluation.png)
+
+### Artifact explorer
+
+The artifact explorer previews the imported evidence and evaluator outputs
+without altering them.
+
+![APC Console artifact explorer](docs/assets/apc-console/artifacts.png)
 
 ## 📊 Benchmark
 
@@ -146,13 +196,14 @@ node dist/agentpatchcheck.js --help
 ## How It Works
 
 ```text
-TaskSpec → Runtime → Tool Calls → Verification → Evidence → Assessment → Apply
+TaskSpec → Agent Runtime → Controlled Execution → Independent Verification → Official Evaluation → Trace / Evidence / Artifact → APC Console
 ```
 
 1. A TaskSpec becomes a policy with repository, provider, verification, and risk boundaries.
 2. APC creates an isolated worktree and executes the selected adapter through its bounded runtime.
-3. Tool calls and verification results become structured evidence; patches are captured separately.
-4. Assessment and approval determine whether a guarded apply is permitted.
+3. Independent verification results and frozen benchmark predictions are retained as structured evidence and independently graded by the official SWE-bench evaluator.
+4. Trace, evidence, and artifact outputs capture the run and its evaluation; patches are captured separately.
+5. APC Console can inspect the resulting artifacts locally without changing them; assessment and approval determine whether a guarded apply is permitted.
 
 See [Headless Core](docs/agentpatchcheck-headless-core.md) for CLI, evidence,
 retention, and guarded-apply contracts.
