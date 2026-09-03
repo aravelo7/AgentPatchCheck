@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -71,7 +71,7 @@ describe("SWE-bench Multilingual adapter", () => {
 			(await runGit(repositoryRoot, ["remote", "add", "origin", "https://github.com/gin-gonic/gin.git"])).ok,
 		).toBe(true);
 
-		await expect(resolveSWEbenchRepositoryRoot(projectRoot, instance)).resolves.toBe(repositoryRoot);
+		await expect(resolveSWEbenchRepositoryRoot(projectRoot, instance)).resolves.toBe(await realpath(repositoryRoot));
 	});
 
 	it("fails fast with expected and resolved repository details for a parent directory", async () => {

@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, normalize } from "node:path";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -49,7 +49,7 @@ return { cwd: process.cwd(), childCwd, direct, firstLine: typed.lines[0].text, e
 				}),
 			);
 
-			expect(result.observation).toContain(JSON.stringify(normalize(workspace)));
+			expect(result.observation).toContain(JSON.stringify(await realpath(workspace)));
 			expect(result.observation).toContain('"direct": "workspace-marker\\n"');
 			expect(result.observation).toContain('"firstLine": "workspace-marker"');
 			expect(result.observation).toContain('"envKeys": []');

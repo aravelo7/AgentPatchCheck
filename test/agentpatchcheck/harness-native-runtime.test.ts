@@ -18,9 +18,9 @@ import { replayHarnessNativeRuntimeMechanicalState } from "../../src/agentpatchc
 import { validateTaskPolicy } from "../../src/agentpatchcheck/task-policy";
 import { runGit } from "../../src/workspace/git-utils";
 
-function wholeFilePatch(path: string, before: string, after: string): string {
-	const beforeLines = before.replaceAll("\r\n", "\n").split("\n");
-	const afterLines = after.replaceAll("\r\n", "\n").split("\n");
+function wholeFilePatch(path: string, before: string, after: string, lineEnding = "\n"): string {
+	const beforeLines = before.split(lineEnding);
+	const afterLines = after.split(lineEnding);
 	return [
 		`diff --git a/${path} b/${path}`,
 		`--- a/${path}`,
@@ -29,7 +29,7 @@ function wholeFilePatch(path: string, before: string, after: string): string {
 		...beforeLines.map((line) => `-${line}`),
 		...afterLines.map((line) => `+${line}`),
 		"",
-	].join("\n");
+	].join(lineEnding);
 }
 
 describe("Harness-native Agent Runtime", () => {
@@ -2061,7 +2061,9 @@ describe("Harness-native Agent Runtime", () => {
 								decision: {
 									kind: "tool",
 									tool: "apply-patch",
-									arguments: { patch: wholeFilePatch("README.md", "before\nafter", "after\nbefore") },
+									arguments: {
+										patch: wholeFilePatch("README.md", "before\r\nafter", "after\r\nbefore", "\r\n"),
+									},
 								},
 							}
 						: { decision: { kind: "finish" } },

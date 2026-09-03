@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,6 +21,8 @@ describe("Task Definition snapshots", () => {
 		try {
 			await writeFile(hiddenOraclePath, "process.exit(0);\n", "utf8");
 			await writeFile(agentScriptPath, "process.exit(0);\n", "utf8");
+			const physicalAgentScriptPath = await realpath(agentScriptPath);
+			const physicalHiddenOraclePath = await realpath(hiddenOraclePath);
 			const policy = await validateTaskPolicy({
 				repositoryRoot: process.cwd(),
 				worktreeRoot,
@@ -62,12 +64,12 @@ describe("Task Definition snapshots", () => {
 					worktreeRoot,
 					executionBootstrap: { timeoutMs: 300_000 },
 					agentScript: {
-						path: agentScriptPath,
+						path: physicalAgentScriptPath,
 						sha256: createHash("sha256").update("process.exit(0);\n", "utf8").digest("hex"),
 					},
 					hiddenOracle: {
 						script: {
-							path: hiddenOraclePath,
+							path: physicalHiddenOraclePath,
 							sha256: createHash("sha256").update("process.exit(0);\n", "utf8").digest("hex"),
 						},
 					},

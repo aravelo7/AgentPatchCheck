@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -407,6 +407,7 @@ describe("SWE-bench CLI post-run orchestration", () => {
 			writeFile(evaluatorPythonPath, "placeholder\n"),
 			writeFile(join(root, "README.md"), "canonical formal pre-agent fixture\n"),
 		]);
+		if (process.platform !== "win32") await chmod(evaluatorPythonPath, 0o755);
 		expect((await runGit(root, ["init"])).ok).toBe(true);
 		expect((await runGit(root, ["config", "user.email", "test@example.com"])).ok).toBe(true);
 		expect((await runGit(root, ["config", "user.name", "Test"])).ok).toBe(true);

@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -52,7 +52,7 @@ async function repository(): Promise<{ root: string; baseCommit: string }> {
 	}
 	const head = await runGit(root, ["rev-parse", "HEAD"]);
 	if (!head.ok) throw new Error(head.error ?? "Could not read fixture HEAD.");
-	return { root, baseCommit: head.stdout.trim() };
+	return { root: await realpath(root), baseCommit: head.stdout.trim() };
 }
 
 function retrievalEvent(
