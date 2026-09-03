@@ -1,6 +1,17 @@
-# Development
+# AgentPatchCheck Development
 
-## Requirements
+## Primary development paths
+
+APC Headless Runtime and the read-only APC Console are the primary
+AgentPatchCheck development paths. Use the Runtime and benchmark documentation
+for controlled repair and evaluation workflows; start the Console independently
+with `cd apc-console`, `npm ci`, and `npm run dev`.
+
+The root web and desktop commands below are retained upstream/legacy product
+surface. They remain available for compatibility, but are not the APC Runtime
+& Evaluation development path.
+
+## Retained root web and desktop requirements
 
 - Node.js 22+
 - npm 10+
@@ -11,7 +22,7 @@
 npm run install:all
 ```
 
-## Hot reload workflow
+## Retained root web and desktop hot reload workflow
 
 Fast path:
 
@@ -46,9 +57,9 @@ Use `http://127.0.0.1:4173` while developing UI so changes hot reload.
 
 ## Choose the right workflow
 
-Use `npm run dev:full` when you are actively developing Kanban and want fast iteration. It runs the source checkout with `tsx watch` plus the Vite web UI dev server, so runtime changes reload and web UI changes get HMR.
+Use `npm run dev:full` when you are developing the retained root web and desktop surface and want fast iteration. It runs the source checkout with `tsx watch` plus the Vite web UI dev server, so runtime changes reload and web UI changes get HMR.
 
-By default, `dev:full` now starts Kanban with `--skip-shutdown-cleanup` so stopping a debug/dev instance does not move cards to Trash or delete task worktrees from your active boards.
+By default, `dev:full` starts with `--skip-shutdown-cleanup` so stopping a debug/dev instance does not move cards to Trash or delete task worktrees from active boards.
 
 To opt back into shutdown cleanup while using `dev:full`, run:
 
@@ -60,7 +71,7 @@ If `node_modules` has not been installed in this worktree, `dev:full` auto-runs 
 
 Use `npm run dogfood` when you want to validate the latest built CLI behavior more realistically. It builds the current checkout and launches `dist/cli.js`, which is better for checking packaged behavior, startup and shutdown flows, multi-instance dogfooding, and launch behavior against a target project.
 
-## VS Code F5 debugging
+## Retained root VS Code F5 debugging
 
 The repo includes `.vscode/launch.json` with two configurations:
 
@@ -71,7 +82,7 @@ Shutdown cleanup flags:
 
 - `--skip-shutdown-cleanup`: do not move sessions to trash or delete task worktrees on shutdown
 
-## Build and run packaged CLI
+## Retained root packaged CLI
 
 ```bash
 npm run build
@@ -92,12 +103,12 @@ node dist/cli.js --port auto
 
 You can still use `KANBAN_RUNTIME_PORT` if needed, but `--port` is preferred for local multi-instance runs.
 
-## Dogfooding with two Kanban instances
+## Retained root CLI dogfooding
 
 Run your stable orchestrator first (main checkout):
 
 ```bash
-cd /path/to/kanban-main
+cd /path/to/AgentPatchCheck-main
 npm run build
 node dist/cli.js --port 3484
 ```
@@ -105,11 +116,11 @@ node dist/cli.js --port 3484
 Then run a test checkout against a target project (feature worktree):
 
 ```bash
-cd /path/to/kanban-feature-worktree
+cd /path/to/AgentPatchCheck-feature-worktree
 npm run dogfood -- --project /path/to/target/repo --port auto
 ```
 
-If `--project` is omitted, the launcher starts Kanban from a non-git cwd so runtime behaves like launching outside a git repo and opens the first indexed project (if any):
+If `--project` is omitted, the launcher starts the retained root CLI from a non-git cwd and opens the first indexed project (if any):
 
 ```bash
 npm run dogfood -- --port auto
@@ -124,7 +135,7 @@ Dogfood launcher behavior:
 - supports `--skip-build` when you already built and want faster restarts
 - is the right choice when you want to test the latest built CLI rather than the source-mode dev server
 
-## Run `kanban` from any directory
+## Retained `kanban` CLI compatibility
 
 After cloning and installing dependencies, create/update the global CLI link from this repo:
 
@@ -139,7 +150,7 @@ which kanban
 kanban --version
 ```
 
-Then run from any project directory:
+This compatibility command can then run from a project directory:
 
 ```bash
 cd /path/to/your/project
@@ -148,7 +159,7 @@ kanban
 
 After local code changes, run `npm run build` again before using the linked command.
 
-When switching between worktrees, re-run `npm run link` from the worktree you want to test so the global `kanban` binary points at the right `dist/cli.js`. For sidebar agent automation guidance, inspect `src/prompts/append-system-prompt.ts`.
+When switching between worktrees, re-run `npm run link` from the worktree you want to test so the global `kanban` binary points at the right `dist/cli.js`.
 
 Remove the global link:
 
@@ -176,9 +187,9 @@ npm run unlink
 - `test/runtime`: runtime unit tests
 - `test/utilities`: shared test helpers
 
-## Agent tracking and runtime hooks
+## Retained root agent tracking and runtime hooks
 
-Kanban tracks agent session state with runtime hook events. The core transition model is:
+The retained root product surface tracks agent session state with runtime hook events. The core transition model is:
 
 - `in_progress -> review`
 - `review -> in_progress`

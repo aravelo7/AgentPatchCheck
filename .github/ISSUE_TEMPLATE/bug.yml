@@ -33,7 +33,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Kanban version
+      label: AgentPatchCheck version
       description: Example `0.1.0`
     validations:
       required: false

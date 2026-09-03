@@ -2,7 +2,7 @@
 
 > **Coding Agent Runtime & Evaluation Harness** for controlled, repository-level software repair.
 
-[![CI](https://github.com/aravelo7/agentpatchcheck/actions/workflows/test.yml/badge.svg)](https://github.com/aravelo7/agentpatchcheck/actions/workflows/test.yml)
+[![CI](https://github.com/aravelo7/AgentPatchCheck/actions/workflows/ci.yml/badge.svg)](https://github.com/aravelo7/AgentPatchCheck/actions/workflows/ci.yml)
 ![Node.js 22+](https://img.shields.io/badge/node-%3E%3D22-339933)
 ![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 

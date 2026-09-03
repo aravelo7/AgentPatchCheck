@@ -1,5 +1,15 @@
 # Changelog
 
+## AgentPatchCheck
+
+### Unreleased
+
+AgentPatchCheck-specific changes are recorded here.
+
+## Retained upstream Cline Kanban history
+
+The 0.1.x entries below are retained upstream Cline Kanban history.
+
 ## [0.1.70]
 
 - Fixed a freeze that could occur when clearing completed tasks on large boards by limiting cleanup concurrency
