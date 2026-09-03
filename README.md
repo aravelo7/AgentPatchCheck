@@ -184,8 +184,10 @@ TaskSpec or applying a patch.
 
 ### Full repository / release build
 
-The web UI, desktop package, and release artifacts are outside the minimal
-headless path:
+The independent local APC Console lives in [`apc-console/`](apc-console/).
+Kanban, desktop, and task-management UI layers are intentionally removed from
+the APC public baseline.
+For the repository and release build beyond the minimal headless path:
 
 ```bash
 npm run install:all
@@ -212,14 +214,14 @@ retention, and guarded-apply contracts.
 
 | Area | APC implements | Reused / integrated |
 | --- | --- | --- |
-| Repair execution | Agent runtime/loop, tool broker, attempts, budgets, termination, evidence, assessment, guarded apply | Provider model reasoning and installed SDK/CLI integrations |
-| Repository operations | Policy-controlled worktree lifecycle and repair orchestration | Git and worktree primitives |
-| Product foundations | Release-facing headless repair workflow | Cline Kanban UI, desktop, CLI, and task-management foundations |
+| Agent execution | Agent runtime/loop, tool broker, attempts, budgets, termination, evidence, assessment | Provider model reasoning |
+| Repository operations | Policy-controlled workspace lifecycle and repair orchestration | Git / worktree primitives |
 | Benchmarking | Manifest orchestration, prediction bridge, validity tracking, reports | Official SWE-bench evaluator and upstream datasets |
-| Code Mode | APC integration boundary and runtime use | Selected DeepSeek Harness mechanisms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
+| Code Mode | APC integration and tool execution boundary | Selected DeepSeek Harness mechanisms |
 
-APC retains upstream attribution and does not claim authorship of the official
-evaluator or complete benchmark datasets.
+Third-party components and retained upstream attribution are documented in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). APC does not claim authorship
+of the official evaluator or complete benchmark datasets.
 
 ## Frozen Benchmark Reproduction Contract
 
