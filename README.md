@@ -75,6 +75,12 @@ Agent runs, verification results, artifacts, and benchmark analysis. It uses
 browser-authorized folder import and recursive discovery to consume existing
 artifacts only.
 
+```bash
+cd apc-console
+npm ci
+npm run dev
+```
+
 It supports:
 
 - **Open Local Workspace** with recursive artifact discovery.
@@ -185,9 +191,9 @@ TaskSpec or applying a patch.
 ### Full repository / release build
 
 The independent local APC Console lives in [`apc-console/`](apc-console/).
-Kanban, desktop, and task-management UI layers are intentionally removed from
-the APC public baseline.
-For the repository and release build beyond the minimal headless path:
+Existing root web and desktop build paths are separate from APC Console and
+are not part of the APC Runtime & Evaluation workflow described here.
+For the repository and release build:
 
 ```bash
 npm run install:all
@@ -197,15 +203,25 @@ node dist/agentpatchcheck.js --help
 
 ## How It Works
 
+### Headless repair
+
 ```text
-TaskSpec → Agent Runtime → Controlled Execution → Independent Verification → Official Evaluation → Trace / Evidence / Artifact → APC Console
+TaskSpec → Runtime → Tool Calls → Verification → Evidence → Assessment → Guarded Apply
 ```
 
 1. A TaskSpec becomes a policy with repository, provider, verification, and risk boundaries.
 2. APC creates an isolated worktree and executes the selected adapter through its bounded runtime.
-3. Independent verification results and frozen benchmark predictions are retained as structured evidence and independently graded by the official SWE-bench evaluator.
-4. Trace, evidence, and artifact outputs capture the run and its evaluation; patches are captured separately.
-5. APC Console can inspect the resulting artifacts locally without changing them; assessment and approval determine whether a guarded apply is permitted.
+3. Verification, trace, evidence, and patch outputs support assessment and any guarded apply decision.
+
+### Benchmark evaluation
+
+```text
+Frozen Manifest → APC Runtime / Tooling → Prediction → Official SWE-bench Evaluator → BenchmarkReport → APC Console
+```
+
+1. A frozen manifest drives APC Runtime and tooling to produce predictions.
+2. The official SWE-bench evaluator is used only for this benchmark path and produces the BenchmarkReport.
+3. APC Console reads existing runtime artifacts and benchmark outputs locally; it does not participate in execution.
 
 See [Headless Core](docs/agentpatchcheck-headless-core.md) for CLI, evidence,
 retention, and guarded-apply contracts.
