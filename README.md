@@ -210,7 +210,7 @@ instruction to rerun the published fixed-50 result.
 ## Documentation
 
 - [Headless Core](docs/agentpatchcheck-headless-core.md) — TaskSpec, CLI, evidence, assessment, approval, cleanup, and apply.
-- [Formal Runtime Contract](docs/formal-runtime-contract.md) — lifecycle and terminal-state semantics.
+- [Historical Formal Runtime Contract](docs/formal-runtime-contract.md) — frozen lifecycle semantics for the formal pilot.
 - [Harness-native Benchmark Suite](docs/harness-native-benchmark-suite.md) — deterministic suite boundaries and reports.
 - [Third-party notices](THIRD_PARTY_NOTICES.md) — retained attribution and license notices.
 

@@ -25,7 +25,7 @@ credential names, or Provider configuration.
 ```powershell
 $env:OPENAI_API_KEY = "..."
 npm.cmd run benchmark:harness-native-suite -- `
-  --output-root D:\Benchmarks\agentpatchcheck-native-v1 `
+  --output-root <benchmark-output-root> `
   --model <model-id> `
   --suite-version v1
 ```
@@ -35,7 +35,7 @@ Completions and requires `DEEPSEEK_API_KEY` in the same PowerShell session:
 
 ```powershell
 npm.cmd run benchmark:harness-native-suite -- `
-  --output-root D:\Benchmarks\agentpatchcheck-native-v2-deepseek `
+  --output-root <benchmark-output-root> `
   --model deepseek-v4-pro `
   --provider-profile deepseek-chat `
   --suite-version v2
@@ -72,7 +72,7 @@ rates are `null`; consumers must not manufacture a cross-experiment success rate
 
 ```powershell
 npm.cmd run benchmark:harness-native-repetitions -- `
-  --output-root D:\Benchmarks\agentpatchcheck-native-v2-deepseek-repetitions `
+  --output-root <benchmark-output-root> `
   --runs 3 `
   --model deepseek-v4-pro `
   --provider-profile deepseek-chat `
@@ -89,16 +89,15 @@ all 15 passed final public verification, while 14 passed the Hidden Oracle. The 
 changed `README.md` to `after\n\n`; it passed the public prefix check but failed the exact-content Hidden Oracle.
 There were no Provider or Agent execution failures in that sample. This is evidence that the Oracle detects a
 public-verification false positive, not evidence of a stable 100% task-success rate. The retained result is
-`D:\Benchmarks\agentpatchcheck-native-v1-deepseek-repetitions-20260813\repetitions-report.json`; it is local
-experiment evidence, not a versioned repository fixture.
+retained in operator-local experiment artifacts as `repetitions-report.json`; it is local experiment evidence,
+not a versioned repository fixture.
 
 On a second three-run experiment on the same date, 12 of 15 tasks reached final public verification and the Hidden
 Oracle; `publicVerificationFalsePositives` was zero. The three remaining tasks failed before any tool call: two had
 Provider transport failures (`ECONNRESET`) and one had a malformed Provider response. These are recorded as Provider
 failures, not Agent execution failures or semantic patch failures. The result is
-`D:\Benchmarks\agentpatchcheck-native-v1-deepseek-repetitions-false-positive-20260813\repetitions-report.json`.
-That historical run predates the bounded transport retry below, so it remains useful as an unmasked reliability
-observation.
+retained in operator-local experiment artifacts as `repetitions-report.json`. That historical run predates the
+bounded transport retry below, so it remains useful as an unmasked reliability observation.
 
 The `deepseek-chat` suite profile explicitly permits one retry only when its first model request fails with
 `ECONNRESET`, before any tool call or tool result exists. The default remains zero retries. Malformed responses,
@@ -125,7 +124,7 @@ TaskSpec, and inspect the fixed budgets without making an API request:
 
 ```powershell
 npm.cmd run benchmark:harness-native-suite -- `
-  --output-root D:\Benchmarks\agentpatchcheck-native-v1-dry-run `
+  --output-root <benchmark-output-root> `
   --model <model-id> `
   --provider-profile <openai-responses|deepseek-chat> `
   --suite-version <v1|v2|v3|v4> `
@@ -197,7 +196,7 @@ The versioned v3 example is
 
 ```powershell
 npm.cmd run benchmark:harness-native-repetitions -- `
-  --output-root D:\Benchmarks\agentpatchcheck-native-v3-gated `
+  --output-root <benchmark-output-root> `
   --runs 3 `
   --model <model-id> `
   --provider-profile <openai-responses|deepseek-chat> `

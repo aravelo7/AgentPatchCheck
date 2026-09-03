@@ -1,5 +1,9 @@
 # Formal Runtime Contract
 
+> Historical formal-pilot frozen runtime contract. This document applies to the
+> APC-Pilot-10 formal pilot, not to the current HAL SWE-bench Verified Mini
+> fixed-50 benchmark freeze.
+
 Status: normative specification for the formal-frozen canonical execution only.
 
 Frozen source HEAD: `b52f0cd150218a30efdb76094a270f5500c5b302`.
