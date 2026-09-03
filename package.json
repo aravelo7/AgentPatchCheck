@@ -1,27 +1,21 @@
 {
-  "name": "kanban",
+  "name": "agentpatchcheck",
   "version": "0.1.70",
-  "description": "A kanban foundation for coding agents",
+  "description": "Evidence-oriented runtime and evaluation tooling for bounded software repair agents",
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
   "keywords": [
-    "kanban",
+    "software-repair",
+    "evaluation",
+    "swe-bench",
     "agents",
     "cli",
     "task-management",
     "typescript"
   ],
-  "homepage": "https://github.com/cline/kanban",
-  "bugs": {
-    "url": "https://github.com/cline/kanban/issues"
-  },
-  "author": "Cline",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/cline/kanban"
-  },
+  "author": "AgentPatchCheck contributors",
   "type": "module",
   "bin": {
     "kanban": "dist/cli.js",

@@ -1,5 +1,16 @@
 # Third-party notices
 
+## Cline Kanban
+
+AgentPatchCheck is derived from the Cline Kanban project and retains its CLI,
+desktop, web UI, worktree, and task-management foundations where those
+components are still used.
+
+Copyright 2026 Cline Bot Inc.
+
+Cline Kanban is licensed under the Apache License, Version 2.0. The license and
+copyright notice are retained in the repository's `LICENSE` file.
+
 ## DeepSeek Harness
 
 The programmatic tool-composition implementation in
@@ -42,3 +53,15 @@ DeepSeek Harness is licensed under the MIT License:
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
+
+## External benchmark data and evaluator
+
+The complete HAL SWE-bench Verified Mini and APC Pilot datasets are not
+redistributed in this repository. The tracked manifests record upstream
+dataset identities, revisions, expected hashes, and task selections; operators
+must obtain the corresponding data from its upstream provider and comply with
+the provider's and source repositories' license terms.
+
+Official grading is performed by an external SWE-bench evaluator checkout. It
+is not authored or vendored by AgentPatchCheck. The frozen evaluation contract
+uses evaluator revision `7d92bde324b9b96d41fb3e5e1023c8476f17b0bf`.
