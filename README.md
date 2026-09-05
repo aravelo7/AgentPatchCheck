@@ -165,6 +165,15 @@ budget would solve the task.
 > **Termination status is not a correctness proxy.** Official grading remains
 > the correctness authority for this benchmark.
 
+#### Research Note
+
+**[Auditing Runtime Termination as a Correctness Proxy for Coding Agents: A Frozen SWE-bench Verified Mini Case Study](docs/research/runtime-termination-correctness-proxy.md)**
+
+An artifact-grounded measurement audit of typed runtime termination as a
+correctness proxy under one frozen configuration. The mechanical
+`finished → resolved / non-finished → unresolved` proxy misclassified **12/45
+graded runs (26.7%)**.
+
 ## 🚀 Quick Start
 
 ### Prerequisites
