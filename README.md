@@ -119,8 +119,10 @@ inspectable.
 | Incorrect / incomplete fix | **3** |
 | Provider failure | **1** |
 
-Budget-bound is an observed terminal category; it does not mean that raising a
-budget would solve the task.
+Budget-bound termination is the dominant observed endpoint pattern among the
+15 non-resolved runs (**11/15**), indicating substantial execution-budget
+pressure under the frozen policy. This does not establish that increasing the
+budget would necessarily resolve those tasks.
 
 #### Termination and correctness
 
@@ -131,17 +133,19 @@ budget would solve the task.
 | `model-failed` → officially resolved | **1** |
 | `finished` → officially unresolved | **3** |
 
-> **Termination status is not a correctness proxy.** Official grading remains
-> the correctness authority for this benchmark.
+> **Termination status should not be used as a substitute for evaluator-derived
+> resolution.** Termination reasons remain useful operational and diagnostic
+> signals.
 
 #### Research Note
 
-**[Auditing Runtime Termination as a Correctness Proxy for Coding Agents: A Frozen SWE-bench Verified Mini Case Study](docs/research/runtime-termination-correctness-proxy.md)**
+**[Auditing Runtime Termination as a Resolution Proxy: A Frozen Coding-Agent Case Study](docs/research/runtime-termination-correctness-proxy.md)**
 
-An artifact-grounded measurement audit of typed runtime termination as a
-correctness proxy under one frozen configuration. The mechanical
-`finished → resolved / non-finished → unresolved` proxy misclassified **12/45
-graded runs (26.7%)**.
+A configuration-specific empirical audit of typed runtime termination as a
+resolution proxy under one frozen APC configuration. The mechanical
+`finished → resolved / non-finished → unresolved` rule disagreed with the
+official evaluator on **12/45 binary-outcome runs (≈26.7%)**, with errors in
+both directions.
 
 ## 🚀 Quick Start
 
