@@ -1,199 +1,83 @@
-# Auditing Runtime Termination as a Correctness Proxy for Coding Agents: A Frozen SWE-bench Verified Mini Case Study
+# Auditing Runtime Termination as a Resolution Proxy: A Frozen Coding-Agent Case Study
 
 ## Abstract
 
-Coding-agent runtimes record how bounded executions end—for example, through
-normal completion, iteration or tool limits, timeouts, and model failures.
-These operational states do not directly establish whether the terminal patch
-is correct. We audit typed runtime termination as a correctness proxy using 50
-canonical AgentPatchCheck runs from a frozen HAL SWE-bench Verified Mini
-configuration. The full normalized grading-status population contains 35
-`resolved`, 10 `unresolved`, and 5 `not_run` instances. Binary correctness
-analysis is restricted to the 45 instances for which the official evaluator
-produced `resolved` or `unresolved`.
-
-We evaluate the mechanical proxy `finished → resolved` and
-`non-finished → unresolved`. The resulting confusion matrix contains 26
-finished-and-resolved, 3 finished-but-unresolved, 9 non-finished-but-resolved,
-and 7 non-finished-and-unresolved runs. The proxy therefore misclassifies 12
-of 45 graded instances, or 26.7%, with errors in both directions. Supporting
-analyses show that terminal mutation has no discriminating variation within
-the binary subset because all 45 graded runs end with a non-empty diff.
-Unresolved runs also exhibit higher observed medians for iterations, tool
-calls, and model calls, although these variables are bounded and confounded by
-the frozen termination policy. Among the 15 non-resolved observations, 11 end
-at a budget boundary; this is an operational classification, not evidence that
-insufficient budget caused the outcome.
-
-The contribution is an artifact-grounded audit of typed operational
-termination as a correctness proxy under one frozen configuration. It is
-neither a claim of first discovery nor an estimate of termination–correctness
-mismatch across coding agents generally.
+Runtime termination records how a coding-agent execution stopped; it does not
+directly establish whether its terminal patch passes an external evaluator.
+We audit a termination-only proxy in 50 canonical AgentPatchCheck runs under
+one frozen configuration. The normalized grading statuses are 35 `resolved`,
+10 `unresolved`, and 5 `not_run`. Among the 45 runs with binary outcomes from
+the official SWE-bench evaluator, mapping `finished` to resolved and every
+other termination to unresolved disagrees with the evaluator on 12/45 runs
+(approximately 26.7%): three finished runs are unresolved, and nine
+non-finished runs are resolved. Thus, `finished` is neither sufficient nor
+necessary for evaluator-derived resolution in this sample. Terminal mutation,
+observed effort, and non-resolved endpoints provide supporting context.
+The contribution is a configuration-specific measurement audit, not a new
+discovery of termination–outcome mismatch, a population error estimate, or
+evidence of a runtime's causal advantage.
 
 ## 1. Introduction
 
-Coding agents operate under finite execution contracts. A runtime may bound
-iterations, tool calls, retries, or wall-clock duration and must eventually
-publish a terminal state. Such states are useful operational telemetry: they
-indicate whether the agent completed normally, exhausted a limit, timed out, or
-encountered a model failure. They do not, by themselves, establish whether the
-terminal repository state satisfies an external correctness criterion.
+Coding agents execute under limits on iterations, tool calls, retries, and
+wall-clock duration. Their runtimes publish terminal states to record normal
+completion, exhausted limits, or failures. Evaluation asks a different
+question: does the terminal patch satisfy the benchmark's test oracle?
+A finished run can leave an unresolved patch, while a run stopped at a limit
+can already contain a patch that passes evaluation.
 
-This distinction matters in evaluation. A run recorded as `finished` can
-contain an incomplete or regressive patch. Conversely, a run stopped by an
-iteration or tool boundary can already contain a patch that passes an
-independent evaluator. Reducing these states to a binary success label can
-therefore produce two errors: accepting a finished but incorrect patch and
-rejecting a non-finished but correct patch.
+Prior work already reports operational endings alongside independent
+resolution outcomes [3, 10]. This note studies a narrower measurement object:
+the disagreements introduced by mechanically converting one runtime's typed
+termination into a binary resolution prediction.
 
-These phenomena are not new. SWE-agent reports episode endings such as
-submission and cost exits alongside independent SWE-bench outcomes, including
-both submitted-but-unresolved and cost-ended-but-resolved episodes [3].
-SHEPHERD identifies false termination as a coding-agent trajectory pattern
-[4], while other work distinguishes trajectory quality or self-validated
-completion from external outcomes. The present study asks a narrower
-measurement question: when one frozen runtime exposes several typed
-termination reasons, what errors result from mechanically using those reasons
-as a binary correctness proxy?
+> **RQ1:** In one frozen coding-agent configuration, which and how many
+> disagreements in each direction arise when `finished` predicts resolved and
+> every other runtime termination predicts unresolved, relative to the binary
+> outcomes of the official SWE-bench evaluator?
 
-We study 50 canonical AgentPatchCheck runs on HAL SWE-bench Verified Mini. The
-frozen end-to-end configuration consists of `deepseek-v4-flash`, the APC Agent
-Runtime and tooling, a fixed execution policy, and an independent official
-SWE-bench evaluator. All 50 runs are execution-valid; none is Harness-invalid
-or grading-invalid. Their normalized grading statuses are 35 `resolved`, 10
-`unresolved`, and 5 `not_run`. The first two are official evaluator-derived
-binary outcomes; `not_run` records an empty-patch evaluation for which no
-binary official correctness verdict was produced.
+We study one canonical run per task in APC's frozen `HAL-Verified-Mini-v1`
+manifest. The 50 runs use `deepseek-v4-flash`, the APC runtime and tooling,
+and a fixed execution policy. The primary evidence is a confusion matrix over
+the 45 runs with binary evaluator outcomes. The five `not_run` observations
+remain visible in the full population but do not enter that matrix.
 
-Our primary research question is:
+The proxy is a specified analysis rule, not a claim that APC or another
+system deploys this classifier. Its 12/45 mismatch quantifies the consequence
+of substituting that rule for evaluation in this sample. The contribution is
+the explicit join of typed termination and evaluator-derived resolution under
+a frozen configuration. Supporting observations characterize the recorded
+endpoints; they do not test agent design, model capability, benchmark
+difficulty, or the effect of additional resources.
 
-> **RQ1:** In one frozen bounded coding-agent configuration, what mismatch is
-> observed when typed runtime termination is reduced to a binary correctness
-> proxy and compared with independent official correctness?
+## 2. Study Design and Measurement
 
-We preserve the six observed runtime termination states and the full
-three-class normalized grading status. We then audit a deliberately simple
-binary mapping: `finished` predicts `resolved`, while every other termination
-predicts `unresolved`. Only the 45 runs with binary official outcomes enter
-this confusion matrix; all five `not_run` observations remain outside binary
-correctness.
+### 2.1 Frozen configuration and canonical population
 
-The primary result is a 12/45, or 26.7%, proxy error. Three runs are finished
-but unresolved, while nine are non-finished but resolved. Within this sample,
-`finished` is therefore neither sufficient nor necessary for official
-correctness.
-
-Three supporting analyses provide context without serving as independent
-headline contributions. We examine terminal mutation as another operational
-signal, compare execution-effort distributions descriptively, and summarize
-the canonical taxonomy of the 15 non-resolved observations. None identifies a
-causal mechanism.
-
-The contribution of this note is an artifact-grounded measurement audit that
-joins typed operational termination telemetry with independent evaluator
-evidence and makes the resulting proxy errors explicit. It does not claim that
-AgentPatchCheck first revealed termination–outcome mismatch, that 26.7% is a
-population rate, or that APC improves correctness relative to another runtime.
-
-## 2. Background and Measurement Model
-
-We distinguish five measurement components.
-
-### Runtime termination
-
-Runtime termination (T) records how the bounded APC lifecycle ended:
-
-```math
-T \in \{\texttt{finished},\texttt{iteration-limit},\texttt{tool-limit},
-\texttt{timeout},\texttt{model-failed},\texttt{rejected-tool-limit}\}.
-```
-
-These are operational states. In particular, `finished` records an accepted
-runtime completion transition. It is not an independent correctness
-certificate.
-
-We use `non-finished` only as an analytical grouping comprising the other five
-terminal states. It is not an additional native APC termination category.
-
-### Normalized grading status and official correctness
-
-The APC grading bridge records a three-class normalized grading status:
-
-```math
-G_3 \in \{\texttt{resolved},\texttt{unresolved},\texttt{not\_run}\}.
-```
-
-For `resolved` and `unresolved`, the bridge normalizes the binary result
-produced by the official SWE-bench evaluator. For the five canonical
-`not_run` cases, the official evaluator aggregate places the instance in
-`empty_patch_ids`, and the bridge records `normalizedStatus=not_run`.
-Therefore, `not_run` denotes the absence of a binary official correctness
-verdict; it is not a third official correctness class.
-
-Binary official correctness (O_2) is defined only for the 45 runs whose
-normalized grading status is `resolved` or `unresolved`.
-
-### Termination-based correctness proxy
-
-We audit the mapping:
-
-```math
-g(T)=
-\begin{cases}
-\texttt{resolved}, & T=\texttt{finished},\\
-\texttt{unresolved}, & T\neq\texttt{finished}.
-\end{cases}
-```
-
-This mapping is an analysis construct. It is not an APC evaluator, an agent
-confidence score, or a guarantee made by the runtime.
-
-### Terminal mutation
-
-`mutationOccurred` indicates whether the terminal artifact contains a non-empty
-repository diff. It does not measure patch relevance, semantic correctness,
-intermediate edits, or edits that were later reverted.
-
-### Execution effort and non-resolved taxonomy
-
-Execution effort comprises attempts, cross-attempt iterations, normal tool
-calls, model calls, agent execution wall time, and terminal changed-file count.
-These variables are bounded by the frozen policy. Some are consequently
-right-censored when execution reaches a limit.
-
-The canonical primary taxonomy is defined only for the 15 non-resolved
-observations: the 10 `unresolved` and 5 `not_run` runs. The label
-`budget-limited` is interpreted throughout this note as a **budget-bound
-terminal observation**—a record that execution ended at a frozen boundary. It
-is not a diagnosis that insufficient budget caused a run's grading status.
-
-Termination and official correctness are thus modeled as separate axes: they
-are produced by different mechanisms and admit discordant observed
-combinations. This does not imply statistical independence.
-
-## 3. Study Design
-
-### 3.1 Frozen configuration and canonical population
-
-`HAL-Verified-Mini-v1` (called HAL SWE-bench Verified Mini in this note) is
-APC's frozen 50-instance manifest derived from
+`HAL-Verified-Mini-v1` is APC's frozen 50-instance manifest derived from
 `MariusHobbhahn/swe-bench-verified-mini`, as specified in the
-[benchmark reproduction contract](../benchmark-reproduction.md). This manifest
-is not an official SWE-bench subset release, and the reported result is not a
-full SWE-bench Verified score.
+[benchmark reproduction contract](../benchmark-reproduction.md). It is not
+an official SWE-bench subset release, and the reported result is not a full
+SWE-bench Verified score. The manifest contains 25 Django and 25 Sphinx
+instances and records selection in source-dataset order; this is not a random
+sample of repositories or coding tasks.
 
-The study population consists of 50 instances from the frozen
-`HAL-Verified-Mini-v1` manifest: 25 Django and 25 Sphinx instances. One
-canonical formal run is selected per instance. Batches 1–6 and 8–10 use their
-`hal-final-batch-*` artifacts. Batch 7 uses only
-`hal-scored-batch-7-20260902-*`; its older invalidated runs remain preserved
-but are excluded. Mini, pilot, probe, validation, preparation, and other
-non-scored artifacts are also excluded.
+One canonical formal run is selected per manifest instance. Batches 1–6 and
+8–10 use `hal-final-batch-*` artifacts; Batch 7 uses only
+`hal-scored-batch-7-20260902-*`. The archived Batch 7 invalidation record
+records an operator-reported network incident and
+marks it invalidated before scoring, with `outcomeBasedRerun=NO`.
+Those older artifacts remain preserved but excluded, as do mini, pilot,
+probe, validation, preparation, and other non-scored artifacts. This is a
+recorded operational exclusion, not selection of the better evaluator outcome.
+
+A canonical run is the unit of analysis and can contain up to two attempts
+under the frozen policy. These attempts are not independent task replications.
 
 **Table 1. Frozen configuration and analysis populations**
 
 | Item | Frozen value |
-| --- | ---: |
+| --- | --- |
 | Selected instances | 50 |
 | Repositories | Django 25; Sphinx 25 |
 | Model | `deepseek-v4-flash` |
@@ -207,48 +91,111 @@ non-scored artifacts are also excluded.
 | Harness-invalid | 0 |
 | Grading-invalid | 0 |
 | Normalized grading-status population | 35 `resolved`; 10 `unresolved`; 5 `not_run` |
-| Binary correctness population | 45; excludes all 5 `not_run` |
+| Binary resolution population | 45; excludes all 5 `not_run` |
 
-The score is attributed only to this frozen end-to-end configuration. It is not
-a model-only score or an estimate of APC’s causal contribution.
+The archived execution contract identifies APC harness revision
+`49bf69fe4549c7c493dff94e98f7f4bd15c37ff8` and official evaluator revision
+`7d92bde324b9b96d41fb3e5e1023c8476f17b0bf`. Results belong to this complete
+configuration, not to the model alone.
 
-### 3.2 Analysis
+### 2.2 Per-run measurements and analysis set
 
-RQ1 reports exact termination-by-normalized-status counts over all 50 runs. The
-binary confusion matrix includes only the 45 `resolved` or `unresolved` runs.
-Proxy error is defined as:
+Let $`i`$ index the $`N=50`$ canonical runs. $`T_i`$ is run $`i`$'s final
+runtime termination, with $`\mathcal{T}`$ denoting the six observed states
+listed in Table 2. $`G_i`$ is its normalized grading status. We abbreviate
+`resolved`, `unresolved`, and `not_run` as $`R`$, $`U`$, and $`\mathrm{NR}`$:
 
 ```math
-\mathrm{Error}(g)=
-\frac{\#(\texttt{finished},\texttt{unresolved})+
-\#(\texttt{non-finished},\texttt{resolved})}{45}.
+T_i \in \mathcal{T}, \qquad
+G_i \in \{R,U,\mathrm{NR}\}, \qquad i=1,\ldots,N.
 ```
 
-Cramér’s (V) is retained as a descriptive association measure. Sparse
-typed-termination cells make exact counts more informative than asymptotic
-significance tests.
+The `finished` state records an accepted APC completion transition, not an
+independent correctness certificate. We use `non-finished` to group the other
+five states; it is not a native termination category.
 
-RQ2 cross-tabulates terminal mutation with the three-class normalized grading
-status. No association statistic is estimated for the binary subset because
-mutation is constant across all 45 runs.
+For `resolved` and `unresolved`, the APC grading bridge normalizes the official
+SWE-bench evaluator's binary result. For all five canonical `not_run` cases,
+the evaluator aggregate lists the instance in `empty_patch_ids` and the bridge
+records `normalizedStatus=not_run`. This denotes no binary evaluator verdict;
+it is not a third official correctness class.
 
-RQ3 reports medians, interquartile ranges, Cliff’s delta, and exploratory
-two-sided Mann–Whitney comparisons. Positive Cliff’s delta denotes larger
-values among unresolved runs. These comparisons are not interpreted causally.
+Define the binary analysis set and its size as:
 
-RQ4 summarizes the canonical primary taxonomy for all 15 non-resolved
-observations. Because that taxonomy is outcome-dependent, it is not compared
-symmetrically with the resolved population.
+```math
+B=\{i\in\{1,\ldots,N\}:G_i\in\{R,U\}\}, \qquad n_B=|B|.
+```
 
-No run, evaluator invocation, artifact, policy, denominator, or outcome was
-added or changed for this study.
+For $`i\in B`$, encode evaluator-derived resolution as:
 
-## 4. Results
+```math
+O_i=
+\begin{cases}
+1, & G_i=R,\\
+0, & G_i=U.
+\end{cases}
+```
 
-### 4.1 RQ1: Termination vs. Official Correctness
+Here $`O_i`$ represents resolution under the SWE-bench test oracle. It is not
+an absolute semantic-correctness truth label. It is undefined for `not_run`
+observations. In this study, $`n_B=45`$.
 
-Table 2 retains all typed runtime terminal states and all normalized
-grading-status classes.
+### 2.3 Proxy and mismatch metric
+
+The termination-only proxy predicts resolution exactly when the runtime
+finishes:
+
+```math
+g(T_i)=
+\begin{cases}
+1, & T_i=\mathrm{finished},\\
+0, & T_i\neq\mathrm{finished}.
+\end{cases}
+```
+
+Its empirical mismatch rate on the binary analysis set is:
+
+```math
+\mathrm{Err}_B(g)=
+\frac{1}{n_B}\sum_{i\in B}\mathbf{1}\{g(T_i)\neq O_i\}.
+```
+
+The indicator equals one for a disagreement and zero otherwise. We report the
+two directions separately: finished but unresolved, and non-finished but
+resolved. All 50 runs enter the termination-by-grading-status table; only
+$`B`$ enters the confusion matrix. No hypothesis test is needed to enumerate
+these disagreements in the frozen population.
+
+Supporting observations summarize terminal mutation, observed execution
+effort, and the archived taxonomy of non-resolved endpoints to contextualize
+the primary result.
+
+### 2.4 Evidence provenance and public availability
+
+The analysis uses retained per-run terminal artifacts, evaluator outputs, and
+the fixed-50 aggregate and taxonomy records. The archived manifest identifies
+source revision `b316c349947c29963fce3f4a65967c9807a4b673` and the selected
+`HAL-Verified-Mini-v1.full.jsonl` SHA-256:
+`8095237e52344cebede1e03c10c93d171c6f7749368a79e04814dede2076bac0`.
+The exclusion described above is recorded in
+`HAL-Verified-Mini-v1-batch-7-invalidation-20260902.json`.
+
+The reproduction contract documents execution requirements. The public
+repository does not include the frozen manifest, complete per-run records, or
+the analysis materials needed to regenerate every table in this note.
+The identifiers specify which retained evidence was used; they do not make
+that evidence publicly inspectable. Consequently, readers can inspect the
+reported cross-tabulations and measurement definitions, but cannot fully
+reproduce the analysis from this repository alone.
+
+No experiment, evaluator invocation, or outcome was added or changed for
+this analysis.
+
+## 3. Primary Analysis: Termination vs. Evaluator-Derived Resolution
+
+Table 2 preserves the full population and all observed termination states.
+Several states span multiple grading statuses; `not_run` remains distinct
+from an unresolved evaluator outcome.
 
 **Table 2. Typed runtime termination by normalized grading status**
 
@@ -262,325 +209,211 @@ grading-status classes.
 | `rejected-tool-limit` | 0 | 0 | 1 | 1 |
 | **Total** | **35** | **10** | **5** | **50** |
 
-Several terminal states span multiple normalized grading statuses. `finished`
-contains both resolved and unresolved runs. `iteration-limit` and
-`tool-limit` span all three classes, while `model-failed` contains one resolved
-and one `not_run` observation. The single `rejected-tool-limit` case is
-`not_run`; one observation cannot support a category-level correctness claim.
+Table 3 is the primary result. It applies the specified proxy to the 45 runs
+with binary evaluator outcomes.
 
-Table 3 audits the binary proxy after excluding all five `not_run` observations.
+**Table 3. Confusion matrix for the termination-only proxy**
 
-**Table 3. Confusion matrix for `finished → resolved`, `non-finished → unresolved`**
-
-| Termination-based prediction | Officially resolved | Officially unresolved | Total |
+| Proxy prediction (termination group) | Evaluator resolved | Evaluator unresolved | Total |
 | --- | ---: | ---: | ---: |
-| `finished` | 26 | 3 | 29 |
-| `non-finished` | 9 | 7 | 16 |
+| Resolved (`finished`) | 26 | 3 | 29 |
+| Unresolved (`non-finished`) | 9 | 7 | 16 |
 | **Total** | **35** | **10** | **45** |
 
-The proxy correctly classifies 33/45 observations and misclassifies 12/45:
+The proxy agrees with the evaluator on 33/45 observations and disagrees on
+12/45:
 
 ```math
-\mathrm{Error}(g)=\frac{3+9}{45}=\frac{12}{45}=26.7\%.
+\mathrm{Err}_B(g)=\frac{3+9}{45}=\frac{12}{45}\approx26.7\%.
 ```
 
-Both directions contribute:
-
-- Three finished runs are officially unresolved. These constitute 3/29
-  finished runs and 3/10 unresolved runs.
-- Nine non-finished runs are officially resolved. These constitute 9/16
+- **Finished but unresolved:** three observations, comprising 3/29 finished
+  runs and 3/10 unresolved runs.
+- **Non-finished but resolved:** nine observations, comprising 9/16
   non-finished graded runs and 9/35 resolved runs.
 
-Accordingly, `finished` is neither a sufficient nor a necessary condition for
-official correctness in this sample. Most observed proxy errors are in the
-non-finished-but-resolved direction, but this asymmetry is configuration-
-specific.
+**RQ1 answer.** The specified proxy produces errors in both directions.
+The `finished` state is neither sufficient nor necessary for evaluator-derived
+resolution in this sample. The larger error count in the non-finished
+direction describes this configuration and outcome distribution; it is not a
+population estimate or evidence that termination causes resolution.
 
-The collapsed binary table has Cramér’s (V=0.385). Retaining the five typed
-terminal states present among the 45 graded runs yields (V=0.512). These
-values describe association; they neither validate the proxy nor identify an
-effect of termination on correctness.
+Table 4 includes all three finished-but-unresolved observations and one
+resolved example for each non-finished termination type represented among
+resolved runs. This selection illustrates the observed combinations, not their
+prevalence beyond Table 3.
 
-**Table 4. Representative termination–correctness mismatches**
+**Table 4. Instances illustrating both disagreement directions**
 
-| Mismatch direction | Instance | Runtime termination | Official outcome | Terminal mutation | Evidence-bound interpretation |
-| --- | --- | --- | --- | ---: | --- |
-| Finished but unresolved | `django__django-11848` | `finished` | `unresolved` | true | Both official HTTP-date FAIL_TO_PASS tests failed |
-| Finished but unresolved | `django__django-12325` | `finished` | `unresolved` | true | A narrow reproduction passed, but two official parent-link cases failed |
-| Finished but unresolved | `django__django-12774` | `finished` | `unresolved` | true | A targeted test passed, but two PASS_TO_PASS tests regressed |
-| Non-finished but resolved | `django__django-11815` | `iteration-limit` | `resolved` | true | This iteration-bound terminal state co-occurred with a resolved terminal patch |
-| Non-finished but resolved | `sphinx-doc__sphinx-8035` | `tool-limit` | `resolved` | true | This tool-bound terminal state co-occurred with a resolved terminal patch |
-| Non-finished but resolved | `sphinx-doc__sphinx-9320` | `model-failed` | `resolved` | true | A model-failure terminal state co-occurred with a resolved terminal patch |
+| Instance | Termination | Evaluator outcome | Recorded evidence |
+| --- | --- | --- | --- |
+| `django__django-11848` | `finished` | `unresolved` | Both official HTTP-date FAIL_TO_PASS tests failed |
+| `django__django-12325` | `finished` | `unresolved` | A narrow reproduction passed, but two official parent-link cases failed |
+| `django__django-12774` | `finished` | `unresolved` | A targeted test passed, but two PASS_TO_PASS tests regressed |
+| `django__django-11815` | `iteration-limit` | `resolved` | An iteration-bound endpoint co-occurred with an evaluator-resolved terminal patch |
+| `sphinx-doc__sphinx-8035` | `tool-limit` | `resolved` | A tool-bound endpoint co-occurred with an evaluator-resolved terminal patch |
+| `sphinx-doc__sphinx-9320` | `model-failed` | `resolved` | A model-failure endpoint co-occurred with an evaluator-resolved terminal patch |
 
-The latter three cases establish only the observed terminal state and official
-outcome. They do not establish why the patch was correct or whether the
-terminal event affected it.
+The last three records establish co-occurrence only. They do not establish
+when the patch became resolvable or whether the terminal event affected it.
 
-**RQ1 answer.** In this frozen configuration, runtime termination and official
-correctness are not interchangeable. The specified termination-only proxy
-misclassifies 12/45 graded instances, or 26.7%, with three finished-but-
-unresolved and nine non-finished-but-resolved observations.
+## 4. Supporting Observations
 
-### 4.2 RQ2: Terminal Mutation
+### 4.1 Terminal mutation
 
-Across the full population, 45 runs have `mutationOccurred=true`: 35 are
-`resolved` and 10 are `unresolved`. The remaining five runs have
-`mutationOccurred=false`, and all five are `not_run`.
+`mutationOccurred` records a non-empty terminal repository diff, not patch
+relevance, intermediate edits, or edits later reverted. Across all 50 runs,
+45 have `mutationOccurred=true`: 35 are resolved and 10 unresolved. The
+remaining five have `mutationOccurred=false` and are all `not_run`.
 
-All resolved observations in this sample have terminal mutation, but ten
-mutated runs remain unresolved. Within the N=45 binary subset, mutation is
-constant across both outcome groups. The data consequently contain no
-variation from which to estimate mutation’s discriminating association with
-official correctness.
+All resolved observations have terminal mutation, but mutation is constant
+throughout the binary subset. Its alignment with binary-outcome availability
+also reflects the empty-patch handling of the grading bridge. This supporting
+observation provides no within-subset discrimination and is not evidence of
+an independently discovered necessary mechanism for resolution.
 
-**RQ2 answer.** Terminal mutation separates patch-producing from empty-patch
-observations in the full population but does not distinguish resolved from
-unresolved runs within the graded subset. This is a sample-specific boundary
-result, not a general claim about mutation in coding agents.
+### 4.2 Observed execution effort
 
-### 4.3 RQ3: Execution Effort
+Table 5 retains descriptive summaries for the binary subset. Each entry is
+the median followed by $`[Q_1,Q_3]`$, where $`Q_1`$ and $`Q_3`$ are the first
+and third quartiles. Iterations and calls are summed across attempts; agent
+runtime is recorded execution wall time, excluding environment preparation
+and official grading.
 
-Table 5 reports execution-effort summaries for the binary population. Values
-are median $[Q_1,Q_3]$; positive Cliff’s delta indicates larger values among
-unresolved runs.
+**Table 5. Observed effort in the 45-run binary subset**
 
-**Table 5. Execution effort in the 45-run binary subset**
+| Measure | Resolved, n=35 | Unresolved, n=10 |
+| --- | ---: | ---: |
+| Iterations | 41 [36, 47] | 46.5 [42.5, 48] |
+| Normal tool calls | 60 [48, 69] | 71 [62.25, 75] |
+| Model calls | 42 [37, 48.5] | 48.5 [43.25, 50.5] |
+| Agent runtime, ms | 491,627 [359,059, 631,032] | 553,445 [429,823, 1,032,668] |
 
-| Measure | Resolved, n=35 | Unresolved, n=10 | Cliff’s δ | Exploratory MW p |
-| --- | ---: | ---: | ---: | ---: |
-| Attempts | 2 [2, 2] | 2 [2, 2] | 0.100 | 0.483 |
-| Iterations | 41 [36, 47] | 46.5 [42.5, 48] | 0.366 | 0.080 |
-| Normal tool calls | 60 [48, 69] | 71 [62.25, 75] | 0.369 | 0.080 |
-| Model calls | 42 [37, 48.5] | 48.5 [43.25, 50.5] | 0.366 | 0.083 |
-| Agent runtime, ms | 491,627 [359,059, 631,032] | 553,445 [429,823, 1,032,668] | 0.234 | 0.269 |
-| Changed-file count | 2 [1, 3] | 2 [1.25, 2] | −0.077 | 0.710 |
+Unresolved runs have higher observed medians on these measures. Actual
+consumption up to termination is observed and bounded by policy; any further
+trajectory under a larger budget is unobserved. Task characteristics and
+progress can affect both effort and resolution, and some counts directly
+determine termination. These summaries contextualize execution endpoints
+without estimating whether additional resources would improve outcomes.
 
-Unresolved runs have higher observed medians for iterations, normal tool calls,
-model calls, and agent runtime. The rank-based differences are largest for
-iterations, tool calls, and model calls. Attempts and changed-file count do not
-show corresponding median differences.
+### 4.3 Non-resolved endpoint profile
 
-These measurements are bounded and confounded. Iterations and calls
-accumulate until completion or termination, so observations near a limit are
-right-censored. Task difficulty and trajectory progress may influence both
-effort and official correctness. Termination is also mechanically related to
-some accumulated counts. The Mann–Whitney comparisons are therefore
-exploratory summaries rather than confirmatory evidence of an effort effect.
-
-**RQ3 answer.** Unresolved runs exhibit higher descriptive execution effort on
-several measures, but the data do not show that additional iterations, calls,
-or runtime reduce correctness or cause failure.
-
-### 4.4 RQ4: Non-resolved Failure Patterns
-
-The canonical primary taxonomy covers 15 non-resolved observations: 10
+The archived primary taxonomy covers 15 non-resolved observations: 10
 `unresolved` and 5 `not_run`. Eleven are labeled `budget-limited`, three
-`incorrect / incomplete fix`, and one `provider / network failure`, corresponding
-to 73.3%, 20.0%, and 6.7%.
+`incorrect / incomplete fix`, and one `provider / network failure`
+(73.3%, 20.0%, and 6.7%, respectively). This outcome-conditioned profile is
+not a symmetric comparison with resolved runs.
 
-The 11 `budget-limited` cases are interpreted here as budget-bound terminal
-observations. Seven end with terminal mutation and a non-empty patch; four end
-without terminal mutation and with an empty patch. This heterogeneity prevents
-treating the category as a single patch-quality mechanism. It also provides no
-evidence that additional budget would have produced a resolved outcome.
+Here `budget-limited` means a **budget-bound terminal observation**. Of those
+11 runs, seven end with mutation and a non-empty patch; four end without
+mutation and with an empty patch. The concentration is operationally
+meaningful: 11 of the 15 non-resolved observations terminate at recorded
+resource boundaries, making execution-budget pressure the dominant endpoint
+pattern in this subset under the frozen execution policy. The two `timeout`
+cases, both `unresolved`, are direct wall-clock budget-exhaustion observations.
+Termination reasons such as `iteration-limit`, `tool-limit`, and `timeout`
+therefore provide diagnostic signals of resource pressure. These observations
+motivate budget-sensitivity analysis, but the frozen runs do not identify the
+counterfactual outcome under a larger budget or establish that insufficient
+budget caused the non-resolved outcomes.
 
-The three incorrect or incomplete fixes are the three finished-but-unresolved
-cases in Table 4. Their official evidence includes unmet target tests or
-regressions despite narrower local checks. They demonstrate that normal runtime
-completion did not guarantee official correctness, but three observations do
-not establish a systemic completion-detection defect.
-
-The remaining case carries the canonical umbrella label `provider / network
-failure`. The direct record establishes exhaustion of recovery from a malformed
-provider response, followed by no terminal mutation and a `not_run` normalized
-grading status. It does not establish a network transport failure.
-Accordingly, this note refers to it as a **provider malformed-response case**
-and does not attribute it to network connectivity.
-
-**RQ4 answer.** The non-resolved population is dominated by budget-bound
-terminal observations, followed by three finished but incorrect or incomplete
-patches and one provider malformed-response case. These categories describe
-the observed endpoints and evidence; they do not identify causal failure
-mechanisms.
+The three incorrect or incomplete fixes are the finished-but-unresolved
+cases in Table 4. The remaining umbrella-labeled `provider / network failure`
+case records exhaustion of recovery from a malformed provider response,
+followed by no terminal mutation and `not_run`. Its direct evidence supports
+a **provider malformed-response case**, not a network transport diagnosis.
 
 ## 5. Discussion
 
-The main result is a measurement result rather than an agent-design result.
-Runtime termination answers how execution stopped under a bounded lifecycle.
-Official correctness answers whether the terminal patch satisfied an
-independent evaluator. Collapsing these questions into one binary variable
-loses information in both directions.
+The reporting implication is to retain operational termination and
+evaluator-derived resolution as separate variables. A termination-only report
+using the audited mapping would accept three unresolved patches and reject
+nine evaluator-resolved patches. When a binary outcome is unavailable, that
+absence should remain explicit rather than be filled from termination.
 
-The three finished-but-unresolved cases show why `finished` cannot serve as a
-correctness certificate. Nevertheless, 26/29 finished graded runs are
-resolved, so the result does not imply that `finished` is uninformative. It
-establishes that the state is insufficient on its own.
+This does not make termination uninformative: 26/29 finished runs are resolved.
+The claim is about substituting a particular proxy for an evaluator verdict,
+not about the absence of association or the best achievable predictor.
+Termination reasons can therefore remain diagnostically useful even when
+they cannot substitute for evaluator-derived resolution.
 
-The nine non-finished-but-resolved cases expose the complementary error. A
-resolved terminal patch can coexist with an iteration limit, tool limit, or
-model failure. A termination-only report that treats every non-finished state
-as incorrect would discard those verified successes. In this sample, the proxy
-therefore both accepts three unresolved runs and rejects nine resolved runs.
-
-The appropriate reporting implication is to preserve typed runtime termination
-and external grading status as separate variables. Termination remains valuable
-for lifecycle diagnosis, resource accounting, and trajectory analysis. When
-binary correctness is unavailable, the grading status should remain `not_run`
-or correctness should remain unknown instead of being inferred from
-termination.
-
-The supporting analyses reinforce this boundary. Terminal mutation
-distinguishes terminal non-empty diffs from empty-patch observations, but it
-cannot discriminate official correctness within the graded subset. Higher
-observed effort among unresolved runs can guide qualitative inspection, but
-censoring and confounding preclude causal interpretation. Similarly, a
-budget-bound terminal observation identifies where the frozen execution
-stopped, not why its outcome was non-resolved.
+Three levels of interpretation should remain distinct. Termination describes
+the operational endpoint. Resolution records satisfaction of the evaluator's
+test oracle. A causal explanation of an outcome would require evidence beyond
+their co-occurrence. The case records and supporting observations illuminate
+the first two levels but cannot establish that a limit caused failure, that a
+model failure changed patch quality, or that APC improved resolution relative
+to another runtime.
 
 ## 6. Related Work
 
-### Coding-agent benchmarks and operational endings
+SWE-bench establishes test-based repository-level issue evaluation [1], and
+SWE-bench Verified adds expert validation [2]. This note uses an APC-frozen
+manifest and the official evaluator; it proposes neither a new benchmark nor
+a new correctness oracle.
 
-SWE-bench introduced repository-level issue resolution evaluated through
-executable tests [1]. SWE-bench Verified later refined the benchmark through
-expert validation [2]. The present study uses a frozen 50-instance subset and
-an official evaluator-derived binary outcome where available, but it does not
-propose a new benchmark.
+The closest overlap is operational endings cross-tabulated with outcomes.
+SWE-agent reports submission and cost exits alongside resolution, including
+mismatches in both directions [3, Table 13]. SWE-bench Multimodal also analyzes
+success together with exit status [10, Figures 3 and 8]. Thus, the basic
+termination–outcome distinction and its bidirectionality are established
+prior art.
 
-SWE-agent, published at NeurIPS 2024, reports operational episode endings—
-including submission and cost exits—alongside SWE-bench resolution outcomes
-[3]. Its results already include both submitted-but-unresolved and
-cost-ended-but-resolved episodes. The bidirectional mismatch observed here is
-therefore prior-art overlap, not a first discovery.
+SHEPHERD's false termination is a trajectory diagnosis, distinct from APC's
+typed lifecycle state [4]. SWE-EVAL studies trajectory efficiency, logical
+consistency, and tool utilization [5]. The cited versions of both are
+anonymous ICLR 2026 OpenReview manuscripts. Failure as a Process [6] and APR
+traceability [7] analyze execution processes; trajectory-aware evaluation [8]
+uses trajectory evidence for efficient benchmarking. Outside issue repair,
+AnalysisBench distinguishes self-validated completion from manually verified
+success [9]. We cite the July 2026 v1 of [6], September 2026 v1 of [8], and
+July 2026 v3 of [9].
 
-### False termination and trajectory failure analysis
+The incremental contribution is the explicit audit of a specified
+termination-only rule across six APC endpoint types, retaining missing binary
+verdicts separately and enumerating both error directions in one frozen
+configuration. It neither discovers mismatch as a phenomenon nor establishes
+a general theory of coding-agent completion.
 
-SHEPHERD identifies false termination as a trajectory pattern in which an
-agent finishes without adequate checking [4]. The cited version is an anonymous
-ICLR 2026 OpenReview manuscript.
-False termination is related to finished-but-unresolved observations but is
-conceptually different from APC’s system-recorded terminal telemetry: the
-former is a semantic trajectory diagnosis, while the latter is an operational
-endpoint used in a specified proxy mapping.
+## 7. Scope and Threats to Validity
 
-Zhao et al.’s *Failure as a Process* studies the onset, evolution, observability,
-and recovery of failures across CLI coding-agent trajectories [6]. We cite the
-July 2026 arXiv version (v1). Its process-oriented taxonomy complements the
-present endpoint audit but does not make a typed termination-only confusion
-matrix its central measurement object.
+**Measurement.** Evaluator-derived resolution is bounded by the SWE-bench
+test oracle and does not prove full semantic correctness. APC's `finished`
+state is runtime-specific, and terminal mutation omits intermediate activity.
+Empty-patch handling makes the binary analysis conditional on verdict
+availability; its 45-run denominator does not describe all 50 outcomes.
+Complete token usage exists for only 15/50 runs, and structured agent-side
+verification is unavailable for all 50, limiting investigation of what agents
+checked before terminating.
 
-### Process evaluation versus outcome evaluation
+**Selection and reproducibility.** The sample contains only Django and
+Sphinx tasks under one runtime, model, and frozen policy. The canonical rule
+excludes the operator-invalidated Batch 7 executions; the stated operational
+rationale does not establish that such exclusions are statistically neutral.
+One canonical run per task cannot measure run-to-run stochasticity. There are
+no repeated-run comparisons, runtime comparators, or ablations. The public
+evidence gap in §2.4 also limits independent verification of run selection,
+case interpretations, and descriptive summaries.
 
-The cited anonymous ICLR 2026 OpenReview manuscript SWE-EVAL evaluates
-trajectory efficiency, logical consistency, and tool utilization across
-issue-resolution agents [5].
-It supplements outcome evaluation with process measures, but termination-reason
-mismatch is not its primary target.
-
-Ceka et al., accepted to ISSTA 2026, study automated program-repair agents
-through execution traceability, test generation, workflow structure, and patch
-behavior [7]. Duan et al. use trajectory information as privileged evidence
-for efficient SWE-agent benchmarking [8]; we cite the September 2026 arXiv
-version (v1). Both reinforce the value of retaining process
-information beyond final outcomes, while addressing different research
-questions.
-
-Outside issue repair, Bouzenia et al.’s AnalysisBench study distinguishes agent
-self-validated completion from manually verified success and reports
-substantial disagreement between them [9]. We cite the July 2026 arXiv version
-(v3).
-Its self-validation construct is related to, but not identical with, APC’s
-typed runtime termination.
-
-Against this literature, APC’s incremental contribution is narrow: it joins
-six typed operational termination reasons with an APC-normalized grading status
-derived from official evaluator artifacts and explicitly audits the errors of a
-termination-only binary proxy on the 45 runs with official `resolved` or
-`unresolved` outcomes. It does not introduce termination–outcome mismatch as a
-phenomenon or establish a general theory of coding-agent completion.
-
-## 7. Threats to Validity
-
-### Construct validity
-
-`Finished` is an APC runtime state, not a universal definition of agent
-completion, calibrated confidence, or successful verification. Similarly,
-`mutationOccurred` indicates only a terminal non-empty diff. It does not
-measure semantic relevance, patch quality, or intermediate repository changes.
-
-Agent runtime covers the execution wall duration recorded in the run artifact;
-it does not include a uniformly comparable environment-setup or official-
-grading duration. Complete token usage exists for only 15/50 observations and
-is excluded. Structured agent-side verification is unavailable for all 50
-observations and therefore cannot be analyzed.
-
-The five `not_run` observations have no binary official correctness label.
-Treating them as unresolved would change the outcome construct and the
-denominator. The failure taxonomy is also outcome-dependent because it is
-defined only for the 15 non-resolved runs.
-
-### Internal validity
-
-This is an observational analysis. Task characteristics, trajectory behavior,
-accumulated effort, termination, and official correctness may be mutually
-related. The data do not isolate termination or resource use as causal
-variables.
-
-Iterations, tool calls, and model calls are affected by the frozen policy.
-Limit-terminated observations are right-censored because their unconstrained
-trajectories are unobserved. Termination also directly depends on some
-accumulated counts, confounding effort comparisons.
-
-Each instance has one canonical formal run. Run-to-run stochasticity cannot be
-estimated. No controlled runtime comparator or ablation is present, so the
-study cannot attribute a correctness improvement to APC, its runtime, tooling,
-or any component.
-
-### External validity
-
-The dataset contains 50 instances drawn only from Django and Sphinx and uses
-one runtime, model, scaffolding configuration, and budget policy. It is not a
-random sample of coding agents, repositories, or software-engineering tasks.
-
-Termination vocabularies may differ across systems. APC’s typed states cannot
-be assumed equivalent to similarly named states elsewhere without semantic
-alignment. The 26.7% error is specific to this sample and proxy mapping and is
-not a population mismatch estimate.
-
-### Statistical conclusion validity
-
-The binary population includes 35 resolved but only 10 unresolved runs.
-Several typed-termination cells contain one or two observations. Exact counts
-and the confusion matrix are therefore more reliable as primary evidence than
-asymptotic significance claims.
-
-The effort analysis covers six related variables and is exploratory.
-Mann–Whitney tests and Cliff’s delta do not remove right censoring, ties,
-outcome imbalance, or termination confounding. No causal or confirmatory
-conclusion is drawn from their values.
-
-Mutation has zero variance within the binary subset. This prevents estimation
-of a mutation–correctness association; it does not establish a universal null
-relationship. Repository results—17/25 resolved for Django and 18/25 for
-Sphinx—are descriptive checks and do not establish relative difficulty or
-capability.
+**Interpretation and statistical scope.** The binary set is imbalanced
+(35 resolved, 10 unresolved), and several typed-termination cells contain only
+one or two observations. The 26.7% mismatch is an empirical proportion for
+this set and rule, not a generalization to coding agents. Policy-bounded effort
+is observed up to termination; unobserved continuations cannot establish an
+effect of additional resources. Outcome-conditioned endpoint labels and
+constant mutation within the binary subset likewise do not identify causal
+mechanisms or general predictive relationships.
 
 ## 8. Conclusion
 
-We audited typed runtime termination as a binary correctness proxy in one
-frozen 50-run AgentPatchCheck configuration. Among the 45 runs with binary
-official outcomes, mapping `finished` to `resolved` and `non-finished` to
-`unresolved` misclassifies 12 instances, or 26.7%. The errors occur in both
-directions: three finished runs are unresolved, while nine non-finished runs
-are resolved.
-
-The evidence supports a bounded measurement conclusion: typed runtime
-termination and independently evaluated official correctness should be retained
-as separate variables. Terminal mutation, execution effort, and non-resolved
-taxonomy provide supporting context but do not identify causal mechanisms. The
-study does not estimate mismatch prevalence across coding agents or demonstrate
-an APC correctness improvement. Its contribution is an artifact-grounded proxy
-audit under a reproducible frozen configuration.
+For one frozen 50-run configuration, the termination-only proxy disagrees
+with the official SWE-bench evaluator on 12/45 binary outcomes
+(approximately 26.7%): three finished runs are unresolved and nine
+non-finished runs are resolved. This supports a specific reporting practice:
+preserve termination and evaluator-derived resolution separately, including
+explicit absence of a binary verdict. Supporting observations describe the
+recorded endpoints; they do not establish causal failure mechanisms, a runtime
+advantage, or a mismatch rate beyond this configuration.
 
 ## References
 
@@ -601,3 +434,5 @@ audit under a reproducible frozen configuration.
 [8] K. Duan, D. Zheng, Y. Wang, X. Wang, E. Shi, X. Liu, Y. Ma, J. Chen, M. Liu, and Z. Zheng. “Efficient SWE Agent Benchmarking via Trajectory-Aware Evaluation.” *arXiv preprint arXiv:2609.01603v1*, September 2026. https://arxiv.org/abs/2609.01603v1
 
 [9] I. Bouzenia, C. Cadar, and M. Pradel. “Evaluating LLM Agents on Automated Software Analysis Tasks.” *arXiv preprint arXiv:2604.11270v3*, July 2026. https://arxiv.org/abs/2604.11270v3
+
+[10] J. Yang, C. E. Jimenez, A. L. Zhang, K. Lieret, J. Yang, X. Wu, O. Press, N. Muennighoff, G. Synnaeve, K. R. Narasimhan, D. Yang, S. I. Wang, and O. Press. “SWE-bench Multimodal: Do AI Systems Generalize to Visual Software Domains?” Cited version: *arXiv manuscript arXiv:2410.03859v1*, October 2024. https://arxiv.org/abs/2410.03859v1
