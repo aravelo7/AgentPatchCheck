@@ -175,6 +175,13 @@ combinations. This does not imply statistical independence.
 
 ### 3.1 Frozen configuration and canonical population
 
+`HAL-Verified-Mini-v1` (called HAL SWE-bench Verified Mini in this note) is
+APC's frozen 50-instance manifest derived from
+`MariusHobbhahn/swe-bench-verified-mini`, as specified in the
+[benchmark reproduction contract](../benchmark-reproduction.md). This manifest
+is not an official SWE-bench subset release, and the reported result is not a
+full SWE-bench Verified score.
+
 The study population consists of 50 instances from the frozen
 `HAL-Verified-Mini-v1` manifest: 25 Django and 25 Sphinx instances. One
 canonical formal run is selected per instance. Batches 1–6 and 8–10 use their
@@ -320,11 +327,11 @@ Across the full population, 45 runs have `mutationOccurred=true`: 35 are
 `resolved` and 10 are `unresolved`. The remaining five runs have
 `mutationOccurred=false`, and all five are `not_run`.
 
-Terminal mutation is therefore an observed necessary condition for a resolved
-outcome in this sample, but it is not sufficient: ten mutated runs remain
-unresolved. Within the N=45 binary subset, mutation is constant across both
-outcome groups. The data consequently contain no variation from which to
-estimate mutation’s discriminating association with official correctness.
+All resolved observations in this sample have terminal mutation, but ten
+mutated runs remain unresolved. Within the N=45 binary subset, mutation is
+constant across both outcome groups. The data consequently contain no
+variation from which to estimate mutation’s discriminating association with
+official correctness.
 
 **RQ2 answer.** Terminal mutation separates patch-producing from empty-patch
 observations in the full population but does not distinguish resolved from
@@ -449,37 +456,39 @@ therefore prior-art overlap, not a first discovery.
 ### False termination and trajectory failure analysis
 
 SHEPHERD identifies false termination as a trajectory pattern in which an
-agent finishes without adequate checking [4]. As of this artifact, it is an
-anonymous ICLR 2026 OpenReview submission, not a formally published paper.
+agent finishes without adequate checking [4]. The cited version is an anonymous
+ICLR 2026 OpenReview manuscript.
 False termination is related to finished-but-unresolved observations but is
 conceptually different from APC’s system-recorded terminal telemetry: the
 former is a semantic trajectory diagnosis, while the latter is an operational
 endpoint used in a specified proxy mapping.
 
 Zhao et al.’s *Failure as a Process* studies the onset, evolution, observability,
-and recovery of failures across CLI coding-agent trajectories [6]. It is
-currently an arXiv preprint. Its process-oriented taxonomy complements the
+and recovery of failures across CLI coding-agent trajectories [6]. We cite the
+July 2026 arXiv version (v1). Its process-oriented taxonomy complements the
 present endpoint audit but does not make a typed termination-only confusion
 matrix its central measurement object.
 
 ### Process evaluation versus outcome evaluation
 
-The anonymous SWE-EVAL ICLR 2026 submission evaluates trajectory efficiency,
-logical consistency, and tool utilization across issue-resolution agents [5].
+The cited anonymous ICLR 2026 OpenReview manuscript SWE-EVAL evaluates
+trajectory efficiency, logical consistency, and tool utilization across
+issue-resolution agents [5].
 It supplements outcome evaluation with process measures, but termination-reason
 mismatch is not its primary target.
 
 Ceka et al., accepted to ISSTA 2026, study automated program-repair agents
 through execution traceability, test generation, workflow structure, and patch
 behavior [7]. Duan et al. use trajectory information as privileged evidence
-for efficient SWE-agent benchmarking [8]; that work is currently an
-under-review arXiv preprint. Both reinforce the value of retaining process
+for efficient SWE-agent benchmarking [8]; we cite the September 2026 arXiv
+version (v1). Both reinforce the value of retaining process
 information beyond final outcomes, while addressing different research
 questions.
 
 Outside issue repair, Bouzenia et al.’s AnalysisBench study distinguishes agent
 self-validated completion from manually verified success and reports
-substantial disagreement between them [9]. It is currently an arXiv preprint.
+substantial disagreement between them [9]. We cite the July 2026 arXiv version
+(v3).
 Its self-validation construct is related to, but not identical with, APC’s
 typed runtime termination.
 
@@ -585,10 +594,10 @@ audit under a reproducible frozen configuration.
 
 [5] Anonymous. “SWE-EVAL: Trajectory-Enhanced Evaluation for Agentic Issue Resolution.” Anonymous manuscript submitted to ICLR 2026, OpenReview ID `aPeeUApKtW`, 2026. https://openreview.net/pdf?id=aPeeUApKtW
 
-[6] X. Zhao, H. Li, S. Li, T. Zhao, E. T. Barr, F. Sarro, and H. Ye. “Failure as a Process: An Anatomy of CLI Coding Agent Trajectories.” *arXiv preprint arXiv:2607.09510*, 2026. https://arxiv.org/abs/2607.09510
+[6] X. Zhao, H. Li, S. Li, T. Zhao, E. T. Barr, F. Sarro, and H. Ye. “Failure as a Process: An Anatomy of CLI Coding Agent Trajectories.” *arXiv preprint arXiv:2607.09510v1*, July 2026. https://arxiv.org/abs/2607.09510v1
 
 [7] I. Ceka, H. Mitchell, S. Pujar, L. Buratti, S. Ramji, J. Yang, G. Kaiser, and B. Ray. “Understanding Automated Program Repair Agents Through the Lens of Traceability: An Empirical Study.” Accepted for publication at the *International Symposium on Software Testing and Analysis (ISSTA 2026)*, 2026; originally posted as arXiv:2506.08311 in 2025. https://arxiv.org/abs/2506.08311
 
-[8] K. Duan, D. Zheng, Y. Wang, X. Wang, E. Shi, X. Liu, Y. Ma, J. Chen, M. Liu, and Z. Zheng. “Efficient SWE Agent Benchmarking via Trajectory-Aware Evaluation.” *arXiv preprint arXiv:2609.01603*, under review, 2026. https://arxiv.org/abs/2609.01603
+[8] K. Duan, D. Zheng, Y. Wang, X. Wang, E. Shi, X. Liu, Y. Ma, J. Chen, M. Liu, and Z. Zheng. “Efficient SWE Agent Benchmarking via Trajectory-Aware Evaluation.” *arXiv preprint arXiv:2609.01603v1*, September 2026. https://arxiv.org/abs/2609.01603v1
 
-[9] I. Bouzenia, C. Cadar, and M. Pradel. “Evaluating LLM Agents on Automated Software Analysis Tasks.” *arXiv preprint arXiv:2604.11270*, 2026. https://arxiv.org/abs/2604.11270
+[9] I. Bouzenia, C. Cadar, and M. Pradel. “Evaluating LLM Agents on Automated Software Analysis Tasks.” *arXiv preprint arXiv:2604.11270v3*, July 2026. https://arxiv.org/abs/2604.11270v3
