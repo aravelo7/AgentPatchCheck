@@ -65,7 +65,7 @@ flowchart LR
 - **Agent loop and tool calling:** bounded iterations, calls, output, deadlines, cancellation, and recovery.
 - **Workspace isolation:** per-run Git worktrees plus constrained file, search, shell, and Git tools.
 - **Verification and assessment:** public verification, hidden Oracle evaluation, risk checks, approval, and guarded apply.
-- **Evidence and trace:** structured trajectories, execution results, patches, EvidenceBundles, assessment reports, and benchmark reports with sensitive-text redaction.
+- **Evidence and trace:** structured trajectories, execution results, patches, structured evidence artifacts, assessment reports, and benchmark reports with sensitive-text redaction.
 - **Evaluation orchestration:** sequential benchmark execution, prediction generation, evaluator bridging, and independent execution/grading validity tracking.
 
 ## APC Console
@@ -87,20 +87,13 @@ It supports:
 - **Runs** browsing and Run Detail with verification facts.
 - An **Artifact explorer and preview** for imported runtime and evaluator
   outputs.
-- **Benchmark Evaluation** with the canonical P2 failure taxonomy and P3
+- **Benchmark Evaluation** with the canonical failure taxonomy and
   termination × correctness analysis.
 
 The Console is the observation and evaluation layer after controlled execution
 and independent evaluation; it is not an execution control plane. It never
 writes back to the workspace, launches a Candidate, executes a Provider or
 benchmark, or exposes Apply, Retry, or mutation controls.
-
-### Runs
-
-The Runs browser presents imported execution records, outcomes, termination,
-model, runtime, attempts, and mutation facts from the local workspace.
-
-![APC Console Runs browser](docs/assets/apc-console/runs.png)
 
 ### Run inspection
 
@@ -111,36 +104,12 @@ Run Detail exposes the imported verification facts for an individual real run.
 ### Benchmark evaluation
 
 The frozen aggregate view makes the official HAL result, execution validity,
-P2 failure taxonomy, and P3 termination × correctness analysis directly
+failure taxonomy, and termination × correctness analysis directly
 inspectable.
 
 ![APC Console benchmark evaluation](docs/assets/apc-console/evaluation.png)
 
-### Artifact explorer
-
-The artifact explorer previews the imported evidence and evaluator outputs
-without altering them.
-
-![APC Console artifact explorer](docs/assets/apc-console/artifacts.png)
-
-## 📊 Benchmark
-
-### HAL SWE-bench Verified Mini fixed-50
-
-| Metric | Result |
-| --- | ---: |
-| Official resolved | **35 / 50** |
-| Resolution rate | **70.0%** |
-| Valid executions | **50 / 50** |
-| Harness-invalid | **0** |
-| Grading-invalid | **0** |
-
-#### Notes
-
-This fixed-50 result is one frozen end-to-end configuration:
-`deepseek-v4-flash` with APC Runtime/tooling and the declared execution
-policy. It is neither a complete SWE-bench Verified score nor evidence that APC
-independently causes a given uplift.
+## Benchmark Analysis
 
 #### Observed non-resolved categories
 
@@ -197,12 +166,9 @@ The script invokes `tsx src/agentpatchcheck/cli.ts run`. Read the
 [Headless Core guide](docs/agentpatchcheck-headless-core.md) before preparing a
 TaskSpec or applying a patch.
 
-### Full repository / release build
+### Repository build
 
-The independent local APC Console lives in [`apc-console/`](apc-console/).
-Existing root web and desktop build paths are separate from APC Console and
-are not part of the APC Runtime & Evaluation workflow described here.
-For the repository and release build:
+For the repository build:
 
 ```bash
 npm run install:all
@@ -211,16 +177,6 @@ node dist/agentpatchcheck.js --help
 ```
 
 ## How It Works
-
-### Headless repair
-
-```text
-TaskSpec → Runtime → Tool Calls → Verification → Evidence → Assessment → Guarded Apply
-```
-
-1. A TaskSpec becomes a policy with repository, provider, verification, and risk boundaries.
-2. APC creates an isolated worktree and executes the selected adapter through its bounded runtime.
-3. Verification, trace, evidence, and patch outputs support assessment and any guarded apply decision.
 
 ### Benchmark evaluation
 
@@ -232,8 +188,8 @@ Frozen Manifest → APC Runtime / Tooling → Prediction → Official SWE-bench 
 2. The official SWE-bench evaluator is used only for this benchmark path and produces the BenchmarkReport.
 3. APC Console reads existing runtime artifacts and benchmark outputs locally; it does not participate in execution.
 
-See [Headless Core](docs/agentpatchcheck-headless-core.md) for CLI, evidence,
-retention, and guarded-apply contracts.
+See [Headless Core](docs/agentpatchcheck-headless-core.md) for the headless
+repair lifecycle, CLI, evidence, retention, and guarded-apply contracts.
 
 ## Implementation Boundaries
 
@@ -248,47 +204,17 @@ Third-party components and retained upstream attribution are documented in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). APC does not claim authorship
 of the official evaluator or complete benchmark datasets.
 
-## Frozen Benchmark Reproduction Contract
+## Reproducibility
 
-The repository preserves the portable reproduction contract, not a one-command
-replica of the published run. Complete datasets, evaluator checkout and Python
-environment, repositories, Docker images, predictions, logs, and scored
-artifacts are external to this repository.
+The fixed-50 benchmark is backed by a frozen dataset revision, selected
+manifest, evaluator revision, model profile, and execution policy.
 
-| Contract item | Frozen value / requirement |
-| --- | --- |
-| Dataset source | `MariusHobbhahn/swe-bench-verified-mini`, `test` split, revision `b316c349947c29963fce3f4a65967c9807a4b673` |
-| Selected subset | `HAL-Verified-Mini-v1.full.jsonl`, 50 rows, SHA-256 in the tracked manifest |
-| Evaluator | official SWE-bench checkout at `7d92bde324b9b96d41fb3e5e1023c8476f17b0bf` |
-| Model profile | `deepseek-v4-flash` |
-| Entry point | `node_modules/.bin/tsx src/agentpatchcheck/swebench-cli.ts` |
-
-Set these existing bootstrap variables in the operator environment; do not put
-credential values in manifests, source, or evidence:
-
-```text
-DEEPSEEK_API_KEY
-AGENTPATCHCHECK_SWEBENCH_MANIFEST
-AGENTPATCHCHECK_SWEBENCH_EVALUATOR_ROOT
-AGENTPATCHCHECK_SWEBENCH_EVALUATOR_PYTHON
-```
-
-For one manifest-selected instance and a fresh run identity:
-
-```powershell
-node_modules/.bin/tsx src/agentpatchcheck/swebench-cli.ts `
-  --instance <instance-id-from-the-manifest> `
-  --run-id <fresh-run-id>
-```
-
-The manifest owns dataset identity, evaluator revision, model, timeout, and
-classification. Operator arguments cannot override them; this is not an
-instruction to rerun the published fixed-50 result.
+[View the frozen benchmark reproduction contract](docs/benchmark-reproduction.md)
 
 ## Documentation
 
 - [Headless Core](docs/agentpatchcheck-headless-core.md) — TaskSpec, CLI, evidence, assessment, approval, cleanup, and apply.
-- [Historical Formal Runtime Contract](docs/formal-runtime-contract.md) — frozen lifecycle semantics for the formal pilot.
+- [Benchmark reproduction contract](docs/benchmark-reproduction.md) — frozen fixed-50 dataset, evaluator, model, environment, and invocation details.
 - [Harness-native Benchmark Suite](docs/harness-native-benchmark-suite.md) — deterministic suite boundaries and reports.
 - [Third-party notices](THIRD_PARTY_NOTICES.md) — retained attribution and license notices.
 
