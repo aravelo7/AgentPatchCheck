@@ -103,10 +103,10 @@ We distinguish five measurement components.
 
 Runtime termination (T) records how the bounded APC lifecycle ended:
 
-$$
+```math
 T \in \{\texttt{finished},\texttt{iteration-limit},\texttt{tool-limit},
 \texttt{timeout},\texttt{model-failed},\texttt{rejected-tool-limit}\}.
-$$
+```
 
 These are operational states. In particular, `finished` records an accepted
 runtime completion transition. It is not an independent correctness
@@ -119,9 +119,9 @@ terminal states. It is not an additional native APC termination category.
 
 The APC grading bridge records a three-class normalized grading status:
 
-$$
+```math
 G_3 \in \{\texttt{resolved},\texttt{unresolved},\texttt{not\_run}\}.
-$$
+```
 
 For `resolved` and `unresolved`, the bridge normalizes the binary result
 produced by the official SWE-bench evaluator. For the five canonical
@@ -137,13 +137,13 @@ normalized grading status is `resolved` or `unresolved`.
 
 We audit the mapping:
 
-$$
+```math
 g(T)=
 \begin{cases}
 \texttt{resolved}, & T=\texttt{finished},\\
 \texttt{unresolved}, & T\neq\texttt{finished}.
 \end{cases}
-$$
+```
 
 This mapping is an analysis construct. It is not an APC evaluator, an agent
 confidence score, or a guarantee made by the runtime.
@@ -218,11 +218,11 @@ RQ1 reports exact termination-by-normalized-status counts over all 50 runs. The
 binary confusion matrix includes only the 45 `resolved` or `unresolved` runs.
 Proxy error is defined as:
 
-$$
+```math
 \operatorname{Error}(g)=
 \frac{\#(\texttt{finished},\texttt{unresolved})+
 \#(\texttt{non\mbox{-}finished},\texttt{resolved})}{45}.
-$$
+```
 
 Cramér’s (V) is retained as a descriptive association measure. Sparse
 typed-termination cells make exact counts more informative than asymptotic
@@ -280,9 +280,9 @@ Table 3 audits the binary proxy after excluding all five `not_run` observations.
 
 The proxy correctly classifies 33/45 observations and misclassifies 12/45:
 
-$$
+```math
 \operatorname{Error}(g)=\frac{3+9}{45}=\frac{12}{45}=26.7\%.
-$$
+```
 
 Both directions contribute:
 
