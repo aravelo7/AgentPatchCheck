@@ -219,9 +219,9 @@ binary confusion matrix includes only the 45 `resolved` or `unresolved` runs.
 Proxy error is defined as:
 
 ```math
-\operatorname{Error}(g)=
+\mathrm{Error}(g)=
 \frac{\#(\texttt{finished},\texttt{unresolved})+
-\#(\texttt{non\mbox{-}finished},\texttt{resolved})}{45}.
+\#(\texttt{non-finished},\texttt{resolved})}{45}.
 ```
 
 Cramér’s (V) is retained as a descriptive association measure. Sparse
@@ -281,7 +281,7 @@ Table 3 audits the binary proxy after excluding all five `not_run` observations.
 The proxy correctly classifies 33/45 observations and misclassifies 12/45:
 
 ```math
-\operatorname{Error}(g)=\frac{3+9}{45}=\frac{12}{45}=26.7\%.
+\mathrm{Error}(g)=\frac{3+9}{45}=\frac{12}{45}=26.7\%.
 ```
 
 Both directions contribute:
